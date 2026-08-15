@@ -29,7 +29,7 @@ export type Workflow = { id: string; name: string; nodes: WorkflowNode[]; edges:
 export type WorkflowRunStep = { nodeId: string; nodeLabel: string; output: string; promptTokens: number; completionTokens: number };
 export type WorkflowRunResult = { steps: WorkflowRunStep[]; finalOutput: string; totalPromptTokens: number; totalCompletionTokens: number };
 
-export type View = 'home' | 'agents' | 'canvas' | 'runs' | 'agent' | 'integrations' | 'tools' | 'models' | 'settings';
+export type View = 'home' | 'agents' | 'workflows' | 'runs' | 'agent' | 'integrations' | 'tools' | 'models' | 'settings';
 
 export type DrawerForm =
   | { kind: 'tool'; editing: Tool; isNew: boolean }

@@ -596,13 +596,14 @@ async fn run_ollama_chat(model: &str, prompt: &str, agent: &AgentRequest, tools:
 }
 
 // Runs a single agent against its provider. Returns (output, prompt_tokens, completion_tokens).
-async fn run_agent_once(app: &AppHandle, conn: &Connection, agent: &AgentRequest, input: &str, api_key: Option<&str>, events: &mut Vec<ExecutionEvent>) -> Result<(String, u64, u64), String> {
+async fn run_agent_once(app: &AppHandle, agent: &AgentRequest, input: &str, api_key: Option<&str>, events: &mut Vec<ExecutionEvent>) -> Result<(String, u64, u64), String> {
+  let conn = db(app)?;
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
   for folder in ["files", "memory", "runs", "outputs"] { fs::create_dir_all(home.join(folder)).map_err(|e| e.to_string())?; }
   fs::write(home.join("config.json"), serde_json::to_string_pretty(&serde_json::json!({"id":agent.id,"name":agent.name,"objective":agent.objective,"model":agent.model,"tools":agent.tool_ids})).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
   let prompt = format!("You are {}. Objective: {}\n\nTask: {}\n\nReturn a concise structured result in JSON with keys summary and result.", agent.name, agent.objective, input);
   if let Some(model) = agent.model.strip_prefix("ollama:") {
-    let tools = build_tools(conn, agent, &home)?;
+    let tools = build_tools(&conn, agent, &home)?;
     if !tools.is_empty() {
       events.push(ExecutionEvent { time: now(), kind: "thought".into(), title: "Asking Ollama".into(), detail: Some(format!("{model} with {} tool(s)", tools.len())) });
       let (output, tool_events, _, pt, ct) = run_ollama_chat(model, &prompt, agent, &tools).await?;
@@ -623,7 +624,7 @@ async fn run_agent_once(app: &AppHandle, conn: &Connection, agent: &AgentRequest
     let key = api_key
       .filter(|k| !k.trim().is_empty())
       .map(|k| k.to_string())
-      .or(stored_api_key(conn, &agent.model).ok().flatten())
+      .or(stored_api_key(&conn, &agent.model).ok().flatten())
       .ok_or("OpenRouter requires an API key. Add it in Models first.")?;
     events.push(ExecutionEvent { time: now(), kind: "thought".into(), title: "Asking OpenRouter".into(), detail: Some(model.into()) });
     let response = reqwest::Client::new().post("https://openrouter.ai/api/v1/chat/completions")
@@ -650,7 +651,7 @@ async fn execute_agent(app: AppHandle, agent: AgentRequest, input: String, api_k
   let mut events = vec![ExecutionEvent { time: now(), kind: "thought".into(), title: "Loaded isolated agent context".into(), detail: Some(format!("Home: {} · tools: {}", agent.home_path, agent.tool_ids.join(", "))) }];
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
   for folder in ["files", "memory", "runs", "outputs"] { fs::create_dir_all(home.join(folder)).map_err(|e| e.to_string())?; }
-  let (output, prompt_tokens, completion_tokens) = match run_agent_once(&app, &conn, &agent, &input, api_key.as_deref(), &mut events).await {
+  let (output, prompt_tokens, completion_tokens) = match run_agent_once(&app, &agent, &input, api_key.as_deref(), &mut events).await {
     Ok(v) => v,
     Err(e) => {
       let _ = conn.execute("UPDATE runs SET status='failed' WHERE id=?1", params![run_id]);
@@ -727,19 +728,22 @@ async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: Strin
         if agent_id.is_empty() {
           current_input.clone()
         } else {
-          let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, home_path, permissions FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
-          let mut rows = stmt.query_map(params![agent_id], |row| {
-            let tool_ids: String = row.get(4)?;
-            let permissions: String = row.get(6)?;
-            Ok(AgentRequest {
-              id: row.get(0)?, name: row.get(1)?, objective: row.get(2)?, model: row.get(3)?,
-              tool_ids: parse_json_vec(&tool_ids), home_path: row.get(5)?, permissions: parse_json_vec(&permissions),
-            })
-          }).map_err(|e| e.to_string())?;
-          let Some(agent) = rows.next().transpose().map_err(|e| e.to_string())? else {
-            current_input.clone()
+          let agent_opt = {
+            let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, home_path, permissions FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
+            let mut rows = stmt.query_map(params![agent_id], |row| {
+              let tool_ids: String = row.get(4)?;
+              let permissions: String = row.get(6)?;
+              Ok(AgentRequest {
+                id: row.get(0)?, name: row.get(1)?, objective: row.get(2)?, model: row.get(3)?,
+                tool_ids: parse_json_vec(&tool_ids), home_path: row.get(5)?, permissions: parse_json_vec(&permissions),
+              })
+            }).map_err(|e| e.to_string())?;
+            rows.next().transpose().map_err(|e| e.to_string())?
           };
-          let (out, pt, ct) = run_agent_once(&app, &conn, &agent, &current_input, api_key.as_deref(), &mut events).await?;
+          let (out, pt, ct) = match agent_opt {
+            Some(agent) => run_agent_once(&app, &agent, &current_input, api_key.as_deref(), &mut events).await?,
+            None => (current_input.clone(), 0, 0),
+          };
           total_prompt += pt; total_completion += ct;
           out
         }

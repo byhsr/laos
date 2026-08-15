@@ -18,6 +18,8 @@ import { IntegrationsView } from './components/views/IntegrationsView';
 import { ToolsView, ToolFormDrawer } from './components/views/ToolsView';
 import { ModelsView, ModelFormDrawer } from './components/views/ModelsView';
 import { SettingsView } from './components/views/SettingsView';
+import { Toaster } from './components/ui/Toaster';
+import { toast } from './hooks/useToast';
 import { Plus } from 'lucide-react';
 
 export default function App() {
@@ -67,6 +69,7 @@ export default function App() {
     const agent = await createAgent({});
     setSelectedAgentId(agent.id);
     setView('agent');
+    toast(`Agent "${agent.name}" created`, 'success');
   };
 
   return (
@@ -76,8 +79,8 @@ export default function App() {
         <Sidebar view={view} setView={setView} collapsed={sidebarCollapsed} />
         <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-bg px-9 py-8">
           {view === 'home' && <HomeView agents={agents} tools={tools} runs={runs} onOpen={openAgent} onCreate={addAgent} />}
-          {view === 'agents' && <AgentsView agents={agents} tools={tools} onOpen={openAgent} onCreate={addAgent} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); }} />}
-          {view === 'canvas' && (
+          {view === 'agents' && <AgentsView agents={agents} tools={tools} onOpen={openAgent} onCreate={addAgent} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('Agent deleted', 'success'); }} />}
+          {view === 'workflows' && (
             <CanvasView
               agents={agents} tools={tools} workflows={workflows}
               onSaveWorkflow={saveWorkflow}
@@ -87,7 +90,7 @@ export default function App() {
           )}
           {view === 'runs' && <RunsConsole runs={runs} agents={agents} onOpenAgent={openAgent} onClear={clearRuns} />}
           {view === 'integrations' && <IntegrationsView integrations={integrations} />}
-          {view === 'tools' && <ToolsView tools={tools} integrations={integrations} onAdd={() => setDrawerForm({ kind: 'tool', editing: emptyTool(), isNew: true })} onEdit={(t) => setDrawerForm({ kind: 'tool', editing: t, isNew: false })} onDelete={async (id) => { await deleteTool(id); setTools((prev) => prev.filter((p) => p.id !== id)); setAgents((prev) => prev.map((a) => ({ ...a, toolIds: a.toolIds.filter((t) => t !== id) }))); }} />}
+          {view === 'tools' && <ToolsView tools={tools} integrations={integrations} onAdd={() => setDrawerForm({ kind: 'tool', editing: emptyTool(), isNew: true })} onEdit={(t) => setDrawerForm({ kind: 'tool', editing: t, isNew: false })} onDelete={async (id) => { await deleteTool(id); setTools((prev) => prev.filter((p) => p.id !== id)); setAgents((prev) => prev.map((a) => ({ ...a, toolIds: a.toolIds.filter((t) => t !== id) }))); toast('Tool deleted', 'success'); }} />}
           {view === 'models' && <ModelsView models={models} onAdd={() => setDrawerForm({ kind: 'model', editing: emptyModel(), isNew: true })} onEdit={(m) => setDrawerForm({ kind: 'model', editing: m, isNew: false })} onDelete={deleteModel} />}
           {view === 'settings' && <SettingsView />}
           {view === 'agent' && selectedAgent && <AgentWindow agent={selectedAgent} tools={tools} models={models} integrations={integrations} runs={runs} onBack={() => setView('agents')} onSave={persistAgent} onDelete={async (id) => { await deleteAgent(id); setSelectedAgentId(null); setView('agents'); }} onRun={handleRun} />}
@@ -96,17 +99,18 @@ export default function App() {
           <ToolFormDrawer
             editing={drawerForm.editing} isNew={drawerForm.isNew} integrations={integrations}
             onClose={() => setDrawerForm(null)}
-            onSave={async (t) => { await saveTool(t); setDrawerForm(null); }}
+            onSave={async (t) => { await saveTool(t); setDrawerForm(null); toast('Tool saved', 'success'); }}
           />
         )}
         {drawerForm && drawerForm.kind === 'model' && (
           <ModelFormDrawer
             editing={drawerForm.editing} isNew={drawerForm.isNew}
             onClose={() => setDrawerForm(null)}
-            onSave={async (m) => { await saveModel(m); setDrawerForm(null); }}
+            onSave={async (m) => { await saveModel(m); setDrawerForm(null); toast('Model saved', 'success'); }}
           />
         )}
       </div>
+      <Toaster />
     </div>
   );
 }

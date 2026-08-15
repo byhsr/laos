@@ -3,6 +3,7 @@ import { Check, ChevronRight, Lock, Play } from 'lucide-react';
 import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run, Tool } from '../types';
 import { Dropdown } from './ui/Dropdown';
 import { MultiDropdown } from './ui/MultiDropdown';
+import { toast } from '../hooks/useToast';
 
 const isComplete = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent' && !!a.model.trim() && !!a.objective.trim();
 
@@ -55,6 +56,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
     if (!draft.name.trim()) { setError('Agent needs a name.'); return; }
     await onSave(draft);
     setError(undefined);
+    toast('Agent saved', 'success');
     if (startChat && isComplete(draft)) setTab('chat');
   };
 
