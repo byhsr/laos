@@ -10,7 +10,7 @@ export function Drawer({ title, onClose, children, initialWidth, resizable, head
     if (!resizable) return;
     e.preventDefault();
     const startX = e.clientX;
-    const startWidth = width;
+    const startWidth = width ?? Math.min(520, window.innerWidth * 0.92);
     const onMove = (ev: PointerEvent) => {
       const next = Math.min(Math.max(startWidth + (startX - ev.clientX), 320), window.innerWidth - 80);
       setWidth(next);

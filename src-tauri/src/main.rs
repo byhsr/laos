@@ -36,6 +36,18 @@ struct AgentRecord {
   #[serde(default)] x: f64, #[serde(default)] y: f64,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowRecord { id: String, name: String, nodes: serde_json::Value, edges: serde_json::Value, updated_at: String }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowStep { node_id: String, node_label: String, output: String, prompt_tokens: u64, completion_tokens: u64 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowExecution { steps: Vec<WorkflowStep>, final_output: String, total_prompt_tokens: u64, total_completion_tokens: u64 }
+
 // Ollama chat (tool-calling) request/response
 #[derive(Serialize)]
 struct ChatRequest { model: String, messages: Vec<ChatMessage>, tools: Option<Vec<serde_json::Value>>, stream: bool }
@@ -298,7 +310,7 @@ fn db(app: &AppHandle) -> Result<Connection, String> {
   let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
   fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
   let conn = Connection::open(dir.join("local-agent-os.sqlite3")).map_err(|e| e.to_string())?;
-  conn.execute_batch("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, started_at TEXT NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL, input TEXT NOT NULL, output TEXT, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS memory (agent_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(agent_id,key)); CREATE TABLE IF NOT EXISTS model_configs (id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL, model TEXT NOT NULL, host TEXT, api_key TEXT, enabled INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS tools (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, integration_id TEXT NOT NULL, description TEXT, enabled INTEGER NOT NULL DEFAULT 1, config_json TEXT NOT NULL DEFAULT '{}'); CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, objective TEXT NOT NULL, model TEXT NOT NULL, tool_ids TEXT NOT NULL DEFAULT '[]', integrations TEXT NOT NULL DEFAULT '[]', memory INTEGER NOT NULL DEFAULT 1, permissions TEXT NOT NULL DEFAULT '[]', home_path TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#8b5cf6', x REAL NOT NULL DEFAULT 0, y REAL NOT NULL DEFAULT 0);") .map_err(|e| e.to_string())?;
+  conn.execute_batch("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, started_at TEXT NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL, input TEXT NOT NULL, output TEXT, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS memory (agent_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(agent_id,key)); CREATE TABLE IF NOT EXISTS model_configs (id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL, model TEXT NOT NULL, host TEXT, api_key TEXT, enabled INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS tools (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, integration_id TEXT NOT NULL, description TEXT, enabled INTEGER NOT NULL DEFAULT 1, config_json TEXT NOT NULL DEFAULT '{}'); CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, objective TEXT NOT NULL, model TEXT NOT NULL, tool_ids TEXT NOT NULL DEFAULT '[]', integrations TEXT NOT NULL DEFAULT '[]', memory INTEGER NOT NULL DEFAULT 1, permissions TEXT NOT NULL DEFAULT '[]', home_path TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#8b5cf6', x REAL NOT NULL DEFAULT 0, y REAL NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, name TEXT NOT NULL, nodes TEXT NOT NULL DEFAULT '[]', edges TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL);") .map_err(|e| e.to_string())?;
   Ok(conn)
 }
 
@@ -434,6 +446,52 @@ fn delete_agent(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// Workflows
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn list_workflows(app: AppHandle) -> Result<Vec<WorkflowRecord>, String> {
+  let conn = db(&app)?;
+  let mut stmt = conn.prepare("SELECT id, name, nodes, edges, updated_at FROM workflows ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+  let rows = stmt.query_map([], |row| {
+    let nodes: String = row.get(2)?;
+    let edges: String = row.get(3)?;
+    Ok(WorkflowRecord {
+      id: row.get(0)?, name: row.get(1)?,
+      nodes: serde_json::from_str(&nodes).unwrap_or_else(|_| serde_json::json!([])),
+      edges: serde_json::from_str(&edges).unwrap_or_else(|_| serde_json::json!([])),
+      updated_at: row.get(4)?,
+    })
+  }).map_err(|e| e.to_string())?;
+  let mut out = Vec::new();
+  for row in rows { out.push(row.map_err(|e| e.to_string())?); }
+  Ok(out)
+}
+
+#[tauri::command]
+fn save_workflow(app: AppHandle, workflow: WorkflowRecord) -> Result<(), String> {
+  let conn = db(&app)?;
+  conn.execute(
+    "INSERT INTO workflows (id, name, nodes, edges, updated_at) VALUES (?1,?2,?3,?4,?5)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, nodes=excluded.nodes, edges=excluded.edges, updated_at=excluded.updated_at",
+    params![
+      workflow.id, workflow.name,
+      serde_json::to_string(&workflow.nodes).map_err(|e| e.to_string())?,
+      serde_json::to_string(&workflow.edges).map_err(|e| e.to_string())?,
+      workflow.updated_at,
+    ],
+  ).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+#[tauri::command]
+fn delete_workflow(app: AppHandle, id: String) -> Result<(), String> {
+  let conn = db(&app)?;
+  conn.execute("DELETE FROM workflows WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Agent execution
 // ---------------------------------------------------------------------------
 
@@ -537,37 +595,35 @@ async fn run_ollama_chat(model: &str, prompt: &str, agent: &AgentRequest, tools:
   Err("Tool loop exceeded the maximum number of rounds.".into())
 }
 
-#[tauri::command]
-async fn execute_agent(app: AppHandle, agent: AgentRequest, input: String, api_key: Option<String>) -> Result<Execution, String> {
-  let started = chrono::Utc::now().to_rfc3339();
-  let run_id = format!("{}-{}", agent.id, chrono::Utc::now().timestamp_millis());
-  let conn = db(&app)?;
-  conn.execute("INSERT INTO runs (id,agent_id,started_at,status,model,input) VALUES (?1,?2,?3,'running',?4,?5)", params![run_id, agent.id, started, agent.model, input]).map_err(|e| e.to_string())?;
-  let mut events = vec![ExecutionEvent { time: now(), kind: "thought".into(), title: "Loaded isolated agent context".into(), detail: Some(format!("Home: {} · tools: {}", agent.home_path, agent.tool_ids.join(", "))) }];
+// Runs a single agent against its provider. Returns (output, prompt_tokens, completion_tokens).
+async fn run_agent_once(app: &AppHandle, conn: &Connection, agent: &AgentRequest, input: &str, api_key: Option<&str>, events: &mut Vec<ExecutionEvent>) -> Result<(String, u64, u64), String> {
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
   for folder in ["files", "memory", "runs", "outputs"] { fs::create_dir_all(home.join(folder)).map_err(|e| e.to_string())?; }
   fs::write(home.join("config.json"), serde_json::to_string_pretty(&serde_json::json!({"id":agent.id,"name":agent.name,"objective":agent.objective,"model":agent.model,"tools":agent.tool_ids})).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
   let prompt = format!("You are {}. Objective: {}\n\nTask: {}\n\nReturn a concise structured result in JSON with keys summary and result.", agent.name, agent.objective, input);
-  let result = if let Some(model) = agent.model.strip_prefix("ollama:") {
-    let tools = build_tools(&conn, &agent, &home)?;
+  if let Some(model) = agent.model.strip_prefix("ollama:") {
+    let tools = build_tools(conn, agent, &home)?;
     if !tools.is_empty() {
       events.push(ExecutionEvent { time: now(), kind: "thought".into(), title: "Asking Ollama".into(), detail: Some(format!("{model} with {} tool(s)", tools.len())) });
-      run_ollama_chat(model, &prompt, &agent, &tools).await
+      let (output, tool_events, _, pt, ct) = run_ollama_chat(model, &prompt, agent, &tools).await?;
+      events.extend(tool_events);
+      Ok((output, pt, ct))
     } else {
       events.push(ExecutionEvent { time: now(), kind: "thought".into(), title: "Asking Ollama".into(), detail: Some(model.into()) });
       let response = reqwest::Client::new().post("http://127.0.0.1:11434/api/generate").json(&serde_json::json!({"model":model,"prompt":prompt,"stream":false})).send().await.map_err(|e| format!("Could not reach Ollama. Start it at http://127.0.0.1:11434 ({e})"))?;
       if !response.status().is_success() { return Err(format!("Ollama returned {}", response.status())); }
       let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
       let output = json["response"].as_str().unwrap_or("No response from Ollama.").to_string();
-      let prompt_tokens = json["prompt_eval_count"].as_u64().unwrap_or(0);
-      let completion_tokens = json["eval_count"].as_u64().unwrap_or(0);
+      let pt = json["prompt_eval_count"].as_u64().unwrap_or(0);
+      let ct = json["eval_count"].as_u64().unwrap_or(0);
       events.push(ExecutionEvent { time: now(), kind: "result".into(), title: "Generated final result".into(), detail: None });
-      Ok((output, Vec::new(), false, prompt_tokens, completion_tokens))
+      Ok((output, pt, ct))
     }
   } else if let Some(model) = agent.model.strip_prefix("openrouter:") {
     let key = api_key
-      .filter(|key| !key.trim().is_empty())
-      .or(stored_api_key(&conn, &agent.model).ok().flatten())
+      .filter(|k| !k.trim().is_empty())
+      .map(|k| k.to_string())
+      .or(stored_api_key(conn, &agent.model).ok().flatten())
       .ok_or("OpenRouter requires an API key. Add it in Models first.")?;
     events.push(ExecutionEvent { time: now(), kind: "thought".into(), title: "Asking OpenRouter".into(), detail: Some(model.into()) });
     let response = reqwest::Client::new().post("https://openrouter.ai/api/v1/chat/completions")
@@ -578,28 +634,130 @@ async fn execute_agent(app: AppHandle, agent: AgentRequest, input: String, api_k
     if !response.status().is_success() { return Err(format!("OpenRouter returned {}", response.status())); }
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
     let output = json["choices"][0]["message"]["content"].as_str().unwrap_or("OpenRouter returned no text.").to_string();
-    let prompt_tokens = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
-    let completion_tokens = json["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+    let pt = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
+    let ct = json["usage"]["completion_tokens"].as_u64().unwrap_or(0);
     events.push(ExecutionEvent { time: now(), kind: "result".into(), title: "Generated final result".into(), detail: None });
-    Ok((output, Vec::new(), false, prompt_tokens, completion_tokens))
-  } else { return Err("Unknown model provider. Select Ollama or OpenRouter in the agent Model tab.".into()); };
-  let (output, mut tool_events, _used_tools, prompt_tokens, completion_tokens) = match result {
+    Ok((output, pt, ct))
+  } else { Err("Unknown model provider. Select Ollama or OpenRouter in the agent Model tab.".into()) }
+}
+
+#[tauri::command]
+async fn execute_agent(app: AppHandle, agent: AgentRequest, input: String, api_key: Option<String>) -> Result<Execution, String> {
+  let started = chrono::Utc::now().to_rfc3339();
+  let run_id = format!("{}-{}", agent.id, chrono::Utc::now().timestamp_millis());
+  let conn = db(&app)?;
+  conn.execute("INSERT INTO runs (id,agent_id,started_at,status,model,input) VALUES (?1,?2,?3,'running',?4,?5)", params![run_id, agent.id, started, agent.model, input]).map_err(|e| e.to_string())?;
+  let mut events = vec![ExecutionEvent { time: now(), kind: "thought".into(), title: "Loaded isolated agent context".into(), detail: Some(format!("Home: {} · tools: {}", agent.home_path, agent.tool_ids.join(", "))) }];
+  let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
+  for folder in ["files", "memory", "runs", "outputs"] { fs::create_dir_all(home.join(folder)).map_err(|e| e.to_string())?; }
+  let (output, prompt_tokens, completion_tokens) = match run_agent_once(&app, &conn, &agent, &input, api_key.as_deref(), &mut events).await {
     Ok(v) => v,
     Err(e) => {
       let _ = conn.execute("UPDATE runs SET status='failed' WHERE id=?1", params![run_id]);
       return Err(e);
     }
   };
-  events.append(&mut tool_events);
   fs::write(home.join("outputs").join(format!("{run_id}.txt")), &output).map_err(|e| e.to_string())?;
   conn.execute("UPDATE runs SET status='completed', output=?1, prompt_tokens=?2, completion_tokens=?3 WHERE id=?4", params![output, prompt_tokens, completion_tokens, run_id]).map_err(|e| e.to_string())?;
   Ok(Execution { output, events, run_id, prompt_tokens, completion_tokens })
 }
 
+// Executes a workflow linearly: orders nodes by edges (BFS from start nodes), runs each
+// agent/subagent/checker node with the previous node's output as input. Loop/checker/gate
+// config is stored but phase 1 passes input through.
+#[tauri::command]
+async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: String, api_key: Option<String>) -> Result<WorkflowExecution, String> {
+  let conn = db(&app)?;
+  let nodes: Vec<serde_json::Value> = workflow.nodes.as_array().cloned().unwrap_or_default();
+  let edges: Vec<serde_json::Value> = workflow.edges.as_array().cloned().unwrap_or_default();
+
+  // Build node map + adjacency from edges.
+  let mut node_map: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+  let mut start_ids: Vec<String> = Vec::new();
+  let mut incoming: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+  let mut outgoing: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+  for n in &nodes {
+    let id = n.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if id.is_empty() { continue; }
+    node_map.insert(id.clone(), n.clone());
+    incoming.entry(id.clone()).or_insert(0);
+  }
+  for e in &edges {
+    let from = e.get("from").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let to = e.get("to").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if from.is_empty() || to.is_empty() { continue; }
+    if !node_map.contains_key(&from) || !node_map.contains_key(&to) { continue; }
+    *incoming.entry(to.clone()).or_insert(0) += 1;
+    outgoing.entry(from.clone()).or_default().push(to);
+  }
+  for (id, deg) in &incoming {
+    if *deg == 0 { start_ids.push(id.clone()); }
+  }
+  if start_ids.is_empty() && !nodes.is_empty() {
+    start_ids = nodes.iter().filter_map(|n| n.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())).collect();
+  }
+
+  // BFS topological order.
+  let mut order: Vec<String> = Vec::new();
+  let mut queue: Vec<String> = start_ids;
+  while let Some(id) = queue.pop() {
+    order.push(id.clone());
+    if let Some(children) = outgoing.get(&id) {
+      for c in children {
+        let deg = incoming.entry(c.clone()).or_insert(0);
+        *deg = deg.saturating_sub(1);
+        if *deg == 0 { queue.push(c.clone()); }
+      }
+    }
+  }
+
+  let mut steps: Vec<WorkflowStep> = Vec::new();
+  let mut current_input = input;
+  let mut total_prompt = 0u64;
+  let mut total_completion = 0u64;
+
+  for node_id in order {
+    let Some(node) = node_map.get(&node_id) else { continue };
+    let ntype = node.get("type").and_then(|v| v.as_str()).unwrap_or("agent").to_string();
+    let label = node.get("label").and_then(|v| v.as_str()).unwrap_or(&node_id).to_string();
+    let mut events = Vec::new();
+    let output = match ntype.as_str() {
+      "agent" | "subagent" | "checker" => {
+        let agent_id = node.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if agent_id.is_empty() {
+          current_input.clone()
+        } else {
+          let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, home_path, permissions FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
+          let mut rows = stmt.query_map(params![agent_id], |row| {
+            let tool_ids: String = row.get(4)?;
+            let permissions: String = row.get(6)?;
+            Ok(AgentRequest {
+              id: row.get(0)?, name: row.get(1)?, objective: row.get(2)?, model: row.get(3)?,
+              tool_ids: parse_json_vec(&tool_ids), home_path: row.get(5)?, permissions: parse_json_vec(&permissions),
+            })
+          }).map_err(|e| e.to_string())?;
+          let Some(agent) = rows.next().transpose().map_err(|e| e.to_string())? else {
+            current_input.clone()
+          };
+          let (out, pt, ct) = run_agent_once(&app, &conn, &agent, &current_input, api_key.as_deref(), &mut events).await?;
+          total_prompt += pt; total_completion += ct;
+          out
+        }
+      }
+      _ => current_input.clone(), // trigger/loop/integration/gate: pass through in phase 1
+    };
+    steps.push(WorkflowStep { node_id: node_id.clone(), node_label: label, output: output.clone(), prompt_tokens: 0, completion_tokens: 0 });
+    current_input = output;
+  }
+
+  let final_output = current_input;
+  Ok(WorkflowExecution { steps, final_output, total_prompt_tokens: total_prompt, total_completion_tokens: total_completion })
+}
+
 fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
-    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, execute_agent])
+    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, execute_agent, execute_workflow])
     .run(tauri::generate_context!())
     .expect("error while running Local Agent OS");
 }

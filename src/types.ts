@@ -6,7 +6,28 @@ export type Edge = { id: string; from: string; to: string };
 export type ModelConfig = { id: string; provider: Provider; label: string; model: string; host?: string; apiKey?: string; enabled: boolean };
 export type Integration = { id: string; name: string; kind: string; enabled: boolean; configured: boolean; description: string };
 export type ToolParam = { name: string; type: string; description: string; required: boolean };
-export type Tool = { id: string; name: string; kind: string; integrationId: string; description: string; enabled: boolean; config: Record<string, string> & { params?: ToolParam[]; headers?: { name: string; value: string }[] } };
+export type ToolConfig = {
+  [key: string]: string | number | boolean | undefined | ToolParam[] | { name: string; value: string }[];
+  baseUrl?: string;
+  apiKey?: string;
+  method?: string;
+  url?: string;
+  body?: string;
+  name?: string;
+  params?: ToolParam[];
+  headers?: { name: string; value: string }[];
+};
+export type Tool = { id: string; name: string; kind: string; integrationId: string; description: string; enabled: boolean; config: ToolConfig };
+
+export type WorkflowNodeType = 'agent' | 'subagent' | 'loop' | 'checker' | 'integration' | 'gate' | 'trigger';
+export type WorkflowNode = {
+  id: string; type: WorkflowNodeType; agentId?: string; toolId?: string; label: string; x: number; y: number;
+  config?: Record<string, unknown>;
+};
+export type WorkflowEdge = { id: string; from: string; to: string };
+export type Workflow = { id: string; name: string; nodes: WorkflowNode[]; edges: WorkflowEdge[]; updatedAt: string };
+export type WorkflowRunStep = { nodeId: string; nodeLabel: string; output: string; promptTokens: number; completionTokens: number };
+export type WorkflowRunResult = { steps: WorkflowRunStep[]; finalOutput: string; totalPromptTokens: number; totalCompletionTokens: number };
 
 export type View = 'home' | 'agents' | 'canvas' | 'runs' | 'agent' | 'integrations' | 'tools' | 'models' | 'settings';
 

@@ -1,27 +1,37 @@
-import { useCallback, useEffect, useState } from 'react';
+import { create } from 'zustand';
 import type { Agent } from '../types';
 import { listAgents, saveAgent, deleteAgent as deleteAgentApi } from '../runtime';
 
-export function useAgents() {
-  const [agents, setAgents] = useState<Agent[]>([]);
+type AgentsState = {
+  agents: Agent[];
+  setAgents: (agents: Agent[] | ((prev: Agent[]) => Agent[])) => void;
+  loadAgents: () => Promise<void>;
+  persistAgent: (agent: Agent) => Promise<void>;
+  deleteAgent: (id: string) => Promise<void>;
+  createAgent: (draft: Partial<Agent>) => Promise<Agent>;
+};
 
-  useEffect(() => {
-    listAgents().then((stored) => {
-      if (stored.length) setAgents(stored);
-    }).catch(() => {});
-  }, []);
+export const useAgentsStore = create<AgentsState>((set) => ({
+  agents: [],
 
-  const persistAgent = useCallback(async (agent: Agent) => {
-    setAgents((prev) => prev.some((a) => a.id === agent.id) ? prev.map((a) => (a.id === agent.id ? agent : a)) : [...prev, agent]);
+  setAgents: (agents) => set((s) => ({ agents: typeof agents === 'function' ? agents(s.agents) : agents })),
+
+  loadAgents: async () => {
+    const stored = await listAgents().catch(() => [] as Agent[]);
+    if (stored.length) set({ agents: stored });
+  },
+
+  persistAgent: async (agent) => {
+    set((s) => ({ agents: s.agents.some((a) => a.id === agent.id) ? s.agents.map((a) => (a.id === agent.id ? agent : a)) : [...s.agents, agent] }));
     try { await saveAgent(agent); } catch { /* browser preview: no Tauri backend */ }
-  }, []);
+  },
 
-  const deleteAgent = useCallback(async (id: string) => {
-    setAgents((prev) => prev.filter((a) => a.id !== id));
+  deleteAgent: async (id) => {
+    set((s) => ({ agents: s.agents.filter((a) => a.id !== id) }));
     try { await deleteAgentApi(id); } catch { /* browser preview */ }
-  }, []);
+  },
 
-  const createAgent = useCallback(async (draft: Partial<Agent>) => {
+  createAgent: async (draft) => {
     const id = `agent-${Date.now()}`;
     const agent: Agent = {
       id, name: draft.name ?? 'New Agent', objective: draft.objective ?? '', model: draft.model ?? 'ollama:qwen3:8b',
@@ -29,9 +39,7 @@ export function useAgents() {
       permissions: draft.permissions ?? ['network'], homePath: `agents/${id}`, color: draft.color ?? '#22c55e',
       x: 160 + Math.random() * 160, y: 120 + Math.random() * 120,
     };
-    await persistAgent(agent);
+    await useAgentsStore.getState().persistAgent(agent);
     return agent;
-  }, [persistAgent]);
-
-  return { agents, setAgents, persistAgent, deleteAgent, createAgent };
-}
+  },
+}));

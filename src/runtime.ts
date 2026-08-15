@@ -1,9 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Agent, ModelConfig, RunEvent, Tool } from './types';
+import type { Agent, ModelConfig, RunEvent, Tool, Workflow, WorkflowRunResult } from './types';
 
-export async function executeAgent(agent: Agent, input: string, apiKey?: string): Promise<{ output: string; events: RunEvent[] }> {
+export async function executeAgent(agent: Agent, input: string, apiKey?: string): Promise<{ output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number }> {
   try {
-    return await invoke<{ output: string; events: RunEvent[] }>('execute_agent', { agent, input, apiKey });
+    return await invoke<{ output: string; events: RunEvent[]; runId: string; promptTokens: number; completionTokens: number }>('execute_agent', { agent, input, apiKey });
   } catch (error) {
     // Vite preview is deliberately useful too: Ollama accepts local browser requests.
     // If this is a Tauri error, preserve it so desktop runs never silently bypass storage.
@@ -68,4 +68,24 @@ export async function saveAgent(agent: Agent): Promise<void> {
 
 export async function deleteAgent(id: string): Promise<void> {
   await invoke('delete_agent', { id });
+}
+
+export async function listWorkflows(): Promise<Workflow[]> {
+  try {
+    return await invoke<Workflow[]>('list_workflows');
+  } catch {
+    return [];
+  }
+}
+
+export async function saveWorkflow(workflow: Workflow): Promise<void> {
+  await invoke('save_workflow', { workflow });
+}
+
+export async function deleteWorkflow(id: string): Promise<void> {
+  await invoke('delete_workflow', { id });
+}
+
+export async function executeWorkflow(workflow: Workflow, input: string): Promise<WorkflowRunResult> {
+  return await invoke<WorkflowRunResult>('execute_workflow', { workflow, input });
 }

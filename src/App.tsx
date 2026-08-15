@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Agent, DrawerForm, View } from './types';
 import { emptyModel, emptyTool } from './types';
-import { useAgents } from './hooks/useAgents';
-import { useRuns } from './hooks/useRuns';
-import { useModels } from './hooks/useModels';
-import { useTools } from './hooks/useTools';
-import { useWorkspace } from './hooks/useWorkspace';
+import { useAgentsStore } from './hooks/useAgents';
+import { useRunsStore } from './hooks/useRuns';
+import { useModelsStore } from './hooks/useModels';
+import { useToolsStore } from './hooks/useTools';
+import { useWorkflowsStore } from './hooks/useWorkflows';
+import { useWorkspaceStore } from './hooks/useWorkspace';
 import { Topbar } from './components/Topbar';
 import { Sidebar } from './components/Sidebar';
 import { AgentWindow } from './components/AgentWindow';
@@ -20,13 +21,36 @@ import { SettingsView } from './components/views/SettingsView';
 import { Plus } from 'lucide-react';
 
 export default function App() {
-  const { agents, setAgents, persistAgent, deleteAgent, createAgent } = useAgents();
-  const { runs, handleRun, clearRuns } = useRuns();
-  const { models, saveModel, deleteModel } = useModels();
-  const { tools, setTools, saveTool, deleteTool } = useTools();
-  const { integrations } = useWorkspace();
+  const agents = useAgentsStore((s) => s.agents);
+  const setAgents = useAgentsStore((s) => s.setAgents);
+  const persistAgent = useAgentsStore((s) => s.persistAgent);
+  const deleteAgent = useAgentsStore((s) => s.deleteAgent);
+  const createAgent = useAgentsStore((s) => s.createAgent);
+  const loadAgents = useAgentsStore((s) => s.loadAgents);
+  const runs = useRunsStore((s) => s.runs);
+  const handleRun = useRunsStore((s) => s.handleRun);
+  const clearRuns = useRunsStore((s) => s.clearRuns);
+  const models = useModelsStore((s) => s.models);
+  const saveModel = useModelsStore((s) => s.saveModel);
+  const deleteModel = useModelsStore((s) => s.deleteModel);
+  const loadModels = useModelsStore((s) => s.loadModels);
+  const tools = useToolsStore((s) => s.tools);
+  const setTools = useToolsStore((s) => s.setTools);
+  const saveTool = useToolsStore((s) => s.saveTool);
+  const deleteTool = useToolsStore((s) => s.deleteTool);
+  const loadTools = useToolsStore((s) => s.loadTools);
+  const integrations = useWorkspaceStore((s) => s.integrations);
+  const loadWorkspace = useWorkspaceStore((s) => s.loadWorkspace);
+  const workflows = useWorkflowsStore((s) => s.workflows);
+  const saveWorkflow = useWorkflowsStore((s) => s.saveWorkflow);
+  const deleteWorkflow = useWorkflowsStore((s) => s.deleteWorkflow);
+  const runWorkflow = useWorkflowsStore((s) => s.runWorkflow);
+  const loadWorkflows = useWorkflowsStore((s) => s.loadWorkflows);
 
-  const [edges] = useState<{ id: string; from: string; to: string }[]>([]);
+  useEffect(() => {
+    loadAgents(); loadModels(); loadTools(); loadWorkspace(); loadWorkflows();
+  }, [loadAgents, loadModels, loadTools, loadWorkspace, loadWorkflows]);
+
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [view, setView] = useState<View>('home');
   const [drawerForm, setDrawerForm] = useState<DrawerForm>(null);
@@ -55,10 +79,10 @@ export default function App() {
           {view === 'agents' && <AgentsView agents={agents} tools={tools} onOpen={openAgent} onCreate={addAgent} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); }} />}
           {view === 'canvas' && (
             <CanvasView
-              agents={agents} edges={edges} tools={tools} selectedAgentId={selectedAgentId}
-              onSelect={(id) => setSelectedAgentId(id)}
-              onOpen={() => { if (selectedAgentId) openAgent(selectedAgentId); }}
-              onCreate={addAgent}
+              agents={agents} tools={tools} workflows={workflows}
+              onSaveWorkflow={saveWorkflow}
+              onDeleteWorkflow={deleteWorkflow}
+              onRunWorkflow={runWorkflow}
             />
           )}
           {view === 'runs' && <RunsConsole runs={runs} agents={agents} onOpenAgent={openAgent} onClear={clearRuns} />}
