@@ -1,0 +1,58 @@
+@import "tailwindcss";
+@import "./styles.css" layer(base);
+
+/* Map the app's design tokens into Tailwind v4 theme */
+@theme {
+  --color-bg: #09090b;
+  --color-panel: #0f0f11;
+  --color-panel2: #18181b;
+  --color-text: #fafafa;
+  --color-muted: #a1a1aa;
+  --color-line: #27272a;
+  --color-purple: #e4e4e7;
+  --color-green: #22c55e;
+  --font-sans: 'Manrope', system-ui, sans-serif;
+  --font-mono: 'DM Mono', monospace;
+}
+
+html:root[data-theme="light"] {
+  --color-bg: #fafafa; --color-panel: #fff; --color-panel2: #f4f4f5;
+  --color-text: #18181b; --color-muted: #71717a; --color-line: #e4e4e7;
+}
+html:root[data-theme="cyber"] {
+  --color-bg: #08080a; --color-panel: #111113; --color-panel2: #1d1d22;
+  --color-text: #effffb; --color-muted: #9da4ac; --color-line: #34343a;
+  --color-purple: #00e5ff; --color-green: #d7ff38;
+}
+
+/* Alias the legacy --* tokens (still referenced by inline styles) to the theme */
+:root {
+  --bg: var(--color-bg);
+  --panel: var(--color-panel);
+  --panel2: var(--color-panel2);
+  --text: var(--color-text);
+  --muted: var(--color-muted);
+  --line: var(--color-line);
+  --purple: var(--color-purple);
+  --green: var(--color-green);
+}
+
+html, body { overflow: hidden; }
+main { scrollbar-width: thin; scrollbar-color: #52525b transparent; }
+main::-webkit-scrollbar { width: 10px; height: 10px; }
+main::-webkit-scrollbar-track { background: transparent; }
+main::-webkit-scrollbar-thumb { background: #3f3f46; border: 3px solid var(--bg); border-radius: 999px; }
+main::-webkit-scrollbar-thumb:hover { background: #71717a; }
+
+@keyframes drawer-in { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes dropdown-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Native window drag regions for the title bar */
+@utility app-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+@utility app-no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
