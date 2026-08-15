@@ -9,8 +9,10 @@
   --color-text: #fafafa;
   --color-muted: #a1a1aa;
   --color-line: #27272a;
-  --color-purple: #e4e4e7;
   --color-green: #22c55e;
+  --color-soft: #3f3f46;    /* subtle borders, scrollbar thumbs */
+  --color-mid: #52525b;     /* hover borders, secondary text */
+  --color-dim: #71717a;     /* strong hover accents */
   --font-sans: 'Manrope', system-ui, sans-serif;
   --font-mono: 'DM Mono', monospace;
 }
@@ -22,7 +24,7 @@ html:root[data-theme="light"] {
 html:root[data-theme="cyber"] {
   --color-bg: #08080a; --color-panel: #111113; --color-panel2: #1d1d22;
   --color-text: #effffb; --color-muted: #9da4ac; --color-line: #34343a;
-  --color-purple: #00e5ff; --color-green: #d7ff38;
+  --color-green: #d7ff38;
 }
 
 /* Alias the legacy --* tokens (still referenced by inline styles) to the theme */
@@ -33,8 +35,10 @@ html:root[data-theme="cyber"] {
   --text: var(--color-text);
   --muted: var(--color-muted);
   --line: var(--color-line);
-  --purple: var(--color-purple);
   --green: var(--color-green);
+  --soft: var(--color-soft);
+  --mid: var(--color-mid);
+  --dim: var(--color-dim);
 }
 
 html, body { overflow: hidden; }
@@ -43,6 +47,16 @@ main::-webkit-scrollbar { width: 10px; height: 10px; }
 main::-webkit-scrollbar-track { background: transparent; }
 main::-webkit-scrollbar-thumb { background: #3f3f46; border: 3px solid var(--bg); border-radius: 999px; }
 main::-webkit-scrollbar-thumb:hover { background: #71717a; }
+
+/* Dedicated thin scrollbars for overflow panels (drawer, dropdowns, chat, console) */
+.overflow-y-auto, .overflow-auto {
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 transparent;
+}
+.overflow-y-auto::-webkit-scrollbar, .overflow-auto::-webkit-scrollbar { width: 8px; height: 8px; }
+.overflow-y-auto::-webkit-scrollbar-track, .overflow-auto::-webkit-scrollbar-track { background: transparent; }
+.overflow-y-auto::-webkit-scrollbar-thumb, .overflow-auto::-webkit-scrollbar-thumb { background: #3f3f46; border: 2px solid transparent; background-clip: padding-box; border-radius: 999px; }
+.overflow-y-auto::-webkit-scrollbar-thumb:hover, .overflow-auto::-webkit-scrollbar-thumb:hover { background: #71717a; border: 2px solid transparent; background-clip: padding-box; }
 
 @keyframes drawer-in { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes dropdown-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }

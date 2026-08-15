@@ -48,7 +48,7 @@ export default function App() {
   return (
     <div className="relative flex h-screen flex-col overflow-hidden">
       <Topbar collapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed((c) => !c)} />
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         <Sidebar view={view} setView={setView} collapsed={sidebarCollapsed} />
         <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-bg px-9 py-8">
           {view === 'home' && <HomeView agents={agents} tools={tools} runs={runs} onOpen={openAgent} onCreate={addAgent} />}
@@ -68,21 +68,21 @@ export default function App() {
           {view === 'settings' && <SettingsView />}
           {view === 'agent' && selectedAgent && <AgentWindow agent={selectedAgent} tools={tools} models={models} integrations={integrations} runs={runs} onBack={() => setView('agents')} onSave={persistAgent} onDelete={async (id) => { await deleteAgent(id); setSelectedAgentId(null); setView('agents'); }} onRun={handleRun} />}
         </main>
+        {drawerForm && drawerForm.kind === 'tool' && (
+          <ToolFormDrawer
+            editing={drawerForm.editing} isNew={drawerForm.isNew} integrations={integrations}
+            onClose={() => setDrawerForm(null)}
+            onSave={async (t) => { await saveTool(t); setDrawerForm(null); }}
+          />
+        )}
+        {drawerForm && drawerForm.kind === 'model' && (
+          <ModelFormDrawer
+            editing={drawerForm.editing} isNew={drawerForm.isNew}
+            onClose={() => setDrawerForm(null)}
+            onSave={async (m) => { await saveModel(m); setDrawerForm(null); }}
+          />
+        )}
       </div>
-      {drawerForm && drawerForm.kind === 'tool' && (
-        <ToolFormDrawer
-          editing={drawerForm.editing} isNew={drawerForm.isNew} integrations={integrations}
-          onClose={() => setDrawerForm(null)}
-          onSave={async (t) => { await saveTool(t); setDrawerForm(null); }}
-        />
-      )}
-      {drawerForm && drawerForm.kind === 'model' && (
-        <ModelFormDrawer
-          editing={drawerForm.editing} isNew={drawerForm.isNew}
-          onClose={() => setDrawerForm(null)}
-          onSave={async (m) => { await saveModel(m); setDrawerForm(null); }}
-        />
-      )}
     </div>
   );
 }

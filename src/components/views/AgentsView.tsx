@@ -17,7 +17,7 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
       </header>
 
       {agents.length === 0 ? (
-        <div className="flex min-h-[370px] flex-col items-center justify-center rounded-[12px] border border-dashed border-[#3f3f46] text-center text-muted">
+        <div className="flex min-h-[370px] flex-col items-center justify-center rounded-[12px] border border-dashed border-soft text-center text-muted">
           <Bot size={28} className="mb-3 opacity-60" />
           <h2 className="mt-[13px] mb-[7px] text-text">No agents yet</h2>
           <p className="mb-5 max-w-[360px] text-[12px] leading-[1.6]">Create your first agent — give it a name, a model, and an objective, then start chatting.</p>
@@ -26,7 +26,7 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
       ) : (
         <div className="grid max-w-[1100px] grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
           {agents.map((a) => (
-            <div key={a.id} className="group relative min-h-[165px] cursor-pointer rounded-[10px] border border-line bg-panel p-[18px] text-left transition-transform duration-150 hover:-translate-y-0.5 hover:border-[#71717a]" onClick={() => onOpen(a.id)} style={{ borderTop: `2px solid ${a.color}` }}>
+            <div key={a.id} className="group relative min-h-[165px] cursor-pointer rounded-[10px] border border-line bg-panel p-[18px] text-left transition-transform duration-150 hover:-translate-y-0.5 hover:border-dim" onClick={() => onOpen(a.id)} style={{ borderTop: `2px solid ${a.color}` }}>
               <button
                 className="absolute top-2.5 right-2.5 grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-[#e11d48] hover:text-white"
                 title="Delete agent"

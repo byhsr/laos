@@ -23,7 +23,7 @@ export function MultiDropdown({ values, options, onChange, placeholder }: {
 
   return (
     <div className="relative" ref={ref}>
-      <button type="button" className="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-line bg-panel2 px-3 py-2.5 text-left text-[13px] text-text hover:border-[#52525b]" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-line bg-panel2 px-3 py-2.5 text-left text-[13px] text-text hover:border-mid" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span className="overflow-hidden text-ellipsis whitespace-nowrap">
           {selected.length === 0 ? (placeholder ?? 'Select…') : selected.map((s) => s.label).join(', ')}
         </span>
@@ -34,8 +34,8 @@ export function MultiDropdown({ values, options, onChange, placeholder }: {
           {options.map((o) => {
             const checked = values.includes(o.value);
             return (
-              <button key={o.value} type="button" className={`w-full cursor-pointer rounded-[5px] border-0 px-3 py-2.5 text-left text-[13px] text-text ${checked ? 'bg-[#27272a] font-semibold' : 'bg-transparent hover:bg-[#27272a]'}`} onClick={() => toggle(o.value)}>
-                <span className={`mr-2 inline-grid h-[15px] w-[15px] place-items-center rounded border border-[#52525b] text-[10px] ${checked ? 'border-[var(--purple)] bg-[var(--purple)] text-[#15131d]' : 'bg-transparent text-transparent'}`}>{checked ? '✓' : ''}</span>
+              <button key={o.value} type="button" className={`w-full cursor-pointer rounded-[5px] border-0 px-3 py-2.5 text-left text-[13px] text-text ${checked ? 'bg-line font-semibold' : 'bg-transparent hover:bg-line'}`} onClick={() => toggle(o.value)}>
+                <span className={`mr-2 inline-grid h-[15px] w-[15px] place-items-center rounded border border-mid text-[10px] ${checked ? 'border-[var(--green)] bg-[var(--green)] text-[#09090b]' : 'bg-transparent text-transparent'}`}>{checked ? '✓' : ''}</span>
                 {o.label}
               </button>
             );

@@ -66,8 +66,8 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
         <div>
           <div className="mb-2 flex items-center gap-1.5">
             <button className="cursor-pointer border-0 bg-none p-0 font-mono text-[10px] uppercase tracking-[1px] text-muted hover:text-text" onClick={onBack}>Agents</button>
-            <ChevronRight size={12} className="text-[#52525b]" />
-            <span className="font-mono text-[10px] uppercase tracking-[1px] text-[var(--purple)]">{agent.name}</span>
+            <ChevronRight size={12} className="text-mid" />
+            <span className="font-mono text-[10px] uppercase tracking-[1px] text-text">{agent.name}</span>
           </div>
           <h1 style={{ margin: 0, fontSize: 24 }}>{agent.name}</h1>
         </div>
@@ -78,7 +78,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
         {(['chat', 'runs', 'info', 'config'] as const).map((t) => {
           const locked = !complete && (t === 'chat' || t === 'runs');
           return (
-            <button key={t} className={`flex cursor-pointer items-center gap-1 border-0 bg-none px-[5px] py-2.5 text-[11px] capitalize ${tab === t ? 'border-b-2 border-[var(--purple)] text-text' : 'text-muted'}`} onClick={() => switchTab(t)}>
+            <button key={t} className={`flex cursor-pointer items-center gap-1 border-0 bg-none px-[5px] py-2.5 text-[11px] capitalize ${tab === t ? 'border-b-2 border-[var(--green)] text-text' : 'text-muted'}`} onClick={() => switchTab(t)}>
               {t}{locked && <Lock size={9} className="opacity-70" />}
             </button>
           );
@@ -96,7 +96,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
 
       {tab === 'chat' && (
         <div className="chat mt-4 flex h-[calc(100vh-320px)] min-h-[320px] flex-col overflow-hidden rounded-lg border border-line bg-panel">
-          <div className="chat-log flex-1 scrollbar-thin scrollbar-color-[#52525b_transparent] overflow-y-auto p-[18px]">
+          <div className="chat-log flex-1 scrollbar-thin scrollbar-color-mid overflow-y-auto p-[18px]">
             {messages.length === 0 && (
               <div className="chat-empty m-auto max-w-[360px] text-center text-[13px] leading-[1.6] text-muted">
                 <p>Say hello to {agent.name}. Send a task — the agent will use its tools ({agent.toolIds.map(toolName).join(', ') || 'none'}) to get things done.</p>
@@ -104,7 +104,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
             )}
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : m.role === 'tool' ? 'justify-center' : 'justify-start'}`}>
-                <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13.5px] leading-[1.6] whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-[#27272a] text-text' : m.role === 'assistant' ? 'rounded-tl-[3px] border border-line bg-panel2' : 'border-0 bg-transparent p-1 font-mono text-[11px] tracking-[0.3px] text-muted'}`}>
+                <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13.5px] leading-[1.6] whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : m.role === 'assistant' ? 'rounded-tl-[3px] border border-line bg-panel2' : 'border-0 bg-transparent p-1 font-mono text-[11px] tracking-[0.3px] text-muted'}`}>
                   {m.role === 'tool' && <span className="opacity-90">⚙ {m.content}{m.detail ? ` — ${m.detail}` : ''}</span>}
                   {(m.role === 'user' || m.role === 'assistant') && <span>{m.content}</span>}
                 </div>
@@ -137,13 +137,14 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
               <div className="console-head flex items-center gap-2.5 text-[11px]">
                 <span className={`text-muted ${statusColor(r.status)}`}>{r.status === 'running' ? '▸' : r.status === 'completed' ? '✓' : '✕'}</span>
                 <span className="text-muted">{r.model}</span>
-                <span className="ml-auto text-[#52525b]">{r.startedAt ? new Date(r.startedAt).toLocaleTimeString() : ''}</span>
+                {(r.promptTokens || r.completionTokens) ? <span className="text-mid">{((r.promptTokens ?? 0) + (r.completionTokens ?? 0)).toLocaleString()} tok</span> : null}
+                <span className="ml-auto text-mid">{r.startedAt ? new Date(r.startedAt).toLocaleTimeString() : ''}</span>
               </div>
               <div className="my-1.5 text-[#d4d4d8]">$ {r.input}</div>
               {r.events.map((ev, i) => (
                 <div key={i} className="console-line flex items-baseline gap-2">
-                  <span className="flex-none text-[#52525b]">{ev.time}</span>
-                  <span className={`w-10 flex-none text-muted ${ev.type === 'tool' ? 'text-[#38bdf8]' : ev.type === 'thought' ? 'text-[#a78bfa]' : 'text-[#22c55e]'}`}>{ev.type === 'tool' ? 'tool' : ev.type === 'thought' ? 'think' : 'out'}</span>
+                  <span className="flex-none text-mid">{ev.time}</span>
+                  <span className={`w-10 flex-none text-muted ${ev.type === 'tool' ? 'text-[#38bdf8]' : ev.type === 'thought' ? 'text-[#c4b5fd]' : 'text-[#22c55e]'}`}>{ev.type === 'tool' ? 'tool' : ev.type === 'thought' ? 'think' : 'out'}</span>
                   <span className={`text-[#a1a1aa] ${ev.type === 'tool' ? 'text-[#7dd3fc]' : ev.type === 'thought' ? 'text-[#c4b5fd]' : ''}`}>{ev.title}{ev.detail ? ` — ${ev.detail}` : ''}</span>
                 </div>
               ))}
@@ -176,7 +177,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
               value={draft.objective}
               onChange={(e) => setDraft({ ...draft, objective: e.target.value })}
               placeholder="Describe what this agent should do, its role, how it should behave, what format to return…"
-              className="prompt-editor mt-[7px] min-h-[300px] w-full flex-1 resize-none rounded-lg border border-line bg-panel2 px-4 py-3.5 font-sans text-[15px] leading-[1.7] text-text outline-none placeholder:text-muted focus:border-[#52525b]"
+              className="prompt-editor mt-[7px] min-h-[300px] w-full flex-1 resize-none rounded-lg border border-line bg-panel2 px-4 py-3.5 font-sans text-[15px] leading-[1.7] text-text outline-none placeholder:text-muted focus:border-mid"
             />
             <p className="config-hint mt-3 flex-none text-[12px] leading-[1.55] text-muted">This becomes the agent's system prompt. It runs on every task, so be specific about role, tone, and output format.</p>
           </div>

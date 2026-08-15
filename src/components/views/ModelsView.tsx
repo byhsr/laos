@@ -56,35 +56,42 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
   };
 
   const inputCls = 'w-full rounded-[6px] border border-line bg-panel2 px-3 py-2.5 text-text';
+  const labelCls = 'mt-4 mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase';
 
   return (
-    <Drawer title={isNew ? 'Add model' : `Edit ${form.label}`} onClose={onClose}>
-      <div className="model-config max-w-[760px] rounded-[10px] border border-line bg-panel p-[22px]">
+    <Drawer
+      title={isNew ? 'Add model' : `Edit ${form.label}`}
+      onClose={onClose}
+      initialWidth={Math.round(window.innerWidth / 2)}
+      resizable
+      headerAction={<button className="primary" disabled={saving} onClick={save}><Check size={13} />{saving ? 'Saving…' : 'Save'}</button>}
+    >
+      <div className="w-full rounded-[10px] border border-line bg-panel p-[22px]">
         <p className="text-[12px] leading-[1.6] text-muted" style={{ margin: '0 0 14px' }}>API keys are stored locally in the app's SQLite database — they never leave your machine.</p>
 
-        <label className="block text-[11px] font-bold text-muted">PROVIDER</label>
+        <label className={labelCls}>PROVIDER</label>
         <Dropdown
           value={form.provider}
           options={[{ value: 'ollama', label: 'Ollama (local)' }, { value: 'openrouter', label: 'OpenRouter' }]}
           onChange={(v) => setForm({ ...form, provider: v as 'ollama' | 'openrouter' })}
         />
 
-        <label className="mt-3.5 block text-[11px] font-bold text-muted">LABEL</label>
+        <label className={labelCls}>LABEL</label>
         <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="e.g. Qwen3 8B" className={inputCls} />
 
-        <label className="mt-3.5 block text-[11px] font-bold text-muted">MODEL ID</label>
+        <label className={labelCls}>MODEL ID</label>
         <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={form.provider === 'ollama' ? 'qwen3:8b' : 'anthropic/claude-3.5-haiku'} className={inputCls} />
 
         {form.provider === 'ollama' && (
           <>
-            <label className="mt-3.5 block text-[11px] font-bold text-muted">HOST</label>
+            <label className={labelCls}>HOST</label>
             <input value={form.host ?? ''} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder="http://localhost:11434" className={inputCls} />
           </>
         )}
 
         {form.provider === 'openrouter' && (
           <>
-            <label className="mt-3.5 block text-[11px] font-bold text-muted">API KEY</label>
+            <label className={labelCls}>API KEY</label>
             <input type="password" value={form.apiKey ?? ''} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder="sk-or-v1-…" className={inputCls} />
             <p className="text-[12px] text-muted" style={{ margin: '6px 0 0' }}>Runs using this model will read the key automatically.</p>
           </>
@@ -97,11 +104,6 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
         </div>
 
         {error && <p style={{ fontSize: 11, color: '#f87171', margin: '10px 0 0' }}>{error}</p>}
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button className="secondary" onClick={onClose}>Cancel</button>
-          <button className="primary" disabled={saving} onClick={save}><Check size={13} />{saving ? 'Saving…' : 'Save'}</button>
-        </div>
       </div>
     </Drawer>
   );

@@ -15,7 +15,7 @@ struct AgentRequest { id: String, name: String, objective: String, model: String
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Execution { output: String, events: Vec<ExecutionEvent> }
+struct Execution { output: String, events: Vec<ExecutionEvent>, run_id: String, prompt_tokens: u64, completion_tokens: u64 }
 #[derive(Serialize)]
 struct ExecutionEvent { time: String, #[serde(rename = "type")] kind: String, title: String, detail: Option<String> }
 
@@ -47,7 +47,7 @@ struct ToolCall { id: String, #[serde(rename = "type")] kind: String, function: 
 struct ToolCallFunction { name: String, arguments: serde_json::Value }
 
 #[derive(Deserialize)]
-struct ChatResponse { message: ChatMessage }
+struct ChatResponse { message: ChatMessage, #[serde(default)] prompt_eval_count: u64, #[serde(default)] eval_count: u64 }
 
 // Firecrawl response shapes
 #[derive(Deserialize)]
@@ -298,7 +298,7 @@ fn db(app: &AppHandle) -> Result<Connection, String> {
   let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
   fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
   let conn = Connection::open(dir.join("local-agent-os.sqlite3")).map_err(|e| e.to_string())?;
-  conn.execute_batch("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, started_at TEXT NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL, input TEXT NOT NULL, output TEXT); CREATE TABLE IF NOT EXISTS memory (agent_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(agent_id,key)); CREATE TABLE IF NOT EXISTS model_configs (id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL, model TEXT NOT NULL, host TEXT, api_key TEXT, enabled INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS tools (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, integration_id TEXT NOT NULL, description TEXT, enabled INTEGER NOT NULL DEFAULT 1, config_json TEXT NOT NULL DEFAULT '{}'); CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, objective TEXT NOT NULL, model TEXT NOT NULL, tool_ids TEXT NOT NULL DEFAULT '[]', integrations TEXT NOT NULL DEFAULT '[]', memory INTEGER NOT NULL DEFAULT 1, permissions TEXT NOT NULL DEFAULT '[]', home_path TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#8b5cf6', x REAL NOT NULL DEFAULT 0, y REAL NOT NULL DEFAULT 0);") .map_err(|e| e.to_string())?;
+  conn.execute_batch("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, started_at TEXT NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL, input TEXT NOT NULL, output TEXT, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS memory (agent_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(agent_id,key)); CREATE TABLE IF NOT EXISTS model_configs (id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL, model TEXT NOT NULL, host TEXT, api_key TEXT, enabled INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS tools (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, integration_id TEXT NOT NULL, description TEXT, enabled INTEGER NOT NULL DEFAULT 1, config_json TEXT NOT NULL DEFAULT '{}'); CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, objective TEXT NOT NULL, model TEXT NOT NULL, tool_ids TEXT NOT NULL DEFAULT '[]', integrations TEXT NOT NULL DEFAULT '[]', memory INTEGER NOT NULL DEFAULT 1, permissions TEXT NOT NULL DEFAULT '[]', home_path TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#8b5cf6', x REAL NOT NULL DEFAULT 0, y REAL NOT NULL DEFAULT 0);") .map_err(|e| e.to_string())?;
   Ok(conn)
 }
 
@@ -487,8 +487,8 @@ fn tool_schemas(tools: &[Box<dyn AgentTool>]) -> Vec<serde_json::Value> {
   tools.iter().map(|t| serde_json::json!({ "type": "function", "function": { "name": t.name(), "description": t.description(), "parameters": t.params_schema() } })).collect()
 }
 
-// Returns (final_text, events, used_tools).
-async fn run_ollama_chat(model: &str, prompt: &str, agent: &AgentRequest, tools: &[Box<dyn AgentTool>]) -> Result<(String, Vec<ExecutionEvent>, bool), String> {
+// Returns (final_text, events, used_tools, prompt_tokens, completion_tokens).
+async fn run_ollama_chat(model: &str, prompt: &str, agent: &AgentRequest, tools: &[Box<dyn AgentTool>]) -> Result<(String, Vec<ExecutionEvent>, bool, u64, u64), String> {
   let mut events = Vec::new();
   let mut messages = vec![
     ChatMessage { role: "system".into(), content: Some(format!("You are {}. Objective: {}\n\nUse tools when you need current or external information. Call a tool, wait for its result, then continue. Cite URLs you use.", agent.name, agent.objective)), tool_calls: None, tool_call_id: None },
@@ -496,11 +496,15 @@ async fn run_ollama_chat(model: &str, prompt: &str, agent: &AgentRequest, tools:
   ];
   let client = reqwest::Client::new();
   let mut used_tools = false;
+  let mut prompt_tokens = 0u64;
+  let mut completion_tokens = 0u64;
   for _round in 0..MAX_TOOL_ROUNDS {
     let body = ChatRequest { model: model.into(), messages: messages.clone(), tools: Some(tool_schemas(tools)), stream: false };
     let response = client.post("http://127.0.0.1:11434/api/chat").json(&body).send().await.map_err(|e| format!("Could not reach Ollama. Start it at http://127.0.0.1:11434 ({e})"))?;
     if !response.status().is_success() { return Err(format!("Ollama returned {}", response.status())); }
     let parsed: ChatResponse = response.json().await.map_err(|e| format!("Could not parse Ollama tool response: {e}"))?;
+    prompt_tokens += parsed.prompt_eval_count;
+    completion_tokens += parsed.eval_count;
     let reply = parsed.message;
     if let Some(calls) = &reply.tool_calls {
       used_tools = true;
@@ -527,7 +531,7 @@ async fn run_ollama_chat(model: &str, prompt: &str, agent: &AgentRequest, tools:
       }
     } else {
       let content = reply.content.unwrap_or_default();
-      return Ok((content, events, used_tools));
+      return Ok((content, events, used_tools, prompt_tokens, completion_tokens));
     }
   }
   Err("Tool loop exceeded the maximum number of rounds.".into())
@@ -553,9 +557,12 @@ async fn execute_agent(app: AppHandle, agent: AgentRequest, input: String, api_k
       events.push(ExecutionEvent { time: now(), kind: "thought".into(), title: "Asking Ollama".into(), detail: Some(model.into()) });
       let response = reqwest::Client::new().post("http://127.0.0.1:11434/api/generate").json(&serde_json::json!({"model":model,"prompt":prompt,"stream":false})).send().await.map_err(|e| format!("Could not reach Ollama. Start it at http://127.0.0.1:11434 ({e})"))?;
       if !response.status().is_success() { return Err(format!("Ollama returned {}", response.status())); }
-      let output = response.json::<serde_json::Value>().await.map_err(|e| e.to_string())?["response"].as_str().unwrap_or("No response from Ollama.").to_string();
+      let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+      let output = json["response"].as_str().unwrap_or("No response from Ollama.").to_string();
+      let prompt_tokens = json["prompt_eval_count"].as_u64().unwrap_or(0);
+      let completion_tokens = json["eval_count"].as_u64().unwrap_or(0);
       events.push(ExecutionEvent { time: now(), kind: "result".into(), title: "Generated final result".into(), detail: None });
-      Ok((output, Vec::new(), false))
+      Ok((output, Vec::new(), false, prompt_tokens, completion_tokens))
     }
   } else if let Some(model) = agent.model.strip_prefix("openrouter:") {
     let key = api_key
@@ -569,23 +576,24 @@ async fn execute_agent(app: AppHandle, agent: AgentRequest, input: String, api_k
       .header("X-Title", "Local Agent OS")
       .json(&serde_json::json!({"model":model,"messages":[{"role":"user","content":prompt}]})).send().await.map_err(|e| format!("Could not reach OpenRouter: {e}"))?;
     if !response.status().is_success() { return Err(format!("OpenRouter returned {}", response.status())); }
-    let output = response.json::<serde_json::Value>().await.map_err(|e| e.to_string())?["choices"][0]["message"]["content"].as_str().unwrap_or("OpenRouter returned no text.").to_string();
+    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    let output = json["choices"][0]["message"]["content"].as_str().unwrap_or("OpenRouter returned no text.").to_string();
+    let prompt_tokens = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
+    let completion_tokens = json["usage"]["completion_tokens"].as_u64().unwrap_or(0);
     events.push(ExecutionEvent { time: now(), kind: "result".into(), title: "Generated final result".into(), detail: None });
-    Ok((output, Vec::new(), false))
+    Ok((output, Vec::new(), false, prompt_tokens, completion_tokens))
   } else { return Err("Unknown model provider. Select Ollama or OpenRouter in the agent Model tab.".into()); };
-  let output = match result {
-    Ok((text, mut tool_events, _used_tools)) => {
-      events.append(&mut tool_events);
-      text
-    }
+  let (output, mut tool_events, _used_tools, prompt_tokens, completion_tokens) = match result {
+    Ok(v) => v,
     Err(e) => {
       let _ = conn.execute("UPDATE runs SET status='failed' WHERE id=?1", params![run_id]);
       return Err(e);
     }
   };
+  events.append(&mut tool_events);
   fs::write(home.join("outputs").join(format!("{run_id}.txt")), &output).map_err(|e| e.to_string())?;
-  conn.execute("UPDATE runs SET status='completed', output=?1 WHERE id=?2", params![output, run_id]).map_err(|e| e.to_string())?;
-  Ok(Execution { output, events })
+  conn.execute("UPDATE runs SET status='completed', output=?1, prompt_tokens=?2, completion_tokens=?3 WHERE id=?4", params![output, prompt_tokens, completion_tokens, run_id]).map_err(|e| e.to_string())?;
+  Ok(Execution { output, events, run_id, prompt_tokens, completion_tokens })
 }
 
 fn main() {

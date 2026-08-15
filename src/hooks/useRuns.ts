@@ -11,7 +11,7 @@ export function useRuns() {
     try {
       const result = await executeAgent(agent, input);
       const events: RunEvent[] = result.events.length ? result.events : [{ time: new Date().toLocaleTimeString(), type: 'result', title: 'Generated final result' }];
-      setRuns((prev) => prev.map((r) => (r.id === run.id ? { ...r, status: 'completed', endedAt: new Date().toISOString(), events, output: result.output } : r)));
+      setRuns((prev) => prev.map((r) => (r.id === run.id ? { ...r, status: 'completed', endedAt: new Date().toISOString(), events, output: result.output, promptTokens: result.promptTokens ?? 0, completionTokens: result.completionTokens ?? 0 } : r)));
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

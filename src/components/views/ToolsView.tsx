@@ -27,7 +27,7 @@ export function ToolsView({ tools, integrations, onAdd, onEdit, onDelete }: {
           const integration = integrations.find((i) => i.id === t.integrationId);
           return (
             <div key={t.id} className="flex items-center gap-[15px] rounded-[9px] border border-line bg-panel p-[18px]">
-              <span className="grid h-10 w-10 place-items-center rounded-lg bg-panel2 text-[20px] text-[var(--purple)]"><Wrench size={18} /></span>
+              <span className="grid h-10 w-10 place-items-center rounded-lg bg-panel2 text-[20px] text-muted"><Wrench size={18} /></span>
               <div className="flex-1">
                 <b style={{ fontSize: 13 }}>{t.name}</b>
                 <span className="block text-[11px] text-muted">{t.kind.replace('_', ' ')} · {integration?.name ?? t.integrationId}{t.description ? ` · ${t.description}` : ''}</span>
@@ -82,18 +82,24 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
   const setHeaders = (headers: { name: string; value: string }[]) => setCfg({ headers });
 
   const inputCls = 'w-full rounded-[6px] border border-line bg-panel2 px-3 py-2.5 text-text';
-  const labelCls = 'mt-3.5 block text-[11px] font-bold text-muted';
+  const labelCls = 'mt-4 mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase';
 
   return (
-    <Drawer title={isNew ? 'Add tool' : `Edit ${form.name}`} onClose={onClose}>
-      <div className="model-config max-w-[760px] rounded-[10px] border border-line bg-panel p-[22px]">
+    <Drawer
+      title={isNew ? 'Add tool' : `Edit ${form.name}`}
+      onClose={onClose}
+      initialWidth={Math.round(window.innerWidth / 2)}
+      resizable
+      headerAction={<button className="primary" disabled={saving} onClick={save}><Check size={13} />{saving ? 'Saving…' : 'Save'}</button>}
+    >
+      <div className="w-full rounded-[10px] border border-line bg-panel p-[22px]">
         <p className="text-[12px] leading-[1.6] text-muted" style={{ margin: '0 0 14px' }}>
           {isApi
             ? 'Configure a REST endpoint. The LLM will see the params below as callable arguments, and you can reference them in the URL, headers, and body with {paramName}.'
             : 'Tools are reusable capabilities you attach to any agent.'}
         </p>
 
-        <label className="block text-[11px] font-bold text-muted">NAME</label>
+        <label className={labelCls}>NAME</label>
         <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={isApi ? 'e.g. GitHub API' : 'e.g. Web Search'} className={inputCls} />
 
         <label className={labelCls}>KIND</label>
@@ -135,10 +141,10 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
             <label className={labelCls}>HEADERS</label>
             <div className="grid gap-1.5">
               {(form.config.headers ?? []).map((h, i) => (
-                <div key={i} className="flex gap-1.5">
-                  <input value={h.name} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], name: e.target.value }; setHeaders(hs); }} placeholder="Header" className={`${inputCls} flex-1`} />
-                  <input value={h.value} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], value: e.target.value }; setHeaders(hs); }} placeholder="Value (e.g. Bearer {apiKey})" className={`${inputCls} flex-1`} />
-                  <button className="secondary" onClick={() => setHeaders((form.config.headers ?? []).filter((_, j) => j !== i))}><Trash2 size={12} /></button>
+                <div key={i} className="flex flex-wrap gap-1.5">
+                  <input value={h.name} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], name: e.target.value }; setHeaders(hs); }} placeholder="Header" className={`${inputCls} min-w-[120px] flex-1`} />
+                  <input value={h.value} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], value: e.target.value }; setHeaders(hs); }} placeholder="Value (e.g. Bearer {apiKey})" className={`${inputCls} min-w-[160px] flex-[2]`} />
+                  <button className="secondary shrink-0" onClick={() => setHeaders((form.config.headers ?? []).filter((_, j) => j !== i))}><Trash2 size={12} /></button>
                 </div>
               ))}
               <button className="secondary justify-self-start" onClick={() => setHeaders([...(form.config.headers ?? []), { name: '', value: '' }])}><Plus size={12} />Add header</button>
@@ -157,12 +163,12 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
             <div className="grid gap-2">
               {(form.config.params ?? []).map((p, i) => (
                 <div key={i} className="rounded-[6px] border border-line bg-panel2 p-2.5">
-                  <div className="flex gap-1.5">
-                    <input value={p.name} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], name: e.target.value }; setParams(ps); }} placeholder="paramName" className={`${inputCls} flex-1`} />
-                    <select value={p.type} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], type: e.target.value }; setParams(ps); }} className={`${inputCls} w-28`}>
+                  <div className="flex flex-wrap gap-1.5">
+                    <input value={p.name} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], name: e.target.value }; setParams(ps); }} placeholder="paramName" className={`${inputCls} min-w-[120px] flex-1`} />
+                    <select value={p.type} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], type: e.target.value }; setParams(ps); }} className={`${inputCls} w-28 shrink-0`}>
                       {PARAM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
-                    <button className="secondary" onClick={() => setParams((form.config.params ?? []).filter((_, j) => j !== i))}><Trash2 size={12} /></button>
+                    <button className="secondary shrink-0" onClick={() => setParams((form.config.params ?? []).filter((_, j) => j !== i))}><Trash2 size={12} /></button>
                   </div>
                   <input value={p.description} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], description: e.target.value }; setParams(ps); }} placeholder="What is this param? The LLM uses this to fill it." className={`${inputCls} mt-1.5`} />
                   <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted">
@@ -208,11 +214,6 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
         </div>
 
         {error && <p style={{ fontSize: 11, color: '#f87171', margin: '10px 0 0' }}>{error}</p>}
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button className="secondary" onClick={onClose}>Cancel</button>
-          <button className="primary" disabled={saving} onClick={save}><Check size={13} />{saving ? 'Saving…' : 'Save'}</button>
-        </div>
       </div>
     </Drawer>
   );

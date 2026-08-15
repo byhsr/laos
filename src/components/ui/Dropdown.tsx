@@ -19,7 +19,7 @@ export function Dropdown({ value, options, onChange, placeholder }: {
 
   return (
     <div className="relative" ref={ref}>
-      <button type="button" className="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-line bg-panel2 px-3 py-2.5 text-left text-[13px] text-text hover:border-[#52525b]" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-line bg-panel2 px-3 py-2.5 text-left text-[13px] text-text hover:border-mid" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span>{selected ? selected.label : (placeholder ?? 'Select…')}</span>
         <ChevronRight size={13} className="rotate-90 text-muted transition-transform duration-150 group-aria-expanded:-rotate-90" />
       </button>
@@ -28,7 +28,7 @@ export function Dropdown({ value, options, onChange, placeholder }: {
           {options.map((o) => (
             <button
               key={o.value} type="button"
-              className={`w-full cursor-pointer rounded-[5px] border-0 px-3 py-2.5 text-left text-[13px] text-text ${o.value === value ? 'bg-[#27272a] font-semibold' : 'bg-transparent hover:bg-[#27272a]'}`}
+              className={`w-full cursor-pointer rounded-[5px] border-0 px-3 py-2.5 text-left text-[13px] text-text ${o.value === value ? 'bg-line font-semibold' : 'bg-transparent hover:bg-line'}`}
               onClick={() => { onChange(o.value); setOpen(false); }}
             >
               {o.label}

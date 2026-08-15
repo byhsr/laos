@@ -26,7 +26,7 @@ export function useAgents() {
     const agent: Agent = {
       id, name: draft.name ?? 'New Agent', objective: draft.objective ?? '', model: draft.model ?? 'ollama:qwen3:8b',
       toolIds: draft.toolIds ?? [], integrations: draft.integrations ?? [], memory: true,
-      permissions: draft.permissions ?? ['network'], homePath: `agents/${id}`, color: draft.color ?? '#8b5cf6',
+      permissions: draft.permissions ?? ['network'], homePath: `agents/${id}`, color: draft.color ?? '#22c55e',
       x: 160 + Math.random() * 160, y: 120 + Math.random() * 120,
     };
     await persistAgent(agent);

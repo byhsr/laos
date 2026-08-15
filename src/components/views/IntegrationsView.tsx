@@ -12,7 +12,7 @@ export function IntegrationsView({ integrations }: {
       <div className="grid max-w-[900px] gap-2.5">
         {integrations.map((i) => (
           <div key={i.id} className="flex items-center gap-[15px] rounded-[9px] border border-line bg-panel p-[18px]">
-            <span className="grid h-10 w-10 place-items-center rounded-lg bg-panel2 text-[20px] text-[var(--purple)]"><Globe size={18} /></span>
+            <span className="grid h-10 w-10 place-items-center rounded-lg bg-panel2 text-[20px] text-muted"><Globe size={18} /></span>
             <div className="flex-1">
               <b style={{ fontSize: 13 }}>{i.name}</b>
               <span className="block text-[11px] text-muted">{i.kind} · {i.description}</span>
