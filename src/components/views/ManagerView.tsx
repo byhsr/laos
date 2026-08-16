@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, CornerDownLeft, MessageSquare, Send, Settings2, Trash2 } from 'lucide-react';
+import { Bot, CornerDownLeft, MessageSquare, Send, Trash2 } from 'lucide-react';
 import type { Agent, Integration, ModelConfig, Task } from '../../types';
 import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
 import { useTasksStore } from '../../hooks/useTasks';
