@@ -18,14 +18,14 @@ export function Toaster() {
   const dismiss = useToastStore((s) => s.dismiss);
 
   return (
-    <div className="pointer-events-none fixed top-10 right-4 z-[100] flex w-80 flex-col gap-2">
+    <div className="pointer-events-none fixed top-10 right-4 z-[100] flex min-w-80 max-w-md flex-col gap-2">
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`pointer-events-auto flex animate-[dropdown-in_140ms_ease-out] items-center gap-2.5 rounded-lg border border-line bg-panel px-3.5 py-2.5 shadow-[0_10px_30px_#000a] ${KIND_STYLES[t.kind]}`}
+          className={`pointer-events-auto flex animate-[dropdown-in_140ms_ease-out] items-start gap-2.5 rounded-lg border border-line bg-panel px-3.5 py-2.5 shadow-[0_10px_30px_#000a] ${KIND_STYLES[t.kind]}`}
         >
           {KIND_ICON[t.kind]}
-          <span className="flex-1 text-[12px] leading-1.5 text-text">{t.message}</span>
+          <span className="min-h-4 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-text">{t.message}</span>
           <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-text" onClick={() => dismiss(t.id)}><X size={12} /></button>
         </div>
       ))}

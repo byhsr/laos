@@ -17,7 +17,7 @@ export const useToastStore = create<ToastState>((set, get) => ({
   toast: (message, kind = 'info') => {
     const id = ++toastId;
     set((s) => ({ toasts: [...s.toasts, { id, kind, message }] }));
-    setTimeout(() => get().dismiss(id), 3500);
+    setTimeout(() => get().dismiss(id), 5000);
   },
 
   dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),

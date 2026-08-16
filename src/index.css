@@ -10,6 +10,7 @@
   --color-muted: #a1a1aa;
   --color-line: #27272a;
   --color-green: #22c55e;
+  --color-accent: #e4e4e7;  /* brand accent — neutral for now */
   --color-soft: #3f3f46;    /* subtle borders, scrollbar thumbs */
   --color-mid: #52525b;     /* hover borders, secondary text */
   --color-dim: #71717a;     /* strong hover accents */
@@ -36,6 +37,8 @@ html:root[data-theme="cyber"] {
   --muted: var(--color-muted);
   --line: var(--color-line);
   --green: var(--color-green);
+  --purple: var(--color-accent);
+  --accent: var(--color-accent);
   --soft: var(--color-soft);
   --mid: var(--color-mid);
   --dim: var(--color-dim);

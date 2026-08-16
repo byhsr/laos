@@ -81,43 +81,45 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
         <div><span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Integrations</h1></div>
       </header>
-      <div className="grid max-w-[1100px] grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid max-w-[1100px] grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {integrations.map((i) => {
           const isOAuth = OAUTH_PROVIDERS.includes(i.id);
           return (
-            <div key={i.id} className="rounded-[9px] border border-line bg-panel p-[18px]">
-              <div className="flex items-center gap-[15px]">
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-panel2 text-text">{LOGOS[i.id] ?? <Key size={18} className="text-muted" />}</span>
-                <div className="min-w-0 flex-1">
-                  <b style={{ fontSize: 13 }}>{i.name}</b>
-                  <span className="block text-[11px] text-muted">{i.provider} · {i.actions.length} actions</span>
+            <div key={i.id} className="rounded-[9px] border border-dashed border-line bg-panel p-[18px]">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex min-w-0 items-start gap-4">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-panel2 text-text">{LOGOS[i.id] ?? <Key size={18} className="text-muted" />}</span>
+                  <div className="min-w-0">
+                    <b style={{ fontSize: 13 }}>{i.name}</b>
+                    <span className="mt-1 block text-[11px] text-muted">{i.provider} · {i.actions.length} actions</span>
+                  </div>
                 </div>
-                <span className="mr-[7px] shrink-0 text-[10px] text-muted">
-                  <i className={`mr-1.5 inline-block h-[7px] w-[7px] rounded-full ${i.connected ? 'bg-[var(--green)]' : 'bg-[#f79009]'}`} />
-                  {i.connected ? 'Connected' : 'Not connected'}
-                </span>
-              </div>
-
-              <div className="mt-3.5 flex flex-wrap items-center gap-2">
                 {i.connected ? (
-                  <>
-                    <button className="secondary" onClick={() => onTest(i.id)} disabled={testing === i.id}><RefreshCw size={12} />{testing === i.id ? 'Testing…' : 'Test'}</button>
-                    <button className="secondary" onClick={() => setDrawerId(i.id)}><Key size={12} />Config</button>
-                  </>
+                  <div className="flex shrink-0 gap-1.5">
+                    <button title="Test connection" className="secondary grid h-8 w-8 place-items-center p-0" onClick={() => onTest(i.id)} disabled={testing === i.id}><RefreshCw size={12} /></button>
+                    <button title="Configure" className="secondary grid h-8 w-8 place-items-center p-0" onClick={() => setDrawerId(i.id)}><Key size={12} /></button>
+                  </div>
                 ) : isOAuth ? (
-                  <button className="primary" onClick={() => onConnect(i.id)}><Plug size={13} />Connect</button>
+                  <button title="Connect" className="primary grid h-8 w-8 shrink-0 place-items-center p-0" onClick={() => onConnect(i.id)}><Plug size={12} /></button>
                 ) : (
-                  <button className="primary" onClick={() => setDrawerId(i.id)}><Key size={13} />Configure</button>
+                  <button title="Configure" className="primary grid h-8 w-8 shrink-0 place-items-center p-0" onClick={() => setDrawerId(i.id)}><Key size={12} /></button>
                 )}
               </div>
 
               {i.connected && i.actions.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1.5">
+                <div className="mt-4 flex flex-wrap gap-1.5">
                   {i.actions.map((a) => (
                     <span key={a.name} title={a.description} className="rounded bg-panel2 px-2 py-1 font-mono text-[10px] text-muted">{a.name}</span>
                   ))}
                 </div>
               )}
+
+              <div className="mt-4 flex items-center gap-2">
+                <span className="text-[9.5px] text-muted">
+                  <i className={`mr-1.5 inline-block h-[6px] w-[6px] rounded-full ${i.connected ? 'bg-[var(--green)]' : 'bg-[#52525b]'}`} />
+                  {i.connected ? 'Connected' : 'Not connected'}
+                </span>
+              </div>
             </div>
           );
         })}
