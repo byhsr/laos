@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { Check, Key, Plug, RefreshCw, Rocket, X } from 'lucide-react';
+import { Check, Globe, Key, Plug, RefreshCw, Rocket, X } from 'lucide-react';
 import { SiAirtable, SiGoogle, SiNotion, SiTelegram } from 'react-icons/si';
 import type { Integration } from '../../types';
 import { useIntegrationsStore } from '../../hooks/useIntegrations';
 import { toast } from '../../hooks/useToast';
 import { Drawer } from '../ui/Drawer';
-import { telegramRegisterWebhook, telegramStartTunnel, telegramStopTunnel, telegramTunnelStatus } from '../../runtime';
+import { telegramRegisterCustomUrl, telegramRegisterWebhook, telegramStartTunnel, telegramStopTunnel, telegramTunnelStatus } from '../../runtime';
 
 const LOGOS: Record<string, React.ReactNode> = {
   notion: <SiNotion size={18} />,
@@ -30,6 +30,8 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
   const [webhookRegistered, setWebhookRegistered] = useState(false);
   const [tunnelSteps, setTunnelSteps] = useState<string[]>([]);
+  const [customUrl, setCustomUrl] = useState('');
+  const [customBusy, setCustomBusy] = useState(false);
 
   const active = integrations.find((i) => i.id === drawerId) ?? null;
 
@@ -143,6 +145,25 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
     }
   };
 
+  const onRegisterCustomUrl = async () => {
+    setCustomBusy(true);
+    setTunnelSteps([]);
+    const addStep = (s: string) => setTunnelSteps((prev) => [...prev, s]);
+    try {
+      const msg = await telegramRegisterCustomUrl(customUrl, addStep);
+      setWebhookRegistered(true);
+      setTunnelUrl(customUrl.trim().replace(/\/$/, ''));
+      addStep(msg);
+      toast('Webhook registered', 'success');
+    } catch (e) {
+      const msg = typeof e === 'string' ? e : 'Registration failed';
+      addStep(`✕ ${msg}`);
+      toast(msg, 'error');
+    } finally {
+      setCustomBusy(false);
+    }
+  };
+
   return (
     <>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
@@ -235,6 +256,7 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
             </div>
 
             {active.id === 'telegram' && (
+              <>
               <div className="mt-6 rounded-[10px] border border-line bg-panel2 p-[18px]">
                 <div className="mb-1.5 flex items-center justify-between">
                   <span className="font-mono text-[10px] tracking-[1px] text-muted">REMOTE ACCESS</span>
@@ -284,6 +306,24 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
                 )}
                 <p className="mt-3 text-[11px] leading-[1.5] text-muted">Requires <code className="font-mono text-[10px]">cloudflared</code> (auto-downloaded if missing). While the tunnel is active, long-polling pauses.</p>
               </div>
+
+              {/* Own domain / named tunnel option */}
+              <div className="mt-4 rounded-[10px] border border-line bg-panel2 p-[18px]">
+                <span className="mb-1.5 block font-mono text-[10px] tracking-[1px] text-muted">USE YOUR OWN DOMAIN</span>
+                <p className="mb-3 text-[12px] leading-[1.6] text-muted">
+                  Have a Cloudflare account and a domain? Set up a named tunnel in Cloudflare (pointing at <code className="font-mono text-[10px]">http://127.0.0.1:14789</code>) and enter its public HTTPS URL below. Telegram will send to your domain instead of a random trycloudflare URL.
+                </p>
+                <input
+                  value={customUrl}
+                  onChange={(e) => setCustomUrl(e.target.value)}
+                  placeholder="https://bot.yourdomain.com"
+                  className="mb-2 w-full rounded-md border border-line bg-panel px-3 py-2 text-[12.5px] text-text outline-none focus:border-mid"
+                />
+                <button className="secondary w-full" onClick={onRegisterCustomUrl} disabled={customBusy || !customUrl.trim()}>
+                  <Globe size={12} />{customBusy ? 'Registering…' : 'Register webhook to my domain'}
+                </button>
+              </div>
+              </>
             )}
           </div>
         </Drawer>

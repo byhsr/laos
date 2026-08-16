@@ -80,6 +80,9 @@ export async function telegramStartTunnel(onProgress?: (s: string) => void): Pro
 export async function telegramRegisterWebhook(onProgress?: (s: string) => void): Promise<string> {
   return await invoke<string>('telegram_register_webhook', { onProgress: progressChannel(onProgress) });
 }
+export async function telegramRegisterCustomUrl(publicUrl: string, onProgress?: (s: string) => void): Promise<string> {
+  return await invoke<string>('telegram_register_custom_url', { publicUrl, onProgress: progressChannel(onProgress) });
+}
 export async function telegramStopTunnel(): Promise<void> {
   await invoke('telegram_stop_tunnel');
 }
