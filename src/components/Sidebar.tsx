@@ -17,9 +17,9 @@ export function Sidebar({ view, setView, collapsed }: {
   view: View; setView: (v: View) => void; collapsed: boolean;
 }) {
   const btn = (active: boolean) =>
-    `flex w-full cursor-pointer items-center gap-[11px] rounded-[7px] border-0 bg-transparent px-3 py-2 text-left text-[13px] text-muted transition-all duration-150 hover:bg-line hover:text-text ${active ? 'bg-panel2 text-text hover:bg-panel2' : ''}`;
+    `flex w-full cursor-pointer items-center gap-[11px] rounded-[7px] border px-3 py-2 text-left text-[13px] text-muted transition-all duration-150 hover:bg-line hover:text-text ${active ? 'border-dotted border-line bg-panel2 text-text hover:bg-panel2' : 'border-transparent bg-transparent hover:bg-line'}`;
   const btnCollapsed = (active: boolean) =>
-    `grid w-full cursor-pointer place-items-center rounded-[7px] border-0 bg-transparent px-0 py-2 text-muted transition-all duration-150 hover:bg-line hover:text-text ${active ? 'bg-panel2 text-text hover:bg-panel2' : ''}`;
+    `grid w-full cursor-pointer place-items-center rounded-[7px] border px-0 py-2 text-muted transition-all duration-150 hover:bg-line hover:text-text ${active ? 'border-dotted border-line bg-panel2 text-text hover:bg-panel2' : 'border-transparent bg-transparent hover:bg-line'}`;
 
   return (
     <aside className={`flex h-full flex-col border-r border-line bg-panel px-[13px] py-[23px] transition-[width] duration-[180ms] ${collapsed ? 'w-16' : 'w-[226px]'}`}>

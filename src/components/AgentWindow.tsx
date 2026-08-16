@@ -20,6 +20,17 @@ const fmtDate = (s?: string | null) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleString();
 };
 
+const runDuration = (r: Run) => {
+  if (!r.startedAt) return '';
+  const start = new Date(r.startedAt).getTime();
+  if (isNaN(start)) return '';
+  const end = r.endedAt ? new Date(r.endedAt).getTime() : Date.now();
+  if (isNaN(end)) return '';
+  const ms = Math.max(0, end - start);
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+};
+
 export function AgentWindow({ agent, tools, models, integrations, runs, onBack, onSave, onDelete, onRun }: {
   agent: Agent; tools: Tool[]; models: ModelConfig[]; integrations: Integration[]; runs: Run[];
   onBack: () => void; onSave: (a: Agent) => Promise<void>; onDelete: (id: string) => Promise<void>; onRun: (input: string, agent: Agent) => Promise<ExecutionResult>;
@@ -36,6 +47,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState<Agent>(agent);
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
   const enabledTools = tools.filter((t) => t.enabled);
@@ -58,6 +70,14 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
   const switchTab = (t: 'chat' | 'runs' | 'info' | 'config' | 'history') => {
     if ((t === 'chat' || t === 'runs') && !complete) { setTab('config'); return; }
     setTab(t);
+  };
+
+  const toggleRun = (id: string) => {
+    setExpandedRuns((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -128,7 +148,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
           {(['chat', 'runs', 'info', 'config', 'history'] as const).map((t) => {
             const locked = !complete && (t === 'chat' || t === 'runs');
             return (
-              <button key={t} className={`flex cursor-pointer items-center gap-1 rounded-[6px] border-0 bg-none px-2.5 py-1.5 text-[11px] capitalize ${tab === t ? 'bg-panel2 text-text' : 'text-muted hover:text-text'}`} onClick={() => switchTab(t)}>
+              <button key={t} className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === t ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => switchTab(t)}>
                 {t}{locked && <Lock size={9} className="opacity-70" />}
               </button>
             );
@@ -193,25 +213,37 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
           {runs.filter((r) => r.agentId === agent.id).length === 0 && (
             <div className="console-empty p-2.5 text-center text-[12px] text-muted"><p>No runs yet for {agent.name}. Send a message in Chat and every step shows up here.</p></div>
           )}
-          {runs.filter((r) => r.agentId === agent.id).map((r) => (
-            <div key={r.id} className="border-b border-[#1c1c1f] py-3 last:border-0">
-              <div className="console-head flex items-center gap-2.5 text-[11px]">
-                <span className={`text-muted ${statusColor(r.status)}`}>{r.status === 'running' ? '▸' : r.status === 'completed' ? '✓' : '✕'}</span>
-                <span className="text-muted">{r.model}</span>
-                {(r.promptTokens || r.completionTokens) ? <span className="text-mid">{((r.promptTokens ?? 0) + (r.completionTokens ?? 0)).toLocaleString()} tok</span> : null}
-                <span className="ml-auto text-mid">{fmtDate(r.startedAt)}</span>
+          {runs.filter((r) => r.agentId === agent.id).sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()).map((r) => {
+            const isOpen = expandedRuns.has(r.id);
+            const totalTokens = (r.promptTokens ?? 0) + (r.completionTokens ?? 0);
+            return (
+              <div key={r.id} className="border-b border-[#1c1c1f] last:border-0">
+                <button className="flex w-full cursor-pointer items-center gap-2.5 border-0 bg-transparent px-1 py-2.5 text-left" onClick={() => toggleRun(r.id)}>
+                  <ChevronRight size={11} className={`shrink-0 text-mid transition-transform duration-150 ${isOpen ? 'rotate-90' : ''}`} />
+                  <span className={`shrink-0 text-muted ${statusColor(r.status)}`}>{r.status === 'running' ? '▸' : r.status === 'completed' ? '✓' : '✕'}</span>
+                  <span className="shrink-0 text-mid">{fmtDate(r.startedAt)}</span>
+                  <span className="shrink-0 text-muted">{r.model}</span>
+                  <span className="shrink-0 text-mid">{runDuration(r)}</span>
+                  {totalTokens > 0 && <span className="shrink-0 text-mid">{totalTokens.toLocaleString()} tok</span>}
+                  <span className={`ml-auto shrink-0 text-[10px] ${statusColor(r.status)}`}>{r.status}</span>
+                </button>
+                {isOpen && (
+                  <div className="px-1 pb-3">
+                    <div className="my-1 text-[#d4d4d8]">$ {r.input}</div>
+                    {(r.events ?? []).map((ev, i) => (
+                      <div key={i} className="console-line flex items-baseline gap-2">
+                        <span className="flex-none text-mid">{ev.time}</span>
+                        <span className={`w-10 flex-none text-muted ${ev.type === 'tool' ? 'text-[#38bdf8]' : ev.type === 'thought' ? 'text-[#c4b5fd]' : 'text-[#22c55e]'}`}>{ev.type === 'tool' ? 'tool' : ev.type === 'thought' ? 'think' : 'out'}</span>
+                        <span className={`text-[#a1a1aa] ${ev.type === 'tool' ? 'text-[#7dd3fc]' : ev.type === 'thought' ? 'text-[#c4b5fd]' : ''}`}>{ev.title}{ev.detail ? ` — ${ev.detail}` : ''}</span>
+                      </div>
+                    ))}
+                    {r.output && <pre className="mt-1.5 ml-12 whitespace-pre-wrap rounded-[6px] border border-[#1c1c1f] bg-[#111113] p-2 text-[11px] text-[#e4e4e7]">{r.output}</pre>}
+                    {r.status === 'failed' && <div className="console-line flex items-baseline gap-2"><span className="flex-none text-mid" /><span className="w-10 flex-none text-[#22c55e]">err</span><span className="text-[#a1a1aa]">Run failed — see agent chat for details.</span></div>}
+                  </div>
+                )}
               </div>
-              <div className="my-1.5 text-[#d4d4d8]">$ {r.input}</div>
-              {(r.events ?? []).map((ev, i) => (
-                <div key={i} className="console-line flex items-baseline gap-2">
-                  <span className="flex-none text-mid">{ev.time}</span>
-                  <span className={`w-10 flex-none text-muted ${ev.type === 'tool' ? 'text-[#38bdf8]' : ev.type === 'thought' ? 'text-[#c4b5fd]' : 'text-[#22c55e]'}`}>{ev.type === 'tool' ? 'tool' : ev.type === 'thought' ? 'think' : 'out'}</span>
-                  <span className={`text-[#a1a1aa] ${ev.type === 'tool' ? 'text-[#7dd3fc]' : ev.type === 'thought' ? 'text-[#c4b5fd]' : ''}`}>{ev.title}{ev.detail ? ` — ${ev.detail}` : ''}</span>
-                </div>
-              ))}
-              {r.output && <pre className="mt-1.5 ml-12 whitespace-pre-wrap rounded-[6px] border border-[#1c1c1f] bg-[#111113] p-2 text-[11px] text-[#e4e4e7]">{r.output}</pre>}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
