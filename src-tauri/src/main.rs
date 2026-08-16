@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -456,12 +457,18 @@ fn db(app: &AppHandle) -> Result<Connection, String> {
   fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
   let conn = Connection::open(dir.join("local-agent-os.sqlite3")).map_err(|e| e.to_string())?;
   conn.execute_batch("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, started_at TEXT NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL, input TEXT NOT NULL, output TEXT, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS memory (agent_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(agent_id,key)); CREATE TABLE IF NOT EXISTS model_configs (id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL, model TEXT NOT NULL, host TEXT, api_key TEXT, enabled INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS tools (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, integration_id TEXT NOT NULL, description TEXT, enabled INTEGER NOT NULL DEFAULT 1, config_json TEXT NOT NULL DEFAULT '{}'); CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, objective TEXT NOT NULL, model TEXT NOT NULL, tool_ids TEXT NOT NULL DEFAULT '[]', integrations TEXT NOT NULL DEFAULT '[]', memory INTEGER NOT NULL DEFAULT 1, permissions TEXT NOT NULL DEFAULT '[]', home_path TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#8b5cf6', x REAL NOT NULL DEFAULT 0, y REAL NOT NULL DEFAULT 0, is_manager INTEGER NOT NULL DEFAULT 0, description TEXT NOT NULL DEFAULT ''); CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, name TEXT NOT NULL, nodes TEXT NOT NULL DEFAULT '[]', edges TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS integration_configs (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, config_json TEXT NOT NULL DEFAULT '{}', enabled INTEGER NOT NULL DEFAULT 0, connected INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, requester TEXT NOT NULL, assigned_agent TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', input TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', result TEXT, created_at TEXT NOT NULL, completed_at TEXT); CREATE TABLE IF NOT EXISTS agent_conversations (agent_id TEXT PRIMARY KEY, messages TEXT NOT NULL DEFAULT '[]');") .map_err(|e| e.to_string())?;
-  // Migrate older DBs: ensure new agent columns exist.
-  let cols: Vec<String> = conn.prepare("PRAGMA table_info(agents)").map_err(|e| e.to_string())?
-    .query_map([], |row| row.get::<_, String>(1)).map_err(|e| e.to_string())?
-    .collect::<Result<_, _>>().map_err(|e| e.to_string())?;
-  if !cols.iter().any(|c| c == "is_manager") { conn.execute("ALTER TABLE agents ADD COLUMN is_manager INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
-  if !cols.iter().any(|c| c == "description") { conn.execute("ALTER TABLE agents ADD COLUMN description TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  // Migrate older DBs: ensure new columns exist on existing tables.
+  let cols = |table: &str| -> Result<Vec<String>, String> {
+    conn.prepare(&format!("PRAGMA table_info({table})")).map_err(|e| e.to_string())?
+      .query_map([], |row| row.get::<_, String>(1)).map_err(|e| e.to_string())?
+      .collect::<Result<_, _>>().map_err(|e| e.to_string())
+  };
+  let agents_cols = cols("agents")?;
+  if !agents_cols.iter().any(|c| c == "is_manager") { conn.execute("ALTER TABLE agents ADD COLUMN is_manager INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
+  if !agents_cols.iter().any(|c| c == "description") { conn.execute("ALTER TABLE agents ADD COLUMN description TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  let runs_cols = cols("runs")?;
+  if !runs_cols.iter().any(|c| c == "prompt_tokens") { conn.execute("ALTER TABLE runs ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
+  if !runs_cols.iter().any(|c| c == "completion_tokens") { conn.execute("ALTER TABLE runs ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
   Ok(conn)
 }
 
@@ -1027,11 +1034,20 @@ async fn run_ollama_chat(model: &str, prompt: &str, agent: &AgentRequest, tools:
 
 // Runs a single agent against its provider. Returns (output, prompt_tokens, completion_tokens).
 async fn run_agent_once(app: &AppHandle, agent: &AgentRequest, input: &str, api_key: Option<&str>, events: &mut Vec<ExecutionEvent>) -> Result<(String, u64, u64), String> {
+  run_agent_once_structured(app, agent, input, api_key, events, true).await
+}
+
+// `structured` controls whether the prompt forces the summary/result JSON envelope.
+async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequest, input: &str, api_key: Option<&str>, events: &mut Vec<ExecutionEvent>, structured: bool) -> Result<(String, u64, u64), String> {
   let conn = db(app)?;
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
   for folder in ["files", "memory", "runs", "outputs"] { fs::create_dir_all(home.join(folder)).map_err(|e| e.to_string())?; }
   fs::write(home.join("config.json"), serde_json::to_string_pretty(&serde_json::json!({"id":agent.id,"name":agent.name,"objective":agent.objective,"model":agent.model,"tools":agent.tool_ids})).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-  let prompt = format!("You are {}. Objective: {}\n\nTask: {}\n\nReturn a concise structured result in JSON with keys summary and result.", agent.name, agent.objective, input);
+  let prompt = if structured {
+    format!("You are {}. Objective: {}\n\nTask: {}\n\nReturn a concise structured result in JSON with keys summary and result.", agent.name, agent.objective, input)
+  } else {
+    format!("You are {}. Objective: {}\n\nTask: {}\n\nReturn a helpful, direct answer.", agent.name, agent.objective, input)
+  };
   if let Some(model) = agent.model.strip_prefix("ollama:") {
     let tools = build_tools(&conn, agent, &home)?;
     if !tools.is_empty() {
@@ -1137,7 +1153,7 @@ async fn delegate_task(app: &AppHandle, task_id: &str, assigned_agent: &str, inp
   let prompt = if context.is_empty() { input.to_string() } else { format!("Context:\n{context}\n\nTask:\n{input}") };
   let mut events = Vec::new();
   let result = match agent {
-    Some(a) => run_agent_once(app, &a, &prompt, None, &mut events).await.map(|(out, _, _)| out),
+    Some(a) => run_agent_once_structured(app, &a, &prompt, None, &mut events, false).await.map(|(out, _, _)| out),
     None => Err("Assigned agent not found.".into()),
   };
   match result {
@@ -1364,6 +1380,20 @@ impl AgentTool for ManagerSwitch {
   async fn run(&self, _args: &serde_json::Value) -> Result<String, String> { Ok("switch_agent".into()) } // replaced at runtime
 }
 
+// Picks a reachable model for the Manager: prefer an enabled cloud model
+// (Groq/OpenRouter, which only needs a key) before falling back to Ollama.
+fn manager_default_model(conn: &Connection) -> String {
+  let stmt = conn.prepare("SELECT id FROM model_configs WHERE enabled=1 ORDER BY CASE WHEN provider='ollama' THEN 1 ELSE 0 END, id LIMIT 1").ok();
+  if let Some(mut stmt) = stmt {
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0)).ok();
+    if let Some(mut rows) = rows {
+      if let Some(Ok(id)) = rows.next() { return id; }
+    }
+  }
+  // No configured models — return empty so callers can surface a clear error.
+  String::new()
+}
+
 // Runs a Manager conversation turn: loads the Manager agent, injects workspace
 // context, attaches manager tools, executes tool-calls against real backend functions.
 async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> {
@@ -1383,14 +1413,41 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
     }).map_err(|e| e.to_string())?;
     rows.next().transpose().map_err(|e| e.to_string())?
   };
-  let manager = match manager {
+  let mut manager = match manager {
     Some(m) => m,
     None => {
-      let m = AgentRequest { id: "manager".into(), name: "Manager".into(), objective: "You are the workspace Manager. Orchestrate agents, answer questions about the workspace, delegate tasks, and coordinate work.".into(), model: "ollama:qwen3:8b".into(), tool_ids: vec![], integrations: vec![], home_path: "agents/manager".into(), permissions: vec!["network".into()] };
+      let model = manager_default_model(&conn);
+      if model.is_empty() {
+        return Err("No model configured. Add an enabled model in the Models tab first.".into());
+      }
+      let m = AgentRequest { id: "manager".into(), name: "Manager".into(), objective: "You are the workspace Manager. Orchestrate agents, answer questions about the workspace, delegate tasks, and coordinate work.".into(), model: model.clone(), tool_ids: vec![], integrations: vec![], home_path: "agents/manager".into(), permissions: vec!["network".into()] };
       conn.execute("INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, is_manager) VALUES (?1,?2,?3,?4,'[]','[]',1,?5,?6,'#22c55e',1)", params![m.id, m.name, m.objective, m.model, serde_json::to_string(&m.permissions).unwrap_or_else(|_| "[]".into()), m.home_path]).map_err(|e| e.to_string())?;
       m
     }
   };
+  // Ensure the Manager uses a configured model. If the stored value isn't one
+  // of the enabled model configs, pick the best enabled one (cloud before Ollama)
+  // so the Manager works with whatever the user configured.
+  {
+    let configured = {
+      let stmt = conn.prepare("SELECT id FROM model_configs WHERE enabled=1").ok();
+      let mut ids = Vec::new();
+      if let Some(mut stmt) = stmt {
+        if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) {
+          for r in rows { if let Ok(id) = r { ids.push(id); } }
+        }
+      }
+      ids
+    };
+    if !configured.contains(&manager.model) {
+      let best = manager_default_model(&conn);
+      if best.is_empty() {
+        return Err("No model configured. Add an enabled model in the Models tab first.".into());
+      }
+      let _ = conn.execute("UPDATE agents SET model=?1 WHERE id='manager'", params![best]);
+      manager.model = best;
+    }
+  }
 
   let context = build_workspace_context(&conn)?;
   let prompt = format!("You are the workspace Manager.\n\n{context}\n\nUser message: {message}\n\nUse your tools to list agents, delegate tasks, check task status, or switch agents. Return a concise, helpful reply to the user.");
@@ -1414,6 +1471,11 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
     let body = ChatRequest { model: manager.model.clone(), messages: messages.clone(), tools: Some(tool_schemas(&tools)), stream: false };
     let response = if manager.model.starts_with("ollama:") {
       client.post("http://127.0.0.1:11434/api/chat").json(&body).send().await
+    } else if manager.model.starts_with("groq:") {
+      let key = api_key_for(&conn, &manager.model)?;
+      client.post("https://api.groq.com/openai/v1/chat/completions")
+        .header("Authorization", format!("Bearer {key}"))
+        .json(&serde_json::json!({ "model": manager.model, "messages": messages, "tools": tool_schemas(&tools) })).send().await
     } else {
       let key = api_key_for(&conn, &manager.model)?;
       client.post("https://openrouter.ai/api/v1/chat/completions")
@@ -1593,6 +1655,79 @@ fn cancel_task(app: AppHandle, id: String) -> Result<(), String> {
   Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Streaming chat
+// ---------------------------------------------------------------------------
+
+// Streams a chat completion from the configured provider as token deltas.
+// Supports the Manager (is_manager agent) and regular agents. Ollama uses NDJSON
+// (stream:true); Groq/OpenRouter use SSE `data:` lines.
+#[tauri::command]
+async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>) -> Result<(), String> {
+  let conn = db(&app)?;
+  let client = reqwest::Client::new();
+  let prompt = if is_manager {
+    let context = build_workspace_context(&conn)?;
+    format!("You are the workspace Manager.\n\n{context}\n\nUser message: {input}\n\nUse your tools to list agents, delegate tasks, check task status, or switch agents. Return a concise, helpful reply to the user.")
+  } else {
+    format!("You are {}. Objective: {}\n\nTask: {}\n\nReturn a helpful, direct answer.", agent.name, agent.objective, input)
+  };
+  let model = agent.model.clone();
+  let messages = serde_json::json!([{ "role": "system", "content": prompt }]);
+
+  let (url, auth, key) = if let Some(m) = model.strip_prefix("ollama:") {
+    (format!("http://127.0.0.1:11434/api/chat"), None::<String>, m.to_string())
+  } else if let Some(m) = model.strip_prefix("groq:") {
+    let k = stored_api_key(&conn, &model).ok().flatten().ok_or("Groq requires an API key.")?;
+    ("https://api.groq.com/openai/v1/chat/completions".into(), Some(k.clone()), m.to_string())
+  } else if let Some(m) = model.strip_prefix("openrouter:") {
+    let k = stored_api_key(&conn, &model).ok().flatten().ok_or("OpenRouter requires an API key.")?;
+    ("https://openrouter.ai/api/v1/chat/completions".into(), Some(k.clone()), m.to_string())
+  } else { return Err("Unknown model provider.".into()); };
+
+  let is_ollama = url.contains("11434");
+  let mut req = client.post(&url).json(&serde_json::json!({
+    "model": key,
+    "messages": messages,
+    "stream": true,
+  }));
+  if let Some(auth) = auth { req = req.header("Authorization", format!("Bearer {auth}")); }
+
+  let response = req.send().await.map_err(|e| format!("Could not reach the model provider: {e}"))?;
+  if !response.status().is_success() {
+    return Err(format!("Model provider returned {}", response.status()));
+  }
+  let mut stream = response.bytes_stream();
+  let mut buffer = String::new();
+  let mut delta = String::new();
+  while let Some(chunk) = stream.next().await {
+    let chunk = chunk.map_err(|e| e.to_string())?;
+    buffer.push_str(&String::from_utf8_lossy(&chunk));
+    // Ollama NDJSON: one JSON object per line. OpenAI-compatible: SSE `data:` lines.
+    while let Some(pos) = buffer.find('\n') {
+      let line: String = buffer.drain(..=pos).collect();
+      let line = line.trim();
+      if line.is_empty() { continue; }
+      if is_ollama {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+          if let Some(d) = v["message"]["content"].as_str() { delta.push_str(d); on_event.send(d.to_string()).map_err(|e| e.to_string())?; }
+        }
+      } else {
+        let data = line.strip_prefix("data:").map(|s| s.trim()).unwrap_or(line);
+        if data == "[DONE]" { break; }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+          if let Some(d) = v["choices"][0]["delta"]["content"].as_str() { delta.push_str(d); on_event.send(d.to_string()).map_err(|e| e.to_string())?; }
+        }
+      }
+    }
+  }
+  // Persist the run like execute_agent does (tokens unknown when streaming; store 0).
+  let run_id = format!("{}-{}", agent.id, chrono::Utc::now().timestamp_millis());
+  let started = chrono::Utc::now().to_rfc3339();
+  let _ = conn.execute("INSERT INTO runs (id,agent_id,started_at,status,model,input,output,prompt_tokens,completion_tokens) VALUES (?1,?2,?3,'completed',?4,?5,?6,0,0)", params![run_id, agent.id, started, agent.model, input, delta]);
+  Ok(())
+}
+
 fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
@@ -1602,7 +1737,7 @@ fn main() {
       tauri::async_runtime::spawn(telegram_loop(handle));
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task])
+    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, stream_chat])
     .run(tauri::generate_context!())
     .expect("error while running Local Agent OS");
 }

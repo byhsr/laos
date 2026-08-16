@@ -1,4 +1,4 @@
-export type Provider = 'ollama' | 'openrouter';
+export type Provider = 'ollama' | 'openrouter' | 'groq';
 export type Agent = { id: string; name: string; objective: string; model: string; toolIds: string[]; integrations: string[]; memory: boolean; permissions: string[]; homePath: string; color: string; x: number; y: number; isManager?: boolean; description?: string };
 export type RunEvent = { time: string; type: 'thought' | 'tool' | 'result'; title: string; detail?: string };
 export type Run = { id: string; agentId: string; startedAt: string; endedAt?: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; model: string; input: string; events: RunEvent[]; output?: string; promptTokens?: number; completionTokens?: number };
@@ -43,4 +43,4 @@ export type ChatMessage = { role: 'user' | 'assistant' | 'tool' | 'thought'; con
 export type ExecutionResult = { output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number };
 
 export const emptyTool = (): Tool => ({ id: '', name: '', kind: 'api', integrationId: 'http', description: '', enabled: true, config: { method: 'GET', url: '', headers: [], body: '', params: [] } });
-export const emptyModel = (): ModelConfig => ({ id: '', provider: 'openrouter', label: '', model: '', host: '', apiKey: '', enabled: true });
+export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', host: '', apiKey: '', enabled: true });

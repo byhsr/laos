@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { managerMessage as managerMessageApi } from '../runtime';
+import { streamChat } from '../runtime';
+import type { Agent } from '../types';
 
 export type ChatEntry = { role: 'user' | 'assistant'; content: string; time: string };
 
@@ -9,7 +10,7 @@ type ManagerState = {
   messages: ChatEntry[]; // current view
   busy: boolean;
   setCurrentAgent: (agentId: string | null) => void;
-  send: (message: string) => Promise<string>;
+  send: (message: string, managerAgent: Agent) => Promise<void>;
 };
 
 export const useManagerStore = create<ManagerState>((set, get) => ({
@@ -19,32 +20,39 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
   busy: false,
 
   setCurrentAgent: (agentId) => {
-    const prev = get().currentAgentId;
     const conv = get().conversations;
-    // Preserve the previous conversation, load the new one (empty if first visit).
     set({ currentAgentId: agentId, conversations: conv, messages: agentId ? (conv[agentId] ?? []) : [] });
-    void prev;
   },
 
-  send: async (message) => {
+  send: async (message, managerAgent) => {
     set({ busy: true });
     const userEntry: ChatEntry = { role: 'user', content: message, time: new Date().toLocaleTimeString() };
-    const agentId = get().currentAgentId ?? 'manager';
+    const agentId = managerAgent.id;
+    // Seed an empty assistant bubble that grows as tokens stream in.
+    const assistantEntry: ChatEntry = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
     set((s) => {
-      const conv = { ...s.conversations, [agentId]: [...(s.conversations[agentId] ?? []), userEntry] };
+      const conv = { ...s.conversations, [agentId]: [...(s.conversations[agentId] ?? []), userEntry, assistantEntry] };
       return { conversations: conv, messages: conv[agentId] };
     });
-    let reply = '';
+    let buffer = '';
     try {
-      reply = await managerMessageApi(message);
+      await streamChat(managerAgent, message, true, (delta) => {
+        buffer += delta;
+        set((s) => {
+          const list = s.conversations[agentId] ?? [];
+          const updated = list.map((e, i) => (i === list.length - 1 ? { ...e, content: buffer } : e));
+          return { conversations: { ...s.conversations, [agentId]: updated }, messages: updated };
+        });
+      });
     } catch (e) {
-      reply = e instanceof Error ? e.message : 'Manager failed to respond.';
+      const msg = typeof e === 'string' ? e : (e instanceof Error ? e.message : 'Manager failed to respond.');
+      set((s) => {
+        const list = s.conversations[agentId] ?? [];
+        const updated = list.map((e, i) => (i === list.length - 1 ? { ...e, content: `⚠️ ${msg}` } : e));
+        return { conversations: { ...s.conversations, [agentId]: updated }, messages: updated };
+      });
+    } finally {
+      set({ busy: false });
     }
-    const assistantEntry: ChatEntry = { role: 'assistant', content: reply, time: new Date().toLocaleTimeString() };
-    set((s) => {
-      const conv = { ...s.conversations, [agentId]: [...(s.conversations[agentId] ?? []), assistantEntry] };
-      return { conversations: conv, messages: conv[agentId], busy: false };
-    });
-    return reply;
   },
 }));

@@ -92,7 +92,7 @@ export default function App() {
               onRunWorkflow={runWorkflow}
             />
           )}
-          {view === 'manager' && <ManagerView agents={agents} integrations={integrations} />}
+          {view === 'manager' && <ManagerView agents={agents} integrations={integrations} models={models} />}
           {view === 'tasks' && <TasksView agents={agents} />}
           {view === 'runs' && <RunsConsole runs={runs} agents={agents} onOpenAgent={openAgent} onClear={clearRuns} />}
           {view === 'integrations' && <IntegrationsView integrations={integrations} />}

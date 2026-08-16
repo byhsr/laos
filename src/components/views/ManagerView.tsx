@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Bot, CornerDownLeft, Send } from 'lucide-react';
-import type { Agent, Integration, Task } from '../../types';
+import type { Agent, Integration, ModelConfig, Task } from '../../types';
 import { useManagerStore } from '../../hooks/useManager';
 import { useTasksStore } from '../../hooks/useTasks';
-import { useIntegrationsStore } from '../../hooks/useIntegrations';
+import { StreamIndicator } from '../ui/StreamIndicator';
 
 const STATUS_COLOR: Record<string, string> = {
   pending: 'text-[#facc15]',
@@ -13,7 +13,7 @@ const STATUS_COLOR: Record<string, string> = {
   cancelled: 'text-muted',
 };
 
-export function ManagerView({ agents, integrations }: { agents: Agent[]; integrations: Integration[] }) {
+export function ManagerView({ agents, integrations, models }: { agents: Agent[]; integrations: Integration[]; models: ModelConfig[] }) {
   const messages = useManagerStore((s) => s.messages);
   const busy = useManagerStore((s) => s.busy);
   const currentAgentId = useManagerStore((s) => s.currentAgentId);
@@ -26,6 +26,11 @@ export function ManagerView({ agents, integrations }: { agents: Agent[]; integra
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages]);
+
+  const managerAgent = agents.find((a) => a.isManager) ?? {
+    id: 'manager', name: 'Manager', objective: '', model: models.find((m) => m.enabled)?.id ?? '', toolIds: [],
+    integrations: [], memory: true, permissions: ['network'], homePath: 'agents/manager', color: '#22c55e', x: 0, y: 0, isManager: true,
+  };
 
   const submit = async () => {
     if (!input.trim() || busy) return;
@@ -45,11 +50,11 @@ export function ManagerView({ agents, integrations }: { agents: Agent[]; integra
           return { conversations: conv, messages: conv[agent.id] };
         });
       } else {
-        await send(text);
+        await send(text, managerAgent);
       }
       return;
     }
-    await send(text);
+    await send(text, managerAgent);
   };
 
   const activeTasks = tasks.filter((t) => t.status === 'pending' || t.status === 'running');
@@ -78,10 +83,12 @@ export function ManagerView({ agents, integrations }: { agents: Agent[]; integra
             <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13px] leading-1.6 whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
                 {m.content}
+                {busy && i === messages.length - 1 && m.role === 'assistant' && (
+                  m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming />
+                )}
               </div>
             </div>
           ))}
-          {busy && <div className="text-[11px] text-muted">Manager is thinking…</div>}
         </div>
 
         <div className="flex flex-none items-end gap-2.5 border-t border-line p-3">

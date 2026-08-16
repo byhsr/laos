@@ -1,5 +1,12 @@
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import type { Agent, Integration, ModelConfig, RunEvent, Task, Tool, Workflow, WorkflowRunResult } from './types';
+
+// Streams a chat completion, calling onDelta with each token chunk.
+export async function streamChat(agent: Agent, input: string, isManager: boolean, onDelta: (d: string) => void): Promise<void> {
+  const channel = new Channel<string>();
+  channel.onmessage = (d) => onDelta(d);
+  await invoke('stream_chat', { agent, input, isManager, onEvent: channel });
+}
 
 export async function executeAgent(agent: Agent, input: string, apiKey?: string): Promise<{ output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number }> {
   try {

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Agent } from '../types';
 import { listAgents, saveAgent, deleteAgent as deleteAgentApi } from '../runtime';
+import { useModelsStore } from './useModels';
 
 type AgentsState = {
   agents: Agent[];
@@ -33,8 +34,10 @@ export const useAgentsStore = create<AgentsState>((set) => ({
 
   createAgent: async (draft) => {
     const id = `agent-${Date.now()}`;
+    // Default to the first enabled model config (never a hardcoded model).
+    const defaultModel = draft.model ?? useModelsStore.getState().models.find((m) => m.enabled)?.id ?? '';
     const agent: Agent = {
-      id, name: draft.name ?? 'New Agent', objective: draft.objective ?? '', model: draft.model ?? 'ollama:qwen3:8b',
+      id, name: draft.name ?? 'New Agent', objective: draft.objective ?? '', model: defaultModel,
       toolIds: draft.toolIds ?? [], integrations: draft.integrations ?? [], memory: true,
       permissions: draft.permissions ?? ['network'], homePath: `agents/${id}`, color: draft.color ?? '#22c55e',
       x: 160 + Math.random() * 160, y: 120 + Math.random() * 120,

@@ -4,6 +4,8 @@ import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run
 import { Dropdown } from './ui/Dropdown';
 import { MultiDropdown } from './ui/MultiDropdown';
 import { toast } from '../hooks/useToast';
+import { streamChat } from '../runtime';
+import { StreamIndicator } from './ui/StreamIndicator';
 
 const isComplete = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent' && !!a.model.trim() && !!a.objective.trim();
 
@@ -35,18 +37,20 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
     if (!text.trim() || running) return;
     setRunning(true); setError(undefined);
     const userMsg: ChatMessage = { role: 'user', content: text, time: new Date().toLocaleTimeString() };
-    setMessages((prev) => [...prev, userMsg]);
+    const assistantMsg: ChatMessage = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInput('');
     const agentToRun = agent;
+    let buffer = '';
     try {
-      const result = await onRun(text, agentToRun);
-      const assistant: ChatMessage = { role: 'assistant', content: result.output, time: new Date().toLocaleTimeString() };
-      const toolMsgs: ChatMessage[] = (result.events ?? []).filter((e) => e.type === 'tool').map((e) => ({ role: 'tool' as const, content: e.title, detail: e.detail, time: e.time }));
-      setMessages((prev) => [...prev, ...toolMsgs, assistant]);
+      await streamChat(agentToRun, text, false, (delta) => {
+        buffer += delta;
+        setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: buffer } : m)));
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setError(message);
-      setMessages((prev) => [...prev, { role: 'assistant', content: `⚠️ ${message}`, time: new Date().toLocaleTimeString() }]);
+      setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: `⚠️ ${message}` } : m)));
     } finally {
       setRunning(false);
     }
@@ -108,7 +112,14 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
               <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : m.role === 'tool' ? 'justify-center' : 'justify-start'}`}>
                 <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13.5px] leading-[1.6] whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : m.role === 'assistant' ? 'rounded-tl-[3px] border border-line bg-panel2' : 'border-0 bg-transparent p-1 font-mono text-[11px] tracking-[0.3px] text-muted'}`}>
                   {m.role === 'tool' && <span className="opacity-90">⚙ {m.content}{m.detail ? ` — ${m.detail}` : ''}</span>}
-                  {(m.role === 'user' || m.role === 'assistant') && <span>{m.content}</span>}
+                  {(m.role === 'user' || m.role === 'assistant') && (
+                    <span>
+                      {m.content}
+                      {running && i === messages.length - 1 && m.role === 'assistant' && (
+                        m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming />
+                      )}
+                    </span>
+                  )}
                 </div>
               </div>
             ))}

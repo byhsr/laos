@@ -72,15 +72,15 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
         <label className={labelCls}>PROVIDER</label>
         <Dropdown
           value={form.provider}
-          options={[{ value: 'ollama', label: 'Ollama (local)' }, { value: 'openrouter', label: 'OpenRouter' }]}
-          onChange={(v) => setForm({ ...form, provider: v as 'ollama' | 'openrouter' })}
+          options={[{ value: 'ollama', label: 'Ollama (local)' }, { value: 'openrouter', label: 'OpenRouter' }, { value: 'groq', label: 'Groq' }]}
+          onChange={(v) => setForm({ ...form, provider: v as 'ollama' | 'openrouter' | 'groq' })}
         />
 
         <label className={labelCls}>LABEL</label>
         <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="e.g. Qwen3 8B" className={inputCls} />
 
         <label className={labelCls}>MODEL ID</label>
-        <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={form.provider === 'ollama' ? 'qwen3:8b' : 'anthropic/claude-3.5-haiku'} className={inputCls} />
+        <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={form.provider === 'ollama' ? 'qwen3:8b' : form.provider === 'groq' ? 'llama-3.3-70b-versatile' : 'anthropic/claude-3.5-haiku'} className={inputCls} />
 
         {form.provider === 'ollama' && (
           <>
@@ -89,10 +89,10 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
           </>
         )}
 
-        {form.provider === 'openrouter' && (
+        {(form.provider === 'openrouter' || form.provider === 'groq') && (
           <>
             <label className={labelCls}>API KEY</label>
-            <input type="password" value={form.apiKey ?? ''} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder="sk-or-v1-…" className={inputCls} />
+            <input type="password" value={form.apiKey ?? ''} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder={form.provider === 'groq' ? 'gsk_…' : 'sk-or-v1-…'} className={inputCls} />
             <p className="text-[12px] text-muted" style={{ margin: '6px 0 0' }}>Runs using this model will read the key automatically.</p>
           </>
         )}
