@@ -1,93 +1,14 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
 use std::fs;
 use tauri::{AppHandle, Manager};
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentRequest { id: String, name: String, objective: String, model: String, tool_ids: Vec<String>, integrations: Vec<String>, home_path: String, permissions: Vec<String> }
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Execution { output: String, events: Vec<ExecutionEvent>, run_id: String, prompt_tokens: u64, completion_tokens: u64 }
-#[derive(Serialize)]
-struct ExecutionEvent { time: String, #[serde(rename = "type")] kind: String, title: String, detail: Option<String> }
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct ModelConfigRecord { id: String, provider: String, label: String, model: String, host: Option<String>, api_key: Option<String>, enabled: bool }
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct ToolRecord { id: String, name: String, kind: String, integration_id: String, description: Option<String>, enabled: bool, config: serde_json::Value }
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct AgentRecord {
-  id: String, name: String, objective: String, model: String,
-  tool_ids: Vec<String>, integrations: Vec<String>, memory: bool,
-  permissions: Vec<String>, home_path: String, color: String,
-  #[serde(default)] x: f64, #[serde(default)] y: f64,
-  #[serde(default)] is_manager: bool, #[serde(default)] description: String,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct WorkflowRecord { id: String, name: String, nodes: serde_json::Value, edges: serde_json::Value, updated_at: String }
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkflowStep { node_id: String, node_label: String, output: String, prompt_tokens: u64, completion_tokens: u64 }
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkflowExecution { steps: Vec<WorkflowStep>, final_output: String, total_prompt_tokens: u64, total_completion_tokens: u64 }
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct IntegrationRecord { id: String, name: String, provider: String, enabled: bool, connected: bool, config: serde_json::Value, actions: Vec<IntegrationAction> }
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct IntegrationAction { name: String, description: String }
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct TaskRecord { id: String, requester: String, assigned_agent: String, status: String, input: String, context: String, result: Option<String>, created_at: String, completed_at: Option<String> }
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct ConversationRecord { agent_id: String, messages: serde_json::Value }
-
-// Ollama chat (tool-calling) request/response
-#[derive(Serialize)]
-struct ChatRequest { model: String, messages: Vec<ChatMessage>, tools: Option<Vec<serde_json::Value>>, stream: bool }
-#[derive(Serialize, Deserialize, Clone)]
-struct ChatMessage { role: String, content: Option<String>, #[serde(skip_serializing_if = "Option::is_none")] tool_calls: Option<Vec<ToolCall>>, #[serde(skip_serializing_if = "Option::is_none")] tool_call_id: Option<String> }
-#[derive(Serialize, Deserialize, Clone)]
-struct ToolCall { id: String, #[serde(rename = "type")] kind: String, function: ToolCallFunction }
-#[derive(Serialize, Deserialize, Clone)]
-struct ToolCallFunction { name: String, arguments: serde_json::Value }
-
-#[derive(Deserialize)]
-struct ChatResponse { message: ChatMessage, #[serde(default)] prompt_eval_count: u64, #[serde(default)] eval_count: u64 }
-
-// Firecrawl response shapes
-#[derive(Deserialize)]
-struct FirecrawlSearchResponse { data: Option<FirecrawlSearchData> }
-#[derive(Deserialize)]
-struct FirecrawlSearchData { #[serde(default)] web: Vec<SearchResult> }
-#[derive(Deserialize)]
-struct SearchResult { title: Option<String>, description: Option<String>, url: Option<String> }
-#[derive(Deserialize)]
-struct FirecrawlScrapeResponse { data: Option<FirecrawlScrapeData> }
-#[derive(Deserialize)]
-struct FirecrawlScrapeData { markdown: Option<String> }
+mod db;
+mod models;
+use db::{db, now};
+use models::*;
 
 // ---------------------------------------------------------------------------
 // Web tools (configurable: base URL + API key come from the tool's config)
@@ -99,7 +20,7 @@ const MAX_TOOL_ROUNDS: usize = 5;
 fn clip(s: &str) -> String {
   let chars: Vec<char> = s.chars().collect();
   if chars.len() <= MAX_TOOL_CHARS { s.to_string() }
-  else { chars[..MAX_TOOL_CHARS].iter().collect::<String>() + "\n…[truncated]" }
+  else { chars[..MAX_TOOL_CHARS].iter().collect::<String>() + "\nâ€¦[truncated]" }
 }
 
 async fn web_api_search(base_url: &str, api_key: &str, query: &str, limit: usize) -> Result<String, String> {
@@ -253,7 +174,7 @@ impl AgentTool for WriteFileTool {
 }
 
 // Host-filesystem tools (gated behind the agent's `host_fs` permission).
-// These deliberately escape the per-agent sandbox — treat as powerful.
+// These deliberately escape the per-agent sandbox â€” treat as powerful.
 
 struct SearchFilesTool;   // recursive filename search from a root path
 struct ReadAnyFileTool;   // read any file by absolute path (size-capped)
@@ -317,7 +238,7 @@ impl AgentTool for ReadAnyFileTool {
 #[async_trait]
 impl AgentTool for RunCommandTool {
   fn name(&self) -> String { "run_command".into() }
-  fn description(&self) -> String { "Run a shell command on the host machine and return stdout + stderr. Params: command (string). Requires explicit user approval — the user confirms before it executes.".into() }
+  fn description(&self) -> String { "Run a shell command on the host machine and return stdout + stderr. Params: command (string). Requires explicit user approval â€” the user confirms before it executes.".into() }
   fn params_schema(&self) -> serde_json::Value {
     serde_json::json!({ "type": "object", "properties": { "command": { "type": "string" } }, "required": ["command"] })
   }
@@ -403,7 +324,7 @@ impl AgentTool for ApiTool {
 }
 
 // Generic integration tool: executes a provider REST action using the stored
-// integration credentials. Data-driven — new actions are added to the provider match.
+// integration credentials. Data-driven â€” new actions are added to the provider match.
 struct IntegrationTool {
   action: String,
   credentials: serde_json::Value,
@@ -532,31 +453,6 @@ impl AgentTool for IntegrationTool {
   }
 }
 
-fn now() -> String { chrono::Local::now().format("%H:%M:%S").to_string() }
-
-// ---------------------------------------------------------------------------
-// DB
-// ---------------------------------------------------------------------------
-
-fn db(app: &AppHandle) -> Result<Connection, String> {
-  let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-  fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-  let conn = Connection::open(dir.join("local-agent-os.sqlite3")).map_err(|e| e.to_string())?;
-  conn.execute_batch("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, started_at TEXT NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL, input TEXT NOT NULL, output TEXT, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS memory (agent_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(agent_id,key)); CREATE TABLE IF NOT EXISTS model_configs (id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL, model TEXT NOT NULL, host TEXT, api_key TEXT, enabled INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS tools (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, integration_id TEXT NOT NULL, description TEXT, enabled INTEGER NOT NULL DEFAULT 1, config_json TEXT NOT NULL DEFAULT '{}'); CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, objective TEXT NOT NULL, model TEXT NOT NULL, tool_ids TEXT NOT NULL DEFAULT '[]', integrations TEXT NOT NULL DEFAULT '[]', memory INTEGER NOT NULL DEFAULT 1, permissions TEXT NOT NULL DEFAULT '[]', home_path TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#8b5cf6', x REAL NOT NULL DEFAULT 0, y REAL NOT NULL DEFAULT 0, is_manager INTEGER NOT NULL DEFAULT 0, description TEXT NOT NULL DEFAULT ''); CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, name TEXT NOT NULL, nodes TEXT NOT NULL DEFAULT '[]', edges TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS integration_configs (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, config_json TEXT NOT NULL DEFAULT '{}', enabled INTEGER NOT NULL DEFAULT 0, connected INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, requester TEXT NOT NULL, assigned_agent TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', input TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', result TEXT, created_at TEXT NOT NULL, completed_at TEXT); CREATE TABLE IF NOT EXISTS agent_conversations (agent_id TEXT PRIMARY KEY, messages TEXT NOT NULL DEFAULT '[]');") .map_err(|e| e.to_string())?;
-  // Migrate older DBs: ensure new columns exist on existing tables.
-  let cols = |table: &str| -> Result<Vec<String>, String> {
-    conn.prepare(&format!("PRAGMA table_info({table})")).map_err(|e| e.to_string())?
-      .query_map([], |row| row.get::<_, String>(1)).map_err(|e| e.to_string())?
-      .collect::<Result<_, _>>().map_err(|e| e.to_string())
-  };
-  let agents_cols = cols("agents")?;
-  if !agents_cols.iter().any(|c| c == "is_manager") { conn.execute("ALTER TABLE agents ADD COLUMN is_manager INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
-  if !agents_cols.iter().any(|c| c == "description") { conn.execute("ALTER TABLE agents ADD COLUMN description TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
-  let runs_cols = cols("runs")?;
-  if !runs_cols.iter().any(|c| c == "prompt_tokens") { conn.execute("ALTER TABLE runs ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
-  if !runs_cols.iter().any(|c| c == "completion_tokens") { conn.execute("ALTER TABLE runs ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
-  Ok(conn)
-}
 
 // ---------------------------------------------------------------------------
 // Commands
@@ -817,7 +713,7 @@ fn mask_config(cfg: &serde_json::Value) -> serde_json::Value {
     for (k, v) in obj {
       // Never expose secrets to the frontend; show a "set" marker instead.
       if k.to_lowercase().contains("token") || k.to_lowercase().contains("key") || k.to_lowercase().contains("secret") {
-        if v.as_str().map(|s| !s.is_empty()).unwrap_or(false) { out.insert(k.clone(), serde_json::json!("••••••••")); }
+        if v.as_str().map(|s| !s.is_empty()).unwrap_or(false) { out.insert(k.clone(), serde_json::json!("â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢")); }
         else { out.insert(k.clone(), serde_json::Value::Null); }
       } else {
         out.insert(k.clone(), v.clone());
@@ -864,13 +760,13 @@ fn merge_config(existing: &serde_json::Value, incoming: &serde_json::Value) -> R
   let obj = out.as_object_mut().ok_or("config must be an object")?;
   if let Some(inc) = incoming.as_object() {
     for (k, v) in inc {
-      // Only merge strings, booleans, arrays, objects — never numbers that
+      // Only merge strings, booleans, arrays, objects â€” never numbers that
       // sneak in as bad values (e.g. clientId: 0).
       if !v.is_string() && !v.is_boolean() && !v.is_array() && !v.is_object() && !v.is_null() {
         continue;
       }
       // Keep the stored secret if the frontend sent the masked placeholder or null.
-      let masked = v.as_str().map(|s| s == "••••••••" || s.is_empty()).unwrap_or(v.is_null());
+      let masked = v.as_str().map(|s| s == "â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" || s.is_empty()).unwrap_or(v.is_null());
       if masked { continue; }
       obj.insert(k.clone(), v.clone());
     }
@@ -1031,7 +927,7 @@ fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::path::Path) 
   let mut stmt = conn.prepare("SELECT kind, enabled, config_json FROM tools WHERE id=?1").map_err(|e| e.to_string())?;
   for tool_id in &agent.tool_ids {
     let mut rows = stmt.query_map(params![tool_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
-    let Some(Ok((kind, enabled, config_json))) = rows.next() else { continue }; // unknown or missing → skip
+    let Some(Ok((kind, enabled, config_json))) = rows.next() else { continue }; // unknown or missing â†’ skip
     if !enabled { continue; }
     let config: serde_json::Value = serde_json::from_str(&config_json).unwrap_or_else(|_| serde_json::json!({}));
     let str_cfg = |k: &str| config.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -1311,8 +1207,8 @@ fn build_workspace_context(conn: &Connection) -> Result<String, String> {
     }
   }
   let tasks = list_tasks(conn)?;
-  let active: Vec<String> = tasks.iter().filter(|t| t.status == "pending" || t.status == "running").map(|t| format!("- {} → {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect();
-  let recent: Vec<String> = tasks.iter().take(5).filter(|t| t.status == "completed").map(|t| format!("- {} → {}: result: {}", t.id, t.assigned_agent, t.result.as_deref().unwrap_or(""))).collect();
+  let active: Vec<String> = tasks.iter().filter(|t| t.status == "pending" || t.status == "running").map(|t| format!("- {} â†’ {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect();
+  let recent: Vec<String> = tasks.iter().take(5).filter(|t| t.status == "completed").map(|t| format!("- {} â†’ {}: result: {}", t.id, t.assigned_agent, t.result.as_deref().unwrap_or(""))).collect();
   Ok(format!(
     "## Available Agents\n{}\n## Available Integrations\n{}\n## Active Tasks\n{}\n## Recent Task Results\n{}",
     if agents.is_empty() { "- none".to_string() } else { agents },
@@ -1328,7 +1224,7 @@ async fn execute_agent(app: AppHandle, agent: AgentRequest, input: String, api_k
   let run_id = format!("{}-{}", agent.id, chrono::Utc::now().timestamp_millis());
   let conn = db(&app)?;
   conn.execute("INSERT INTO runs (id,agent_id,started_at,status,model,input) VALUES (?1,?2,?3,'running',?4,?5)", params![run_id, agent.id, started, agent.model, input]).map_err(|e| e.to_string())?;
-  let mut events = vec![ExecutionEvent { time: now(), kind: "thought".into(), title: "Loaded isolated agent context".into(), detail: Some(format!("Home: {} · tools: {}", agent.home_path, agent.tool_ids.join(", "))) }];
+  let mut events = vec![ExecutionEvent { time: now(), kind: "thought".into(), title: "Loaded isolated agent context".into(), detail: Some(format!("Home: {} Â· tools: {}", agent.home_path, agent.tool_ids.join(", "))) }];
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
   for folder in ["files", "memory", "runs", "outputs"] { fs::create_dir_all(home.join(folder)).map_err(|e| e.to_string())?; }
   let (output, prompt_tokens, completion_tokens) = match run_agent_once(&app, &agent, &input, api_key.as_deref(), &mut events).await {
@@ -1513,7 +1409,7 @@ macro_rules! manager_tool {
   };
 }
 
-manager_tool!(ManagerCreateAgent, "create_agent", "Create a new agent. Params: name (string), objective (string), model (string, e.g. 'groq:llama-3.3-70b-versatile'), toolIds (array, optional), integrations (array, optional), permissions (array, optional: 'network', 'files', or 'host_fs' for host file access). No credentials are needed to create an agent — host file access is granted via the permissions array ('host_fs').", serde_json::json!({ "name": { "type": "string" }, "objective": { "type": "string" }, "model": { "type": "string" }, "toolIds": { "type": "array", "items": { "type": "string" } }, "integrations": { "type": "array", "items": { "type": "string" } }, "permissions": { "type": "array", "items": { "type": "string" } } }), serde_json::json!(["name", "objective", "model"]));
+manager_tool!(ManagerCreateAgent, "create_agent", "Create a new agent. Params: name (string), objective (string), model (string, e.g. 'groq:llama-3.3-70b-versatile'), toolIds (array, optional), integrations (array, optional), permissions (array, optional: 'network', 'files', or 'host_fs' for host file access). No credentials are needed to create an agent â€” host file access is granted via the permissions array ('host_fs').", serde_json::json!({ "name": { "type": "string" }, "objective": { "type": "string" }, "model": { "type": "string" }, "toolIds": { "type": "array", "items": { "type": "string" } }, "integrations": { "type": "array", "items": { "type": "string" } }, "permissions": { "type": "array", "items": { "type": "string" } } }), serde_json::json!(["name", "objective", "model"]));
 manager_tool!(ManagerUpdateAgent, "update_agent", "Update fields on an existing agent. Params: agentId (string), name?, objective?, model?, toolIds?, integrations?, permissions?.", serde_json::json!({ "agentId": { "type": "string" }, "name": { "type": "string" }, "objective": { "type": "string" }, "model": { "type": "string" }, "toolIds": { "type": "array" }, "integrations": { "type": "array" }, "permissions": { "type": "array" } }), serde_json::json!(["agentId"]));
 manager_tool!(ManagerDeleteAgent, "delete_agent", "Delete an agent. Params: agentId (string).", serde_json::json!({ "agentId": { "type": "string" } }), serde_json::json!(["agentId"]));
 manager_tool!(ManagerCreateWorkflow, "create_workflow", "Create a new workflow. Params: name (string), nodes (string, optional JSON), edges (string, optional JSON).", serde_json::json!({ "name": { "type": "string" }, "nodes": { "type": "string" }, "edges": { "type": "string" } }), serde_json::json!(["name"]));
@@ -1553,6 +1449,9 @@ fn manager_tools() -> Vec<Box<dyn AgentTool>> {
     Box::new(ManagerListModels),
     Box::new(ManagerListTools),
     Box::new(ManagerWorkspaceStatus),
+    Box::new(SearchFilesTool),
+    Box::new(ReadAnyFileTool),
+    Box::new(RunCommandTool),
   ]
 }
 
@@ -1565,14 +1464,14 @@ fn build_manager_system_prompt(conn: &Connection, memory_blob: &str) -> Result<S
     tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
   }
   Ok(format!(
-    "You are the Manager of a real, running agent workspace application. You are NOT a simulated or virtual entity — you have real tools and real effects on the user's machine.\n\n\
+    "You are the Manager of a real, running agent workspace application. You are NOT a simulated or virtual entity â€” you have real tools and real effects on the user's machine.\n\n\
      You can actually do these things right now (do not claim you cannot):\n{tool_list}\n\
      When a tool returns a result, that result is real. When you create an agent or run a task, it really happens on the user's device.\n\n\
      Rules:\n\
      - Never say you are 'just a language model' or that you lack the ability to do something that is in your tool list. If a user asks for something you can do with your tools, do it.\n\
      - Inspect the workspace freely with read-only tools.\n\
-     - When you need to change state (creating/deleting agents or workflows, configuring integrations, running tasks), CALL THE TOOL IN THIS TURN. You must emit the tool call now — never ask the user to type 'yes', never ask them to 'provide permissions', never request credentials in your reply, and never describe the tool you would use. The application intercepts your tool call and shows the user a confirmation popup automatically; they approve or reject there. After the tool executes, report its result. If you are not sure you are allowed to do something, call the tool anyway — the popup is the permission gate.\n\
-     - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent — file access is just a permission value in the create_agent call.\n\
+     - When you need to change state (creating/deleting agents or workflows, configuring integrations, running tasks), CALL THE TOOL IN THIS TURN. You must emit the tool call now â€” never ask the user to type 'yes', never ask them to 'provide permissions', never request credentials in your reply, and never describe the tool you would use. The application intercepts your tool call and shows the user a confirmation popup automatically; they approve or reject there. After the tool executes, report its result. If you are not sure you are allowed to do something, call the tool anyway â€” the popup is the permission gate.\n\
+     - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent â€” file access is just a permission value in the create_agent call.\n\
      - Never store secrets (API keys/tokens) without the user's explicit approval in the confirmation popup.\n\
      - Delegate domain work to agents rather than doing it inline.\n\n\
      Workspace context:\n{context}\n\n{memory_blob}\n\
@@ -1590,7 +1489,7 @@ fn manager_default_model(conn: &Connection) -> String {
       if let Some(Ok(id)) = rows.next() { return id; }
     }
   }
-  // No configured models — return empty so callers can surface a clear error.
+  // No configured models â€” return empty so callers can surface a clear error.
   String::new()
 }
 
@@ -1677,11 +1576,21 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
         .json(&serde_json::json!({ "model": manager.model, "messages": messages, "tools": tool_schemas(&tools) })).send().await
     }.map_err(|e| format!("Could not reach the model provider: {e}"))?;
     if !response.status().is_success() { return Err(format!("Model provider returned {}", response.status())); }
-    let parsed: ChatResponse = response.json().await.map_err(|e| e.to_string())?;
-    if let Some(calls) = parsed.message.tool_calls {
-      for call in calls {
-        let name = call.function.name.clone();
-        let args = call.function.arguments.clone();
+    let parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    // Support both Ollama (message.tool_calls) and OpenAI-compatible shapes.
+    let calls_arr = parsed["message"]["tool_calls"].as_array()
+      .or_else(|| parsed["choices"][0]["message"]["tool_calls"].as_array())
+      .cloned()
+      .unwrap_or_default();
+    let assistant_msg = parsed["message"].clone();
+    let assistant_msg = if assistant_msg.is_null() { parsed["choices"][0]["message"].clone() } else { assistant_msg };
+    if !calls_arr.is_empty() {
+      if let Ok(am) = serde_json::from_value::<ChatMessage>(assistant_msg.clone()) {
+        messages.push(am);
+      }
+      for c in calls_arr {
+        let name = c["function"]["name"].as_str().unwrap_or("").to_string();
+        let args: serde_json::Value = c["function"]["arguments"].as_str().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_else(|| serde_json::json!({}));
         let result = match name.as_str() {
           "list_agents" => {
             let mut out = String::new();
@@ -1695,14 +1604,14 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
           }
           "list_tasks" => {
             let tasks = list_tasks(&conn)?;
-            Ok(if tasks.is_empty() { "No tasks.".into() } else { tasks.iter().map(|t| format!("- {} → {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect::<Vec<_>>().join("\n") })
+            Ok(if tasks.is_empty() { "No tasks.".into() } else { tasks.iter().map(|t| format!("- {} â†’ {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect::<Vec<_>>().join("\n") })
           }
           "get_task_status" => {
             let task_id = args.get("taskId").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let mut stmt = conn.prepare("SELECT id, requester, assigned_agent, status, input, context, result, created_at, completed_at FROM tasks WHERE id=?1").map_err(|e| e.to_string())?;
             let mut rows = stmt.query_map(params![task_id], task_from_row).map_err(|e| e.to_string())?;
             match rows.next().transpose().map_err(|e| e.to_string())? {
-              Some(t) => Ok(format!("{} → {}: {} — result: {}", t.id, t.assigned_agent, t.status, t.result.unwrap_or_default())),
+              Some(t) => Ok(format!("{} â†’ {}: {} â€” result: {}", t.id, t.assigned_agent, t.status, t.result.unwrap_or_default())),
               None => Ok(format!("Task {task_id} not found.")),
             }
           }
@@ -1888,11 +1797,12 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
           }
           _ => Err(format!("Unknown manager tool {name}.")),
         };
-        messages.push(ChatMessage { role: "assistant".into(), content: None, tool_calls: Some(vec![call.clone()]), tool_call_id: None });
-        messages.push(ChatMessage { role: "tool".into(), content: Some(result.map_err(|e| e.to_string())?), tool_calls: None, tool_call_id: Some(call.id.clone()) });
+        let call_id = c["id"].as_str().unwrap_or("").to_string();
+        messages.push(ChatMessage { role: "assistant".into(), content: None, tool_calls: Some(vec![ToolCall { id: call_id.clone(), kind: "function".into(), function: ToolCallFunction { name: name.clone(), arguments: args.clone() } }]), tool_call_id: None });
+        messages.push(ChatMessage { role: "tool".into(), content: Some(result.map_err(|e| e.to_string())?), tool_calls: None, tool_call_id: Some(call_id) });
       }
     } else {
-      final_output = parsed.message.content.unwrap_or_default();
+      final_output = parsed["message"]["content"].as_str().unwrap_or("").to_string();
       break;
     }
   }
@@ -1917,14 +1827,14 @@ async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &serde_json::V
     }
     "list_tasks" => {
       let tasks = list_tasks(&conn)?;
-      Ok(if tasks.is_empty() { "No tasks.".into() } else { tasks.iter().map(|t| format!("- {} → {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect::<Vec<_>>().join("\n") })
+      Ok(if tasks.is_empty() { "No tasks.".into() } else { tasks.iter().map(|t| format!("- {} â†’ {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect::<Vec<_>>().join("\n") })
     }
     "get_task_status" => {
       let task_id = args.get("taskId").and_then(|v| v.as_str()).unwrap_or("").to_string();
       let mut stmt = conn.prepare("SELECT id, requester, assigned_agent, status, input, context, result, created_at, completed_at FROM tasks WHERE id=?1").map_err(|e| e.to_string())?;
       let mut rows = stmt.query_map(params![task_id], task_from_row).map_err(|e| e.to_string())?;
       match rows.next().transpose().map_err(|e| e.to_string())? {
-        Some(t) => Ok(format!("{} → {}: {} — result: {}", t.id, t.assigned_agent, t.status, t.result.unwrap_or_default())),
+        Some(t) => Ok(format!("{} â†’ {}: {} â€” result: {}", t.id, t.assigned_agent, t.status, t.result.unwrap_or_default())),
         None => Ok(format!("Task {task_id} not found.")),
       }
     }
@@ -2020,6 +1930,9 @@ async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &serde_json::V
       let conn_n: i64 = conn.query_row("SELECT COUNT(*) FROM integration_configs WHERE connected=1", [], |r| r.get(0)).unwrap_or(0);
       Ok(format!("Agents: {agents_n}. Connected integrations: {conn_n}. Active tasks: {tasks_n}. Total runs: {runs_n}."))
     }
+    "search_files" => SearchFilesTool.run(args).await,
+    "read_file_any" => ReadAnyFileTool.run(args).await,
+    "run_command" => RunCommandTool.run(args).await,
     _ => Err(format!("Manager tool '{name}' not implemented.")),
   }
 }
@@ -2073,7 +1986,7 @@ async fn telegram_loop(app: AppHandle) {
         offset = update_id + 1;
         let Some(text) = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string()) else { continue };
         let Some(chat_id) = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64()) else { continue };
-        // Handle /agents and /tasks locally for snappy replies; everything else → Manager.
+        // Handle /agents and /tasks locally for snappy replies; everything else â†’ Manager.
         let reply = match text.trim() {
           "/agents" | "/agents@" => {
             let conn = db(&app).ok();
@@ -2088,7 +2001,7 @@ async fn telegram_loop(app: AppHandle) {
           "/tasks" | "/tasks@" => {
             let conn = db(&app).ok();
             match conn {
-              Some(c) => list_tasks(&c).map(|ts| if ts.is_empty() { "No tasks.".into() } else { ts.iter().map(|t| format!("- {} → {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect::<Vec<_>>().join("\n") }).unwrap_or_default(),
+              Some(c) => list_tasks(&c).map(|ts| if ts.is_empty() { "No tasks.".into() } else { ts.iter().map(|t| format!("- {} â†’ {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect::<Vec<_>>().join("\n") }).unwrap_or_default(),
               None => "No tasks.".into(),
             }
           }
@@ -2180,7 +2093,8 @@ fn requires_confirmation(tool: &str) -> bool {
   matches!(tool,
     "create_agent" | "update_agent" | "delete_agent"
     | "create_workflow" | "update_workflow" | "delete_workflow" | "run_workflow"
-    | "configure_integration" | "create_task" | "cancel_task" | "delegate_task")
+    | "configure_integration" | "create_task" | "cancel_task" | "delegate_task"
+    | "run_command")
 }
 
 #[tauri::command]
@@ -2313,12 +2227,141 @@ fn clear_agent_memory(app: AppHandle, agent_id: String) -> Result<(), String> {
   Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Chat sessions (bifurcated history per agent)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn list_chat_sessions(app: AppHandle, agent_id: String) -> Result<Vec<serde_json::Value>, String> {
+  let conn = db(&app)?;
+  let mut stmt = conn.prepare("SELECT id, title, created_at, updated_at FROM chat_sessions WHERE agent_id=?1 ORDER BY updated_at DESC LIMIT 100").map_err(|e| e.to_string())?;
+  let rows = stmt.query_map(params![agent_id], |row| {
+    Ok(serde_json::json!({ "id": row.get::<_, String>(0)?, "title": row.get::<_, String>(1)?, "createdAt": row.get::<_, String>(2)?, "updatedAt": row.get::<_, String>(3)? }))
+  }).map_err(|e| e.to_string())?;
+  let mut out = Vec::new();
+  for row in rows { out.push(row.map_err(|e| e.to_string())?); }
+  Ok(out)
+}
+
+#[tauri::command]
+fn get_chat_session(app: AppHandle, session_id: String) -> Result<Vec<serde_json::Value>, String> {
+  let conn = db(&app)?;
+  let mut stmt = conn.prepare("SELECT role, content, time FROM chat_messages WHERE session_id=?1 ORDER BY id").map_err(|e| e.to_string())?;
+  let rows = stmt.query_map(params![session_id], |row| {
+    Ok(serde_json::json!({ "role": row.get::<_, String>(0)?, "content": row.get::<_, String>(1)?, "time": row.get::<_, String>(2)? }))
+  }).map_err(|e| e.to_string())?;
+  let mut out = Vec::new();
+  for row in rows { out.push(row.map_err(|e| e.to_string())?); }
+  Ok(out)
+}
+
+#[tauri::command]
+fn create_chat_session(app: AppHandle, agent_id: String, title: String) -> Result<serde_json::Value, String> {
+  let conn = db(&app)?;
+  let id = format!("sess-{}", chrono::Utc::now().timestamp_millis());
+  let now = chrono::Utc::now().to_rfc3339();
+  let title = if title.trim().is_empty() { "Chat".to_string() } else { title };
+  conn.execute("INSERT INTO chat_sessions (id, agent_id, title, created_at, updated_at) VALUES (?1,?2,?3,?4,?4)", params![id, agent_id, title, now]).map_err(|e| e.to_string())?;
+  Ok(serde_json::json!({ "id": id, "title": title, "createdAt": now, "updatedAt": now }))
+}
+
+#[tauri::command]
+fn delete_chat_session(app: AppHandle, session_id: String) -> Result<(), String> {
+  let conn = db(&app)?;
+  conn.execute("DELETE FROM chat_messages WHERE session_id=?1", params![session_id]).map_err(|e| e.to_string())?;
+  conn.execute("DELETE FROM chat_sessions WHERE id=?1", params![session_id]).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+// Appends a message to a session (creates the session if missing).
+fn append_session_message(conn: &Connection, session_id: &str, agent_id: &str, role: &str, content: &str) -> Result<(), String> {
+  let now = chrono::Utc::now().to_rfc3339();
+  conn.execute("INSERT INTO chat_sessions (id, agent_id, title, created_at, updated_at) VALUES (?1,?2,'Chat',?3,?3) ON CONFLICT(id) DO NOTHING", params![session_id, agent_id, now]).map_err(|e| e.to_string())?;
+  conn.execute("INSERT INTO chat_messages (session_id, role, content, time) VALUES (?1,?2,?3,'')", params![session_id, role, content]).map_err(|e| e.to_string())?;
+  conn.execute("UPDATE chat_sessions SET updated_at=?1 WHERE id=?2", params![now, session_id]).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+fn today_key() -> String { chrono::Local::now().format("%Y-%m-%d").to_string() }
+
+fn yesterday_key() -> String { (chrono::Local::now() - chrono::Duration::days(1)).format("%Y-%m-%d").to_string() }
+
+// Loads the memory facts ("brain") for an agent, excluding the summary pseudo-key.
+fn load_memory_facts(conn: &Connection, agent_id: &str) -> Vec<(String, String)> {
+  load_memory(conn, agent_id).into_iter().filter(|(k, _)| k != MEMORY_SUMMARY_KEY).collect()
+}
+
+// Summarizes a closed chat session (via the model), stores the summary on the
+// session, and folds it into the agent's day context. Returns the summary text.
+async fn close_chat_session(app: &AppHandle, session_id: &str, agent_id: &str, model: &str) -> Result<String, String> {
+  let conn = db(app)?;
+  let transcript: Vec<String> = {
+    let mut stmt = conn.prepare("SELECT role, content FROM chat_messages WHERE session_id=?1 ORDER BY id").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params![session_id], |row| Ok(format!("{}: {}", row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    out
+  };
+  if transcript.is_empty() { return Ok(String::new()); }
+  let joined = transcript.join("\n");
+  let prompt = format!(
+    "Summarize this chat conversation as a compact memory for the agent. Capture what was discussed, decided, requested, and any open threads. Max 200 words.\n\nConversation:\n{joined}"
+  );
+  let summary = one_shot_completion(app, model, &prompt).await.unwrap_or_default();
+  if !summary.is_empty() {
+    let day = today_key();
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute("UPDATE chat_sessions SET summary=?1 WHERE id=?2", params![summary, session_id]).map_err(|e| e.to_string())?;
+    // Fold into today's day-context (append, capped).
+    let existing: String = conn.query_row("SELECT summary FROM day_contexts WHERE agent_id=?1 AND day=?2", params![agent_id, day], |r| r.get(0)).unwrap_or_default();
+    let merged = if existing.is_empty() { summary.clone() } else { format!("{existing}\n{summary}") };
+    let merged = merged.chars().take(3000).collect::<String>();
+    conn.execute(
+      "INSERT INTO day_contexts (agent_id, day, summary, updated_at) VALUES (?1,?2,?3,?4) ON CONFLICT(agent_id,day) DO UPDATE SET summary=excluded.summary, updated_at=excluded.updated_at",
+      params![agent_id, day, merged, now],
+    ).map_err(|e| e.to_string())?;
+  }
+  Ok(summary)
+}
+
+#[tauri::command]
+async fn close_session(app: AppHandle, session_id: String, agent_id: String, model: String) -> Result<(), String> {
+  let _ = close_chat_session(&app, &session_id, &agent_id, &model).await;
+  Ok(())
+}
+
+// Assembles the full context bundle: memory facts, last chat summary, today's
+// context, yesterday's context. Injected before the rolling window each turn.
+fn build_context_bundle(conn: &Connection, agent_id: &str) -> Result<String, String> {
+  let facts = load_memory_facts(conn, agent_id);
+  let mut out = String::new();
+  if !facts.is_empty() {
+    out.push_str("## Long-term memory (facts learned about you):\n");
+    for (k, v) in &facts {
+      let label = k.strip_prefix("fact:").unwrap_or(k);
+      out.push_str(&format!("- {label}: {v}\n"));
+    }
+  }
+  // Last chat's condensed summary.
+  let last_chat: Option<String> = conn.query_row(
+    "SELECT summary FROM chat_sessions WHERE agent_id=?1 AND summary != '' ORDER BY updated_at DESC LIMIT 1",
+    params![agent_id], |r| r.get(0)).ok();
+  if let Some(s) = last_chat { if !s.is_empty() { out.push_str(&format!("\n## Last chat summary:\n{s}\n")); } }
+  // Today's context.
+  let today: Option<String> = conn.query_row("SELECT summary FROM day_contexts WHERE agent_id=?1 AND day=?2", params![agent_id, today_key()], |r| r.get(0)).ok();
+  if let Some(s) = today { if !s.is_empty() { out.push_str(&format!("\n## Today's context:\n{s}\n")); } }
+  // Yesterday's context.
+  let yday: Option<String> = conn.query_row("SELECT summary FROM day_contexts WHERE agent_id=?1 AND day=?2", params![agent_id, yesterday_key()], |r| r.get(0)).ok();
+  if let Some(s) = yday { if !s.is_empty() { out.push_str(&format!("\n## Yesterday's context:\n{s}\n")); } }
+  Ok(out)
+}
+
 // Streams a chat completion from the configured provider as token deltas.
 // Supports the Manager (is_manager agent) and regular agents. Ollama uses NDJSON
 // (stream:true); Groq/OpenRouter use SSE `data:` lines. Context is a rolling
 // window of the last ROLLING_WINDOW persisted messages.
 #[tauri::command]
-async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>) -> Result<(), String> {
+async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>) -> Result<(), String> {
   let conn = db(&app)?;
   let client = reqwest::Client::new();
 
@@ -2340,12 +2383,15 @@ async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_mana
       memory_blob.push_str(&format!("- {fact}: {v}\n"));
     }
   }
+  // Long-term memory: facts + last chat + today's and yesterday's condensed context.
+  let context_bundle = build_context_bundle(&conn, &agent.id).unwrap_or_default();
+  let full_memory = format!("{memory_blob}{context_bundle}");
 
   // Build the system prompt (workspace context for the Manager).
   let system = if is_manager {
-    build_manager_system_prompt(&conn, &memory_blob)?
+    build_manager_system_prompt(&conn, &full_memory)?
   } else {
-    format!("You are {}. Objective: {}\n\n{memory_blob}\nReturn a helpful, direct answer.", agent.name, agent.objective)
+    format!("You are {}. Objective: {}\n\n{full_memory}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
 
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
@@ -2381,17 +2427,23 @@ async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_mana
       if !response.status().is_success() { return Err(format!("Model provider returned {}", response.status())); }
       let parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
       let mut tool_calls: Vec<(String, serde_json::Value)> = Vec::new();
-      if let Some(calls) = parsed["message"]["tool_calls"].as_array() {
-        for c in calls {
-          if let (Some(name), Some(arguments)) = (c["function"]["name"].as_str(), c["function"]["arguments"].as_str()) {
-            let args = serde_json::from_str(arguments).unwrap_or_else(|_| serde_json::json!({}));
-            tool_calls.push((name.to_string(), args));
-          }
+      // Support both Ollama (message.tool_calls) and OpenAI-compatible
+      // (choices[0].message.tool_calls) response shapes.
+      let calls_arr = parsed["message"]["tool_calls"].as_array()
+        .or_else(|| parsed["choices"][0]["message"]["tool_calls"].as_array())
+        .cloned()
+        .unwrap_or_default();
+      for c in calls_arr {
+        if let (Some(name), Some(arguments)) = (c["function"]["name"].as_str(), c["function"]["arguments"].as_str()) {
+          let args = serde_json::from_str(arguments).unwrap_or_else(|_| serde_json::json!({}));
+          tool_calls.push((name.to_string(), args));
         }
       }
       if tool_calls.is_empty() { break; }
-      // Append the assistant tool-call message, then the tool results.
-      messages.push(parsed["message"].clone());
+      // Append the assistant tool-call message (correct shape for the provider), then tool results.
+      let assistant_msg = parsed["message"].clone();
+      let assistant_msg = if assistant_msg.is_null() { parsed["choices"][0]["message"].clone() } else { assistant_msg };
+      messages.push(assistant_msg);
       for (name, args) in tool_calls {
         if requires_confirmation(&name) {
           // Emit a confirmation request and wait for the user's decision.
@@ -2467,6 +2519,11 @@ async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_mana
   if !delta.is_empty() {
     history.push(serde_json::json!({ "role": "assistant", "content": delta }));
     let _ = save_conversation(&conn, &agent.id, &history);
+    // Also append to the chat session (bifurcated history) if one is active.
+    if let Some(sess) = &session_id {
+      let _ = append_session_message(&conn, sess, &agent.id, "user", &input);
+      let _ = append_session_message(&conn, sess, &agent.id, "assistant", &delta);
+    }
   }
   Ok(())
 }
@@ -2480,7 +2537,7 @@ fn main() {
       tauri::async_runtime::spawn(telegram_loop(handle));
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, list_runs, stream_chat, get_conversation, clear_agent_memory, confirm_manager_tool])
+    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, list_runs, stream_chat, get_conversation, clear_agent_memory, confirm_manager_tool, list_chat_sessions, get_chat_session, create_chat_session, delete_chat_session])
     .run(tauri::generate_context!())
     .expect("error while running Local Agent OS");
 }

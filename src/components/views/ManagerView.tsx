@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, CornerDownLeft, Send, Settings2 } from 'lucide-react';
+import { Bot, CornerDownLeft, MessageSquare, Send, Settings2, Trash2 } from 'lucide-react';
 import type { Agent, Integration, ModelConfig, Task } from '../../types';
 import { useManagerStore } from '../../hooks/useManager';
 import { useTasksStore } from '../../hooks/useTasks';
@@ -9,6 +9,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Drawer } from '../ui/Drawer';
 import { Dropdown } from '../ui/Dropdown';
 import { toast } from '../../hooks/useToast';
+import { deleteChatSession, getChatSession, listChatSessions } from '../../runtime';
 
 const STATUS_COLOR: Record<string, string> = {
   pending: 'text-[#facc15]',
@@ -26,12 +27,17 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   const send = useManagerStore((s) => s.send);
   const loadHistory = useManagerStore((s) => s.loadHistory);
   const reset = useManagerStore((s) => s.reset);
+  const newSession = useManagerStore((s) => s.newSession);
   const tasks = useTasksStore((s) => s.tasks);
   const loadTasks = useTasksStore((s) => s.loadTasks);
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [mgrDraft, setMgrDraft] = useState<Agent | null>(null);
+  const [sessions, setSessions] = useState<{ id: string; title: string; createdAt: string; updatedAt: string }[]>([]);
+  const [viewingSession, setViewingSession] = useState<string | null>(null);
+  const [viewMsgs, setViewMsgs] = useState<ChatEntry[]>([]);
+  const sessionId = useManagerStore((s) => s.sessionId);
   const persistAgent = useAgentsStore((s) => s.persistAgent);
 
   const openConfig = () => {
@@ -51,7 +57,8 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   useEffect(() => {
     const managerId = agents.find((a) => a.isManager)?.id ?? 'manager';
     loadHistory(managerId);
-  }, [agents, loadHistory]);
+    listChatSessions(managerId).then(setSessions).catch(() => {});
+  }, [agents, loadHistory, sessionId]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages]);
 
   const managerAgent = agents.find((a) => a.isManager) ?? {
@@ -121,6 +128,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             <span className="font-mono text-[10px] text-muted">{currentAgentId ? `→ ${agents.find((a) => a.id === currentAgentId)?.name ?? currentAgentId}` : 'orchestrator'}</span>
           </div>
           <div className="flex items-center gap-2">
+            <button className="secondary" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; const m = agents.find((a) => a.id === id)?.model ?? models.find((x) => x.enabled)?.id ?? ''; newSession(id, m); }}>New chat</button>
             <button className="secondary" onClick={openConfig}><Settings2 size={12} />Config</button>
             <button className="secondary" onClick={() => setCurrentAgent(null)}>Reset to Manager</button>
             <button className="secondary" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; reset(id); }} title="Clear the Manager's memory and conversation">Reset memory</button>
@@ -199,6 +207,24 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
                 <span className={`font-mono text-[9px] ${STATUS_COLOR[t.status]}`}>{t.status}</span>
               </div>
               <p className="mt-1 line-clamp-2 text-[10.5px] leading-1.5 text-muted">{t.input}</p>
+            </div>
+          ))}
+        </div>
+
+        <span className="mb-2 mt-4 block font-mono text-[10px] tracking-[1px] text-muted">CHATS</span>
+        <div className="grid gap-1.5">
+          {sessions.length === 0 && <p className="px-2 text-[11px] text-muted">No chats yet. Send a message to start one.</p>}
+          {sessions.map((s) => (
+            <div key={s.id} className={`flex items-center gap-1 rounded-[6px] border px-2 py-1.5 ${s.id === sessionId ? 'border-[var(--green)] bg-panel2' : 'border-line bg-panel2/50'}`}>
+              <button className="flex-1 cursor-pointer overflow-hidden text-left" onClick={async () => {
+                setViewingSession(s.id);
+                const msgs = await getChatSession(s.id);
+                setViewMsgs(msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: '' })));
+              }}>
+                <span className="block truncate text-[11px] text-text">{s.id === sessionId ? '● Current chat' : s.title}</span>
+                <span className="block font-mono text-[9px] text-muted">{new Date(s.updatedAt).toLocaleString()}</span>
+              </button>
+              <button className="cursor-pointer border-0 bg-transparent p-1 text-muted hover:text-[#f87171]" onClick={async () => { await deleteChatSession(s.id); listChatSessions(agents.find((a) => a.isManager)?.id ?? 'manager').then(setSessions); }}><Trash2 size={11} /></button>
             </div>
           ))}
         </div>

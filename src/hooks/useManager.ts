@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { clearAgentMemory, loadConversation, streamChat } from '../runtime';
+import { clearAgentMemory, closeSession, createChatSession, loadConversation, streamChat } from '../runtime';
 import { useConfirmStore } from './useConfirm';
 import { useRunsStore } from './useRuns';
 import type { Agent } from '../types';
@@ -10,8 +10,10 @@ type ManagerState = {
   currentAgentId: string | null;
   conversations: Record<string, ChatEntry[]>; // per-agent history, never destroyed on switch
   messages: ChatEntry[]; // current view
+  sessionId: string | null;
   busy: boolean;
   setCurrentAgent: (agentId: string | null) => void;
+  newSession: (agentId: string, model: string) => Promise<void>;
   loadHistory: (agentId: string) => Promise<void>;
   reset: (agentId: string) => Promise<void>;
   send: (message: string, managerAgent: Agent) => Promise<void>;
@@ -21,6 +23,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
   currentAgentId: null,
   conversations: {},
   messages: [],
+  sessionId: null,
   busy: false,
 
   setCurrentAgent: (agentId) => {
@@ -42,11 +45,24 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     await clearAgentMemory(agentId);
     set((s) => {
       const conv = { ...s.conversations, [agentId]: [] };
-      return { conversations: conv, messages: s.currentAgentId === agentId ? [] : s.messages };
+      return { conversations: conv, messages: s.currentAgentId === agentId ? [] : s.messages, sessionId: null };
     });
   },
 
+  newSession: async (agentId, model) => {
+    // Close the current session first: summarize it and fold into the day context.
+    const cur = get().sessionId;
+    if (cur) { await closeSession(cur, agentId, model); }
+    const sess = await createChatSession(agentId, 'Chat');
+    set({ sessionId: sess.id, messages: [] });
+  },
+
   send: async (message, managerAgent) => {
+    // Lazily create a session on the first message so every chat is recorded.
+    if (!get().sessionId) {
+      const sess = await createChatSession(managerAgent.id, 'Chat');
+      set({ sessionId: sess.id });
+    }
     set({ busy: true });
     const userEntry: ChatEntry = { role: 'user', content: message, time: new Date().toLocaleTimeString() };
     const agentId = managerAgent.id;
@@ -68,7 +84,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       }, (confirmReq) => {
         // Pop the confirmation dialog; the backend waits for the decision.
         useConfirmStore.getState().request(confirmReq);
-      });
+      }, get().sessionId ?? undefined);
       useRunsStore.getState().loadRuns();
     } catch (e) {
       const msg = typeof e === 'string' ? e : (e instanceof Error ? e.message : 'Manager failed to respond.');

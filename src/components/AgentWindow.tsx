@@ -4,7 +4,7 @@ import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run
 import { Dropdown } from './ui/Dropdown';
 import { MultiDropdown } from './ui/MultiDropdown';
 import { toast } from '../hooks/useToast';
-import { loadConversation, streamChat } from '../runtime';
+import { listChatSessions, getChatSession, createChatSession, deleteChatSession, streamChat } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
 import { StreamIndicator } from './ui/StreamIndicator';
 
@@ -18,6 +18,8 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
   const [tab, setTab] = useState<'chat' | 'runs' | 'info' | 'config' | 'history'>(complete ? 'chat' : 'config');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [history, setHistory] = useState<ChatMessage[]>([]);
+  const [sessions, setSessions] = useState<{ id: string; title: string; createdAt: string; updatedAt: string }[]>([]);
+  const [viewingSession, setViewingSession] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -33,9 +35,8 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
 
   useEffect(() => {
     if (tab === 'history') {
-      loadConversation(agent.id).then((turns) => {
-        setHistory(turns.map((m, i) => ({ role: m.role, content: m.content, time: `#${i + 1}` })));
-      }).catch(() => setHistory([]));
+      listChatSessions(agent.id).then(setSessions).catch(() => setSessions([]));
+      setViewingSession(null);
     }
   }, [tab, agent.id]);
 
@@ -195,18 +196,41 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
 
       {tab === 'history' && (
         <div className="mt-4 max-h-[calc(100vh-280px)] overflow-y-auto rounded-lg border border-line bg-panel p-4">
-          {history.length === 0 ? (
-            <p className="text-center text-[12px] text-muted">No chat history yet. Messages are saved as you chat.</p>
-          ) : (
-            <div className="grid gap-2">
-              {history.map((m, i) => (
-                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[78%] rounded-[10px] px-3 py-2 text-[12.5px] leading-1.6 whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
-                    <span className="mb-0.5 block font-mono text-[9px] text-muted">{m.role === 'user' ? 'you' : agent.name}</span>
-                    {m.content}
+          {viewingSession ? (
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <button className="secondary" onClick={() => setViewingSession(null)}>← All chats</button>
+                <button className="secondary" onClick={async () => { await deleteChatSession(viewingSession); setViewingSession(null); listChatSessions(agent.id).then(setSessions); }}>Delete chat</button>
+              </div>
+              <div className="grid gap-2">
+                {history.length === 0 ? <p className="text-center text-[12px] text-muted">No messages in this chat.</p> : history.map((m, i) => (
+                  <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[78%] rounded-[10px] px-3 py-2 text-[12.5px] leading-1.6 whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
+                      <span className="mb-0.5 block font-mono text-[9px] text-muted">{m.role === 'user' ? 'you' : agent.name}</span>
+                      {m.content}
+                    </div>
                   </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <span className="font-mono text-[10px] tracking-[1px] text-muted">PAST CHATS</span>
+                <button className="primary" onClick={async () => { await createChatSession(agent.id, 'Chat'); listChatSessions(agent.id).then(setSessions); }}>New chat</button>
+              </div>
+              {sessions.length === 0 ? (
+                <p className="text-center text-[12px] text-muted">No past chats yet. Start a chat, then it shows up here as a separate session.</p>
+              ) : (
+                <div className="grid gap-1.5">
+                  {sessions.map((s) => (
+                    <button key={s.id} className="flex cursor-pointer items-center justify-between rounded-[6px] border border-line bg-panel2 px-3 py-2 text-left hover:border-mid" onClick={async () => { setViewingSession(s.id); const msgs = await getChatSession(s.id); setHistory(msgs.map((m, i) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: `#${i + 1}` }))); }}>
+                      <span className="text-[12.5px] text-text">{s.title}</span>
+                      <span className="font-mono text-[10px] text-muted">{new Date(s.updatedAt).toLocaleString()}</span>
+                    </button>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           )}
         </div>

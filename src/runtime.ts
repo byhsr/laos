@@ -8,6 +8,7 @@ export async function streamChat(
   agent: Agent, input: string, isManager: boolean,
   onDelta: (d: string) => void,
   onConfirm?: (r: ManagerConfirmRequest) => void,
+  sessionId?: string,
 ): Promise<void> {
   const channel = new Channel<string>();
   channel.onmessage = (raw) => {
@@ -23,7 +24,26 @@ export async function streamChat(
     }
     onDelta(raw);
   };
-  await invoke('stream_chat', { agent, input, isManager, onEvent: channel });
+  await invoke('stream_chat', { agent, input, isManager, onEvent: channel, sessionId: sessionId ?? null });
+}
+
+// Chat session management (bifurcated history).
+export async function listChatSessions(agentId: string): Promise<{ id: string; title: string; createdAt: string; updatedAt: string }[]> {
+  try { return await invoke('list_chat_sessions', { agentId }); } catch { return []; }
+}
+export async function getChatSession(sessionId: string): Promise<{ role: string; content: string; time: string }[]> {
+  try { return await invoke('get_chat_session', { sessionId }); } catch { return []; }
+}
+export async function createChatSession(agentId: string, title: string): Promise<{ id: string; title: string; createdAt: string; updatedAt: string }> {
+  return await invoke('create_chat_session', { agentId, title });
+}
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  await invoke('delete_chat_session', { sessionId });
+}
+
+// Summarizes and closes a session, folding it into the agent's day context.
+export async function closeSession(sessionId: string, agentId: string, model: string): Promise<void> {
+  try { await invoke('close_session', { sessionId, agentId, model }); } catch { /* best-effort */ }
 }
 
 export async function confirmManagerTool(requestId: string, approved: boolean, tool: string, args: Record<string, unknown>): Promise<string | null> {
