@@ -93,7 +93,7 @@ export default function App() {
           {view === 'agents' && <AgentsView agents={agents} tools={tools} onOpen={openAgent} onCreate={addAgent} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('Agent deleted', 'success'); }} />}
           {view === 'workflows' && (
             <CanvasView
-              agents={agents} tools={tools} workflows={workflows}
+              agents={agents} tools={tools} workflows={workflows} integrations={integrations}
               initialWorkflowId={workflowToOpen}
               onInitialWorkflowConsumed={() => setWorkflowToOpen(null)}
               onSaveWorkflow={saveWorkflow}

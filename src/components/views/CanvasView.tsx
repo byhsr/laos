@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Bot, Check, GitBranch, Play, Plus, Repeat, Save, ShieldCheck, Trash2, Webhook, Workflow as WorkflowIcon, X } from 'lucide-react';
-import type { Agent, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
+import { ArrowLeft, Bot, Check, ChevronRight, GitBranch, Play, Plus, Repeat, Save, ShieldCheck, Trash2, Webhook, Workflow as WorkflowIcon, X } from 'lucide-react';
+import type { Agent, Integration, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
 import { Dropdown } from '../ui/Dropdown';
 import { toast } from '../../hooks/useToast';
 
@@ -21,14 +21,140 @@ const TYPE_META: Record<WorkflowNodeType, { label: string; color: string; icon: 
 const NODE_W = 200;
 const NODE_H = 84;
 
+// Rule types available in the checker builder, with their editable fields.
+const RULE_TYPES: { type: string; label: string; fields: { key: string; label: string; placeholder?: string }[] }[] = [
+  { type: 'contains', label: 'Contains', fields: [{ key: 'value', label: 'Text', placeholder: 'TODO' }] },
+  { type: 'notContains', label: 'Does not contain', fields: [{ key: 'value', label: 'Text', placeholder: 'TODO' }] },
+  { type: 'nonEmpty', label: 'Non-empty', fields: [] },
+  { type: 'startsWith', label: 'Starts with', fields: [{ key: 'value', label: 'Prefix' }] },
+  { type: 'endsWith', label: 'Ends with', fields: [{ key: 'value', label: 'Suffix' }] },
+  { type: 'regex', label: 'Regex', fields: [{ key: 'pattern', label: 'Pattern', placeholder: '\\d{4}-\\d{2}-\\d{2}' }, { key: 'mode', label: 'Mode' }] },
+  { type: 'validJson', label: 'Valid JSON', fields: [] },
+  { type: 'equals', label: 'Equals', fields: [{ key: 'value', label: 'Expected' }] },
+  { type: 'notEquals', label: 'Not equals', fields: [{ key: 'value', label: 'Value' }] },
+  { type: 'lengthRange', label: 'Length range', fields: [{ key: 'min', label: 'Min', placeholder: '0' }, { key: 'max', label: 'Max', placeholder: '1000' }] },
+  { type: 'numericRange', label: 'Numeric range', fields: [{ key: 'min', label: 'Min' }, { key: 'max', label: 'Max' }] },
+  { type: 'hasField', label: 'Has field', fields: [{ key: 'path', label: 'Path', placeholder: 'items[0].title' }, { key: 'min', label: 'Min count (arrays)' }] },
+  { type: 'fieldType', label: 'Field type', fields: [{ key: 'path', label: 'Path' }, { key: 'type', label: 'Type' }] },
+  { type: 'arrayLength', label: 'Array length', fields: [{ key: 'path', label: 'Path' }, { key: 'min', label: 'Min' }, { key: 'max', label: 'Max' }] },
+  { type: 'inList', label: 'In list', fields: [{ key: 'values', label: 'Values (comma sep)' }] },
+  { type: 'llmJudge', label: 'LLM judge', fields: [{ key: 'prompt', label: 'Criteria' }, { key: 'model', label: 'Model', placeholder: 'auto' }] },
+];
+
+function CheckerRules({ config, update }: {
+  config: Record<string, unknown>;
+  update: (fn: (cfg: Record<string, unknown>) => Record<string, unknown>) => void;
+}) {
+  const rules = (config.rules as { type: string; label?: string; [k: string]: unknown }[]) ?? [];
+  const setRules = (next: unknown[]) => update((cfg) => ({ ...cfg, rules: next }));
+
+  const addRule = (type: string) => {
+    const def = RULE_TYPES.find((r) => r.type === type);
+    if (!def) return;
+    const rule: Record<string, unknown> = { type };
+    for (const f of def.fields) {
+      if (f.key === 'values') rule.values = [];
+      else if (f.key === 'mode') rule.mode = 'mustMatch';
+      else if (f.key === 'type') rule.type = 'string'; // fieldType uses `type`
+      else if (f.key === 'min') rule.min = 0;
+      else if (f.key === 'max') rule.max = 1000;
+      else if (f.key === 'model') rule.model = 'auto';
+      else rule[f.key] = '';
+    }
+    setRules([...rules, rule]);
+  };
+
+  const updateRule = (i: number, patch: Record<string, unknown>) => {
+    const next = rules.map((r, idx) => (idx === i ? { ...r, ...patch } : r));
+    setRules(next);
+  };
+
+  const removeRule = (i: number) => setRules(rules.filter((_, idx) => idx !== i));
+
+  const fieldValue = (rule: Record<string, unknown>, key: string) => {
+    if (key === 'values') return Array.isArray(rule.values) ? (rule.values as string[]).join(', ') : '';
+    return rule[key] as string ?? '';
+  };
+
+  return (
+    <div className="mt-4">
+      <div className="mb-1.5 flex items-center justify-between">
+        <label className="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">RULES</label>
+        <Dropdown
+          value=""
+          placeholder="+ Add rule…"
+          options={RULE_TYPES.map((r) => ({ value: r.type, label: r.label }))}
+          onChange={(v) => { if (v) addRule(v); }}
+        />
+      </div>
+
+      {rules.length === 0 && <p className="text-[11px] leading-1.6 text-muted">No rules. Add one — all rules must pass (or use an LLM judge for subjective checks).</p>}
+
+      <div className="grid gap-2">
+        {rules.map((rule, i) => {
+          const def = RULE_TYPES.find((r) => r.type === rule.type);
+          return (
+            <div key={i} className="rounded-[6px] border border-line bg-panel2 p-2">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-[11px] font-semibold">{def?.label ?? rule.type}</span>
+                <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-[#f87171]" onClick={() => removeRule(i)}><X size={11} /></button>
+              </div>
+              {def?.fields.map((f) => (
+                <label key={f.key} className="mb-1.5 block last:mb-0">
+                  <span className="mb-0.5 block font-mono text-[9px] uppercase tracking-[0.08em] text-muted">{f.label}</span>
+                  {f.key === 'mode' ? (
+                    <Dropdown
+                      value={String(rule.mode ?? 'mustMatch')}
+                      options={[{ value: 'mustMatch', label: 'Must match' }, { value: 'mustNotMatch', label: 'Must NOT match' }]}
+                      onChange={(v) => updateRule(i, { mode: v })}
+                    />
+                  ) : f.key === 'type' ? (
+                    <Dropdown
+                      value={String(rule.type ?? 'string')}
+                      options={[
+                        { value: 'string', label: 'String' },
+                        { value: 'number', label: 'Number' },
+                        { value: 'bool', label: 'Boolean' },
+                        { value: 'array', label: 'Array' },
+                        { value: 'object', label: 'Object' },
+                      ]}
+                      onChange={(v) => updateRule(i, { type: v })}
+                    />
+                  ) : f.key === 'model' ? (
+                    <input value={String(rule.model ?? 'auto')} onChange={(e) => updateRule(i, { model: e.target.value })} placeholder={f.placeholder} className="w-full rounded-md border border-line bg-panel px-2 py-1 text-[11px] text-text outline-none focus:border-mid" />
+                  ) : (
+                    <input
+                      value={fieldValue(rule, f.key)}
+                      onChange={(e) => updateRule(i, f.key === 'values' ? { values: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) } : { [f.key]: e.target.value })}
+                      placeholder={f.placeholder}
+                      className="w-full rounded-md border border-line bg-panel px-2 py-1 text-[11px] text-text outline-none focus:border-mid"
+                    />
+                  )}
+                </label>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+
+      <label className="mb-1 mt-3 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">MODE</label>
+      <Dropdown
+        value={String(config.mode ?? 'all')}
+        options={[{ value: 'all', label: 'All rules must pass' }, { value: 'any', label: 'Any rule passes' }]}
+        onChange={(v) => update((cfg) => ({ ...cfg, mode: v }))}
+      />
+    </div>
+  );
+}
+
 const fmtDate = (s?: string) => {
   if (!s) return '';
   const d = new Date(s);
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
 };
 
-export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow, initialWorkflowId, onInitialWorkflowConsumed }: {
-  agents: Agent[]; tools: Tool[]; workflows: Workflow[];
+export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow, initialWorkflowId, onInitialWorkflowConsumed }: {
+  agents: Agent[]; tools: Tool[]; workflows: Workflow[]; integrations: Integration[];
   onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
   onDeleteWorkflow: (id: string) => Promise<void>;
   onRunWorkflow: (w: Workflow, input: string) => Promise<WorkflowRunResult>;
@@ -37,6 +163,7 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
 }) {
   const [current, setCurrent] = useState<Workflow | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [draft, setDraft] = useState<WorkflowNode | null>(null);
   const [runInput, setRunInput] = useState('');
   const [running, setRunning] = useState(false);
@@ -49,6 +176,7 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
   const [drawingEdge, setDrawingEdge] = useState<{ from: string; x: number; y: number } | null>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
+  const [inspectorWidth, setInspectorWidth] = useState(300);
   const [panning, setPanning] = useState<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const [search, setSearch] = useState('');
   const [confirmTarget, setConfirmTarget] = useState<Workflow | null>(null);
@@ -77,16 +205,16 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
   }, [initialWorkflowId]);
 
   const openWorkflow = (w: Workflow) => {
-    setCurrent(w); setRunResult(null); setRunError(null); setSelectedNodeId(null); setPan({ x: 0, y: 0 });
+    setCurrent(w); setRunResult(null); setRunError(null); setSelectedNodeId(null); setSelectedEdgeId(null); setPan({ x: 0, y: 0 });
   };
 
   const createNew = () => {
     setCurrent({ id: `wf-${Date.now()}`, name: 'Untitled workflow', nodes: [], edges: [], updatedAt: new Date().toISOString() });
-    setRunResult(null); setRunError(null); setSelectedNodeId(null); setPan({ x: 0, y: 0 });
+    setRunResult(null); setRunError(null); setSelectedNodeId(null); setSelectedEdgeId(null); setPan({ x: 0, y: 0 });
   };
 
   const closeBuilder = () => {
-    setCurrent(null); setSelectedNodeId(null); setRunResult(null); setRunError(null); setDraft(null); setPan({ x: 0, y: 0 });
+    setCurrent(null); setSelectedNodeId(null); setSelectedEdgeId(null); setRunResult(null); setRunError(null); setDraft(null); setPan({ x: 0, y: 0 });
   };
 
   const deleteWorkflow = async (id: string) => {
@@ -113,6 +241,12 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
   const deleteNode = (id: string) => {
     update((w) => ({ ...w, nodes: w.nodes.filter((n) => n.id !== id), edges: w.edges.filter((e) => e.from !== id && e.to !== id) }));
     setSelectedNodeId((s) => (s === id ? null : s));
+    setSelectedEdgeId(null);
+  };
+
+  const deleteEdge = (id: string) => {
+    update((w) => ({ ...w, edges: w.edges.filter((e) => e.id !== id) }));
+    setSelectedEdgeId(null);
   };
 
   const agentName = (id?: string) => agents.find((a) => a.id === id)?.name ?? 'Select agent…';
@@ -176,6 +310,8 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
     // Capture the pointer so panning keeps working even if the cursor leaves
     // the canvas and releases outside it.
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    setSelectedEdgeId(null);
+    setSelectedNodeId(null);
     setPanning({ startX: e.clientX, startY: e.clientY, origX: pan.x, origY: pan.y });
   };
 
@@ -217,6 +353,25 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
   };
 
   const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
+
+  // Drag the inspector's left edge to resize it.
+  const startInspectorResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = inspectorWidth;
+    const onMove = (ev: PointerEvent) => {
+      // Dragging left shrinks, dragging right grows.
+      setInspectorWidth(Math.min(Math.max(startW + (startX - ev.clientX), 220), 560));
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.style.cursor = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
 
   const startPaletteDrag = (type: WorkflowNodeType) => (e: React.PointerEvent) => {
     e.preventDefault();
@@ -266,6 +421,7 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
           const rect = canvasRef.current?.getBoundingClientRect();
           if (!rect) return;
           setSelectedNodeId(n.id);
+          setSelectedEdgeId(null);
           const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
           const dx = w.x - n.x, dy = w.y - n.y;
           setMoving({ id: n.id, dx, dy });
@@ -338,12 +494,13 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
     return (
       <div className="flex h-full min-h-0 flex-col gap-3">
         <header className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <button className="flex cursor-pointer items-center gap-1 rounded-[6px] border-0 bg-none px-1.5 py-1 font-mono text-[10px] uppercase tracking-[1px] text-muted hover:text-text" onClick={closeBuilder}><ArrowLeft size={12} />Workflows</button>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <button className="flex cursor-pointer items-center gap-1 rounded-[6px] border border-transparent bg-none px-1.5 py-1 font-mono text-[10px] uppercase tracking-[1px] text-muted hover:border-dotted hover:border-mid hover:text-text" onClick={closeBuilder}><ArrowLeft size={12} />Workflows</button>
+            <ChevronRight size={12} className="text-mid" />
             <input
               value={current.name}
               onChange={(e) => update((w) => ({ ...w, name: e.target.value }))}
-              className="w-48 rounded-md border border-line bg-panel2 px-2 py-1 text-[13px] text-text outline-none focus:border-mid"
+              className="w-48 rounded-md border border-line bg-panel2 px-2.5 py-1 text-[13px] font-semibold text-text outline-none focus:border-mid"
             />
           </div>
           <div className="flex items-center gap-2">
@@ -398,7 +555,21 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
                   if (!from || !to) return null;
                   const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2;
                   const x2 = to.x, y2 = to.y + NODE_H / 2;
-                  return <path key={e.id} className="fill-none stroke-dim stroke-[1.5]" d={`M ${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`} />;
+                  const d = `M ${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`;
+                  const selected = selectedEdgeId === e.id;
+                  return (
+                    <g key={e.id} className="pointer-events-auto cursor-pointer" onClick={(ev) => { ev.stopPropagation(); setSelectedEdgeId(e.id); setSelectedNodeId(null); }}>
+                      {/* Wide invisible hit area */}
+                      <path d={d} className="fill-none stroke-transparent" strokeWidth={14} />
+                      <path d={d} className={`fill-none ${selected ? 'stroke-[var(--green)]' : 'stroke-dim'} stroke-[1.5]`} />
+                      {selected && (
+                        <g transform={`translate(${(x1 + x2) / 2}, ${(y1 + y2) / 2})`} onClick={(ev) => { ev.stopPropagation(); deleteEdge(e.id); setSelectedEdgeId(null); }}>
+                          <circle r={9} className="fill-panel stroke-line" strokeWidth={1.5} />
+                          <text textAnchor="middle" dominantBaseline="central" fontSize={10} className="fill-[#f87171] font-mono">✕</text>
+                        </g>
+                      )}
+                    </g>
+                  );
                 })}
                 {drawingEdge && <path className="fill-none stroke-[var(--green)] stroke-[1.5] [stroke-dasharray:5_5]" d={`M ${drawingEdge.x} ${drawingEdge.y} C ${drawingEdge.x + 40} ${drawingEdge.y}, ${drawingEdge.x - 40} ${drawingEdge.y}, ${drawingEdge.x} ${drawingEdge.y}`} />}
               </svg>
@@ -434,7 +605,14 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
             </div>
           </div>
 
-          <div className="w-[260px] shrink-0 overflow-y-auto rounded-[10px] border border-line bg-panel p-3.5">
+          {/* Inspector / results — resizable right drawer */}
+          <div className="relative flex shrink-0" style={{ width: inspectorWidth }}>
+            <div
+              className="absolute top-0 bottom-0 left-0 z-[7] w-1 cursor-col-resize bg-transparent transition-colors hover:bg-white/20"
+              onPointerDown={startInspectorResize}
+              title="Drag to resize"
+            />
+            <div className="flex min-w-0 flex-1 flex-col overflow-y-auto rounded-[10px] border border-line bg-panel p-3.5">
             {runResult ? (
               <div>
                 <div className="mb-2.5 flex items-center justify-between">
@@ -489,6 +667,51 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
                       <input type="number" min={1} value={String(node.config?.maxIterations ?? 3)} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, maxIterations: Number(e.target.value) } } : n)) }))} className="w-full rounded-md border border-line bg-panel2 px-2.5 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
                     </>
                   )}
+                  {node.type === 'gate' && (
+                    <>
+                      <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">CONDITION</label>
+                      <input value={String(node.config?.condition ?? '')} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, condition: e.target.value } } : n)) }))} placeholder='e.g. $pass == false or contains("error")' className="w-full rounded-md border border-line bg-panel2 px-2.5 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
+                      <p className="mt-1.5 text-[11px] leading-1.6 text-muted">Evaluated against the previous node's output. Supports: <code className="font-mono text-[10px]">$pass</code>, <code className="font-mono text-[10px]">$len</code>, <code className="font-mono text-[10px]">contains("...")</code>, <code className="font-mono text-[10px]">==</code>, <code className="font-mono text-[10px]">&gt;</code>, <code className="font-mono text-[10px]">&lt;</code>, dotted paths like <code className="font-mono text-[10px]">$result.items.length</code>.</p>
+                    </>
+                  )}
+                  {node.type === 'checker' && (
+                    <CheckerRules
+                      config={node.config ?? {}}
+                      update={(fn) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: fn(n.config ?? {}) } : n)) }))}
+                    />
+                  )}
+                  {node.type === 'trigger' && (
+                    <>
+                      <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">PROMPT TEMPLATE</label>
+                      <textarea value={String(node.config?.prompt ?? '')} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, prompt: e.target.value } } : n)) }))} placeholder="Optional template for the workflow input. Use {{input}} for the run input." rows={4} className="w-full resize-y rounded-md border border-line bg-panel2 px-2.5 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
+                    </>
+                  )}
+                  {node.type === 'integration' && (
+                    <>
+                      <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">INTEGRATION</label>
+                      <Dropdown
+                        value={String(node.config?.integrationId ?? '')}
+                        options={integrations.map((i) => ({ value: i.id, label: `${i.name}${i.connected ? '' : ' (not connected)'}` }))}
+                        onChange={(v) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, integrationId: v, action: '' } } : n)) }))}
+                        placeholder="Select integration…"
+                      />
+                      {node.config?.integrationId && (() => {
+                        const integ = integrations.find((i) => i.id === node.config?.integrationId);
+                        return (
+                          <>
+                            <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">ACTION</label>
+                            <Dropdown
+                              value={String(node.config?.action ?? '')}
+                              options={(integ?.actions ?? []).map((a) => ({ value: a.name, label: a.name }))}
+                              onChange={(v) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, action: v } } : n)) }))}
+                              placeholder="Select action…"
+                            />
+                          </>
+                        );
+                      })()}
+                      <p className="mt-2 text-[11px] leading-1.6 text-muted">The workflow's accumulated output is sent as the action's payload (content/title) where applicable.</p>
+                    </>
+                  )}
                   <p className="mt-4 text-[11px] leading-1.6 text-muted">{TYPE_META[node.type].label} node. Drag its port to connect output to another node.</p>
                 </div>
               );
@@ -497,6 +720,7 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
                 <p className="text-[12px] leading-1.6">Select a node to edit its config, or drag from a node's port to create a connection.</p>
               </div>
             )}
+          </div>
           </div>
         </div>
       </div>

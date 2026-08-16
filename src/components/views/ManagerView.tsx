@@ -175,10 +175,11 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             </div>
           </div>
 
-          <ConfirmDialog />
-
           {/* Input overlays the chat, floating at the bottom */}
           <div className="absolute right-0 bottom-0 left-0 flex items-end gap-2.5 rounded-lg bg-gradient-to-t from-[var(--bg)] via-[var(--bg)]/80 to-transparent p-3 pt-6">
+            <div className="absolute right-3 bottom-[calc(100%+8px)] left-3 z-[30]">
+              <ConfirmDialog />
+            </div>
             <textarea
               ref={inputRef}
               rows={1}
