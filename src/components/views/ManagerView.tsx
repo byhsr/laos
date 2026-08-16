@@ -129,7 +129,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   const [infoOpen, setInfoOpen] = useState(false);
 
   return (
-    <div className="flex h-full flex-col gap-4">
+    <div className="flex h-full flex-col gap-2">
       {/* Tab bar */}
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
