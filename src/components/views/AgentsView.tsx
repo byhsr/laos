@@ -11,6 +11,7 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
   const visible = agents.filter((a) => !a.isManager);
   const [confirmTarget, setConfirmTarget] = useState<Agent | null>(null);
   const [typedName, setTypedName] = useState('');
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   const openConfirm = (a: Agent) => { setConfirmTarget(a); setTypedName(''); };
   const closeConfirm = () => { setConfirmTarget(null); setTypedName(''); };
@@ -35,22 +36,22 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
       ) : (
         <div className="grid max-w-[1100px] grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
           {visible.map((a) => (
-            <div key={a.id} className="group relative min-h-[165px] cursor-pointer rounded-[10px] border border-line bg-panel p-[18px] text-left transition-transform duration-150 hover:-translate-y-0.5 hover:border-dim" onClick={() => onOpen(a.id)} style={{ borderTop: `2px solid ${a.color}` }}>
+            <div key={a.id} className="group relative min-h-[220px] cursor-pointer rounded-[10px] border border-line bg-panel p-6 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-dotted hover:border-mid hover:shadow-[0_8px_24px_#0005]" onClick={() => onOpen(a.id)} onMouseEnter={() => setHoveredId(a.id)} onMouseLeave={() => setHoveredId((h) => (h === a.id ? null : h))}>
               <button
-                className="absolute top-2.5 right-2.5 grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-[#e11d48] hover:text-white"
+                className="absolute top-3 right-3 grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-[#e11d48] hover:text-white"
                 title="Delete agent"
                 onClick={(e) => { e.stopPropagation(); openConfirm(a); }}
               >
                 <Trash2 size={13} />
               </button>
-              <div className="flex items-center gap-2">
-                <AgentAvatar agent={a} size={40} />
-                <b className="block text-[14px]">{a.name}</b>
+              <div className="flex flex-col items-center">
+                <AgentAvatar agent={a} size={88} playing={hoveredId === a.id} />
+                <b className="mt-4 block text-[15px]">{a.name}</b>
+                <small className="mt-2.5 block min-h-[36px] text-center text-[11px] leading-[1.6] text-muted">{a.objective || 'Not configured yet'}</small>
+                <em className="mt-4 block font-mono text-[9px] text-muted not-italic">
+                  {isReady(a) ? a.toolIds.map(toolName).join(' · ') || 'no tools' : '⚙ needs setup'}
+                </em>
               </div>
-              <small className="mt-1.5 block min-h-[34px] text-[11px] leading-[1.5] text-muted">{a.objective || 'Not configured yet'}</small>
-              <em className="mt-3.5 block font-mono text-[9px] text-muted not-italic">
-                {isReady(a) ? a.toolIds.map(toolName).join(' · ') || 'no tools' : '⚙ needs setup'}
-              </em>
             </div>
           ))}
         </div>

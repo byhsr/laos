@@ -1643,7 +1643,7 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
               id: id.clone(), name: name.clone(), objective, model,
               tool_ids: arr("toolIds"), integrations: arr("integrations"), memory: true,
               permissions: arr("permissions").into_iter().filter(|p| p == "network" || p == "files").collect(),
-              home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(), persona: "gremlin".into(),
+              home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(), persona: "ai-orb".into(),
             };
             save_agent(app.clone(), agent)?;
             Ok(format!("Created agent '{name}' (id: {id})."))
@@ -1878,7 +1878,7 @@ async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &serde_json::V
         id: id.clone(), name: name.clone(), objective, model,
         tool_ids: arr("toolIds"), integrations: arr("integrations"), memory: true,
         permissions: arr("permissions").into_iter().filter(|p| p == "network" || p == "files").collect(),
-        home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(), persona: "gremlin".into(),
+        home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(), persona: "ai-orb".into(),
       };
       save_agent(app.clone(), agent)?;
       Ok(format!("Created agent '{name}' (id: {id})."))

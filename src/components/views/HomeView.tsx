@@ -1,4 +1,5 @@
 import { Plus, Workflow as WorkflowIcon } from 'lucide-react';
+import { useState } from 'react';
 import type { Agent, Run, Tool, Workflow } from '../../types';
 import { AgentAvatar } from '../ui/AgentAvatar';
 
@@ -13,6 +14,7 @@ export function HomeView({ agents, tools, runs, workflows, onOpen, onCreate, onO
   const agentTokens = (id: string) => (runs ?? []).filter((r) => r.agentId === id).reduce((sum, r) => sum + (r.promptTokens ?? 0) + (r.completionTokens ?? 0), 0);
   const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
   const visibleAgents = agents.filter((a) => !a.isManager);
+  const [hoveredAgentId, setHoveredAgentId] = useState<string | null>(null);
   return (
     <>
       <header className="mb-6 flex items-end justify-between">
@@ -46,8 +48,8 @@ export function HomeView({ agents, tools, runs, workflows, onOpen, onCreate, onO
       </div>
       <div className="grid max-w-[1100px] grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
         {visibleAgents.slice(0, SHOW).map((a) => (
-          <button key={a.id} className="home-agent flex min-h-[64px] cursor-pointer items-center gap-3 rounded-[10px] border border-line bg-panel p-3 text-left transition-transform duration-150 hover:-translate-y-0.5 hover:border-dim" onClick={() => onOpen(a.id)} style={{ borderLeft: `3px solid ${a.color}` }}>
-            <AgentAvatar agent={a} size={32} />
+          <button key={a.id} className="home-agent flex min-h-[72px] cursor-pointer items-center gap-3 rounded-[10px] border border-line bg-panel p-4 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-dotted hover:border-mid hover:shadow-[0_8px_24px_#0005]" onClick={() => onOpen(a.id)} onMouseEnter={() => setHoveredAgentId(a.id)} onMouseLeave={() => setHoveredAgentId((h) => (h === a.id ? null : h))}>
+            <AgentAvatar agent={a} size={40} playing={hoveredAgentId === a.id} />
             <div className="min-w-0">
               <b className="block truncate text-[13px]">{a.name}</b>
               <em className="block truncate font-mono text-[9px] text-muted not-italic">{a.toolIds.map(toolName).join(' · ') || 'no tools'} · {fmt(agentTokens(a.id))} tok</em>
@@ -62,8 +64,8 @@ export function HomeView({ agents, tools, runs, workflows, onOpen, onCreate, onO
       </div>
       <div className="grid max-w-[1100px] grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
         {workflows.slice(0, SHOW).map((w) => (
-          <button key={w.id} className="home-agent flex min-h-[64px] cursor-pointer items-center gap-3 rounded-[10px] border border-line bg-panel p-3 text-left transition-transform duration-150 hover:-translate-y-0.5 hover:border-dim" onClick={() => onOpenWorkflow(w.id)} style={{ borderLeft: '3px solid var(--mid)' }}>
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-panel2 text-muted"><WorkflowIcon size={14} /></span>
+          <button key={w.id} className="home-agent flex min-h-[72px] cursor-pointer items-center gap-3 rounded-[10px] border border-line bg-panel p-4 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-dotted hover:border-mid hover:shadow-[0_8px_24px_#0005]" onClick={() => onOpenWorkflow(w.id)}>
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-panel2 text-muted"><WorkflowIcon size={16} /></span>
             <div className="min-w-0">
               <b className="block truncate text-[13px]">{w.name}</b>
               <em className="block truncate font-mono text-[9px] text-muted not-italic">{w.nodes.length} nodes · {w.edges.length} connections</em>

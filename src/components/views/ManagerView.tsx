@@ -8,7 +8,7 @@ import { StreamIndicator } from '../ui/StreamIndicator';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Drawer } from '../ui/Drawer';
 import { Dropdown } from '../ui/Dropdown';
-import { AgentAvatar, PERSONAS } from '../ui/AgentAvatar';
+import { AgentAvatar, PersonaPicker } from '../ui/AgentAvatar';
 import { toast } from '../../hooks/useToast';
 import { deleteChatSession, getChatSession, listChatSessions } from '../../runtime';
 
@@ -297,13 +297,9 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             {models.length === 0 && <p className="mt-2 text-[12px] text-muted">No models configured. Add one in the Models tab.</p>}
 
             <label className="mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">PERSONA</label>
-            <Dropdown
-              value={mgrDraft.persona ?? 'gremlin'}
-              options={PERSONAS.map((p) => ({ value: p.id, label: p.label }))}
-              onChange={(v) => setMgrDraft({ ...mgrDraft, persona: v })}
-            />
+            <PersonaPicker value={mgrDraft.persona ?? 'ai-orb'} onChange={(v) => setMgrDraft({ ...mgrDraft, persona: v })} />
             <div className="mt-2 flex items-center gap-2">
-              <AgentAvatar agent={{ ...mgrDraft, persona: mgrDraft.persona ?? 'gremlin' }} size={28} />
+              <AgentAvatar agent={{ ...mgrDraft, persona: mgrDraft.persona ?? 'ai-orb' }} size={28} />
               <span className="text-[11px] text-muted">Animated Lottie gremlin avatar</span>
             </div>
 
