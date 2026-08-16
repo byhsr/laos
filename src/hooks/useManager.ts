@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { clearAgentMemory, closeSession, createChatSession, loadConversation, renameChatSession, streamChat } from '../runtime';
+import { clearAgentMemory, closeSession, createChatSession, getChatSession, listChatSessions, renameChatSession, streamChat } from '../runtime';
 import { useConfirmStore } from './useConfirm';
 import { useRunsStore } from './useRuns';
 import type { Agent } from '../types';
@@ -15,7 +15,7 @@ const titleFrom = (msg: string) => {
 type ManagerState = {
   currentAgentId: string | null;
   conversations: Record<string, ChatEntry[]>; // per-agent history, never destroyed on switch
-  messages: ChatEntry[]; // current view
+  messages: ChatEntry[]; // current view (active session)
   sessionId: string | null;
   busy: boolean;
   setCurrentAgent: (agentId: string | null) => void;
@@ -38,12 +38,24 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
   },
 
   loadHistory: async (agentId) => {
-    const stored = await loadConversation(agentId);
-    if (stored.length === 0) return;
-    const entries: ChatEntry[] = stored.map((m) => ({ role: m.role, content: m.content, time: '' }));
+    // Load the most recent chat session's messages for this agent (fresh chat
+    // starts empty; old chats stay in History).
+    const sessions = await listChatSessions(agentId).catch(() => []);
+    const session = sessions[0];
+    let entries: ChatEntry[] = [];
+    let sessionId: string | null = null;
+    if (session) {
+      sessionId = session.id;
+      const msgs = await getChatSession(session.id).catch(() => []);
+      entries = msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: m.time }));
+    }
     set((s) => {
       const conv = { ...s.conversations, [agentId]: entries };
-      return { conversations: conv, messages: s.currentAgentId === agentId ? entries : s.messages };
+      return {
+        conversations: conv,
+        sessionId: s.currentAgentId === agentId || agentId === 'manager' ? sessionId : s.sessionId,
+        messages: (s.currentAgentId === agentId || agentId === 'manager') ? entries : s.messages,
+      };
     });
   },
 
@@ -56,11 +68,15 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
   },
 
   newSession: async (agentId, model) => {
-    // Close the current session first: summarize it and fold into the day context.
+    // Fire-and-forget summarize the old session (don't block the UI — New chat
+    // must feel instant). Create the new session and clear the view immediately.
     const cur = get().sessionId;
-    if (cur) { await closeSession(cur, agentId, model); }
+    if (cur) { void closeSession(cur, agentId, model); }
     const sess = await createChatSession(agentId, 'Chat');
-    set({ sessionId: sess.id, messages: [] });
+    set((s) => {
+      const conv = { ...s.conversations, [agentId]: [] };
+      return { conversations: conv, sessionId: sess.id, messages: [] };
+    });
   },
 
   send: async (message, managerAgent) => {

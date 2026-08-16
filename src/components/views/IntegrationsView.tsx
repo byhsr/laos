@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Check, Key, Plug, RefreshCw } from 'lucide-react';
+import { Check, Key, Plug, RefreshCw, Rocket, X } from 'lucide-react';
 import { SiAirtable, SiGoogle, SiNotion, SiTelegram } from 'react-icons/si';
 import type { Integration } from '../../types';
 import { useIntegrationsStore } from '../../hooks/useIntegrations';
 import { toast } from '../../hooks/useToast';
 import { Drawer } from '../ui/Drawer';
+import { telegramRegisterWebhook, telegramStartTunnel, telegramStopTunnel, telegramTunnelStatus } from '../../runtime';
 
 const LOGOS: Record<string, React.ReactNode> = {
   notion: <SiNotion size={18} />,
@@ -25,6 +26,9 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
   const [tokenDraft, setTokenDraft] = useState<Record<string, string>>({});
   const [testing, setTesting] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [tunnelBusy, setTunnelBusy] = useState(false);
+  const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
+  const [webhookRegistered, setWebhookRegistered] = useState(false);
 
   const active = integrations.find((i) => i.id === drawerId) ?? null;
 
@@ -74,6 +78,40 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
     setTesting(null);
     await loadIntegrations();
     toast(ok ? 'Connection OK' : 'Connection failed', ok ? 'success' : 'error');
+  };
+
+  const refreshTunnelStatus = async () => {
+    const st = await telegramTunnelStatus();
+    setTunnelUrl(st.tunnelUrl);
+    setWebhookRegistered(st.webhookRegistered);
+  };
+
+  const onExposeTelegram = async () => {
+    setTunnelBusy(true);
+    try {
+      // Start the tunnel (spawns cloudflared), then register the webhook.
+      const url = await telegramStartTunnel();
+      setTunnelUrl(url);
+      const msg = await telegramRegisterWebhook();
+      setWebhookRegistered(true);
+      toast(msg, 'success');
+    } catch (e) {
+      toast(typeof e === 'string' ? e : 'Tunnel failed', 'error');
+    } finally {
+      setTunnelBusy(false);
+    }
+  };
+
+  const onStopTunnel = async () => {
+    setTunnelBusy(true);
+    try {
+      await telegramStopTunnel();
+      setTunnelUrl(null);
+      setWebhookRegistered(false);
+      toast('Tunnel stopped', 'success');
+    } finally {
+      setTunnelBusy(false);
+    }
   };
 
   return (
@@ -166,6 +204,37 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
                 <button className="secondary" onClick={() => onConnect(active.id)}><Plug size={12} />Connect</button>
               )}
             </div>
+
+            {active.id === 'telegram' && (
+              <div className="mt-6 rounded-[10px] border border-line bg-panel2 p-[18px]">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="font-mono text-[10px] tracking-[1px] text-muted">REMOTE ACCESS</span>
+                  <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-text" onClick={refreshTunnelStatus} title="Refresh status"><RefreshCw size={12} /></button>
+                </div>
+                <p className="mb-3 text-[12px] leading-[1.6] text-muted">
+                  Expose this local app to Telegram with a Cloudflare tunnel. One click starts the tunnel and registers the webhook — no domain needed, Cloudflare gives you a free <code className="font-mono text-[10px]">trycloudflare.com</code> URL.
+                </p>
+                {tunnelUrl ? (
+                  <>
+                    <div className="mb-3 flex items-center gap-2 rounded-md border border-[var(--green)] bg-panel px-3 py-2">
+                      <i className="inline-block h-2 w-2 shrink-0 rounded-full bg-[var(--green)]" />
+                      <span className="min-w-0 truncate font-mono text-[11px] text-text">{tunnelUrl}</span>
+                    </div>
+                    <div className="mb-3 flex items-center gap-2 text-[11px]">
+                      <span className={webhookRegistered ? 'text-[var(--green)]' : 'text-[#facc15]'}>
+                        {webhookRegistered ? '✓ Webhook registered' : '… Webhook not yet registered'}
+                      </span>
+                    </div>
+                    <button className="secondary w-full" onClick={onStopTunnel} disabled={tunnelBusy}><X size={12} />Stop tunnel</button>
+                  </>
+                ) : (
+                  <button className="primary w-full" onClick={onExposeTelegram} disabled={tunnelBusy}>
+                    <Rocket size={13} />{tunnelBusy ? 'Starting…' : 'Expose & register webhook'}
+                  </button>
+                )}
+                <p className="mt-3 text-[11px] leading-[1.5] text-muted">Requires <code className="font-mono text-[10px]">cloudflared</code> installed (or placed next to the app). While the tunnel is active, long-polling pauses.</p>
+              </div>
+            )}
           </div>
         </Drawer>
       )}

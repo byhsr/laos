@@ -58,6 +58,35 @@ export async function confirmManagerTool(requestId: string, approved: boolean, t
   }
 }
 
+// Telegram tunnel + webhook (one-click expose).
+export async function telegramStartTunnel(): Promise<string> {
+  return await invoke<string>('telegram_start_tunnel');
+}
+export async function telegramRegisterWebhook(): Promise<string> {
+  return await invoke<string>('telegram_register_webhook');
+}
+export async function telegramStopTunnel(): Promise<void> {
+  await invoke('telegram_stop_tunnel');
+}
+export async function telegramTunnelStatus(): Promise<{ tunnelUrl: string | null; webhookRegistered: boolean }> {
+  try { return await invoke('telegram_tunnel_status'); } catch { return { tunnelUrl: null, webhookRegistered: false }; }
+}
+
+// Knowledge base (shared, user-writable persistent docs).
+export type KnowledgeDoc = { id: string; title: string; content: string; tags: string[]; updatedAt: string };
+export async function listKnowledgeDocs(): Promise<KnowledgeDoc[]> {
+  try { return await invoke<KnowledgeDoc[]>('list_knowledge_docs'); } catch { return []; }
+}
+export async function getKnowledgeDoc(id: string): Promise<KnowledgeDoc> {
+  return await invoke<KnowledgeDoc>('get_knowledge_doc', { id });
+}
+export async function saveKnowledgeDoc(doc: KnowledgeDoc): Promise<void> {
+  await invoke('save_knowledge_doc', { doc });
+}
+export async function deleteKnowledgeDoc(id: string): Promise<void> {
+  await invoke('delete_knowledge_doc', { id });
+}
+
 // Loads a persisted conversation (assistant+user turns) for an agent.
 export async function loadConversation(agentId: string): Promise<{ role: 'user' | 'assistant'; content: string }[]> {
   try {

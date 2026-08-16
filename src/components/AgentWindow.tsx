@@ -111,12 +111,21 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
     // Reset the auto-grown height after clearing.
     if (inputRef.current) inputRef.current.style.height = 'auto';
     const agentToRun = agent;
+    // Ensure a chat session exists so this agent's messages are recorded and
+    // the visible chat stays session-scoped.
+    const { sessionId } = useManagerStore.getState();
+    let sid = sessionId;
+    if (!sid) {
+      const sess = await createChatSession(agent.id, 'Chat');
+      sid = sess.id;
+      useManagerStore.setState({ sessionId: sid });
+    }
     let buffer = '';
     try {
       await streamChat(agentToRun, text, false, (delta) => {
         buffer += delta;
         setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: buffer } : m)));
-      });
+      }, undefined, sid);
       useRunsStore.getState().loadRuns();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -287,7 +296,14 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
             <div>
               <div className="mb-3 flex items-center justify-between">
                 <span className="font-mono text-[10px] tracking-[1px] text-muted">PAST CHATS</span>
-                <button className="primary" onClick={async () => { await createChatSession(agent.id, 'Chat'); listChatSessions(agent.id).then(setSessions); }}>New chat</button>
+                <button className="primary" onClick={async () => {
+                  const sess = await createChatSession(agent.id, 'Chat');
+                  useManagerStore.setState({ sessionId: sess.id });
+                  setMessages(() => []);
+                  listChatSessions(agent.id).then(setSessions);
+                  setViewingSession(null);
+                  setTab('chat');
+                }}>New chat</button>
               </div>
               {sessions.length === 0 ? (
                 <p className="text-center text-[12px] text-muted">No past chats yet. Start a chat, then it shows up here as a separate session.</p>

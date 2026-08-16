@@ -4,6 +4,7 @@ import type { Agent, Integration, ModelConfig, Task } from '../../types';
 import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
 import { useTasksStore } from '../../hooks/useTasks';
 import { useAgentsStore } from '../../hooks/useAgents';
+import { useShallow } from 'zustand/react/shallow';
 import { StreamIndicator } from '../ui/StreamIndicator';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Drawer } from '../ui/Drawer';
@@ -21,7 +22,10 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export function ManagerView({ agents, integrations, models }: { agents: Agent[]; integrations: Integration[]; models: ModelConfig[] }) {
-  const messages = useManagerStore((s) => s.messages);
+  const managerId = agents.find((a) => a.isManager)?.id ?? 'manager';
+  // Read the manager's own conversation directly (like AgentWindow), so the
+  // visible chat survives tab switches regardless of the shared currentAgentId.
+  const messages = useManagerStore(useShallow((s) => s.conversations[managerId] ?? []));
   const busy = useManagerStore((s) => s.busy);
   const currentAgentId = useManagerStore((s) => s.currentAgentId);
   const setCurrentAgent = useManagerStore((s) => s.setCurrentAgent);
@@ -57,10 +61,9 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
   useEffect(() => {
-    const managerId = agents.find((a) => a.isManager)?.id ?? 'manager';
     loadHistory(managerId);
     listChatSessions(managerId).then(setSessions).catch(() => {});
-  }, [agents, loadHistory, sessionId, messages.length]);
+  }, [managerId, loadHistory]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages]);
 
   const managerAgent = agents.find((a) => a.isManager) ?? {

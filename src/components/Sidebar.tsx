@@ -1,4 +1,4 @@
-import { Activity, Bot, Cpu, Globe, Home, ListChecks, Settings, UserCog, Workflow, Wrench } from 'lucide-react';
+import { Activity, BookOpen, Bot, Cpu, Globe, Home, ListChecks, Settings, UserCog, Workflow, Wrench } from 'lucide-react';
 import type { View } from '../types';
 
 const NAV_ITEMS: { key: View; label: string; icon: React.ReactNode }[] = [
@@ -6,6 +6,7 @@ const NAV_ITEMS: { key: View; label: string; icon: React.ReactNode }[] = [
   { key: 'manager', label: 'Laos', icon: <UserCog size={15} /> },
   { key: 'agents', label: 'Agents', icon: <Bot size={15} /> },
   { key: 'workflows', label: 'Workflows', icon: <Workflow size={15} /> },
+  { key: 'knowledge', label: 'Knowledge', icon: <BookOpen size={15} /> },
   { key: 'tasks', label: 'Tasks', icon: <ListChecks size={15} /> },
   { key: 'runs', label: 'Runs', icon: <Activity size={15} /> },
   { key: 'integrations', label: 'Integrations', icon: <Globe size={15} /> },

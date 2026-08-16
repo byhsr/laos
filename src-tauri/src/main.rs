@@ -479,6 +479,71 @@ fn initialize_storage(app: AppHandle) -> Result<(), String> {
   Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Knowledge base (shared, user-writable persistent docs)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct KnowledgeDoc {
+  id: String, title: String, content: String,
+  #[serde(default)] tags: Vec<String>, updated_at: String,
+}
+
+#[tauri::command]
+fn list_knowledge_docs(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+  let conn = db(&app)?;
+  let mut stmt = conn.prepare("SELECT id, title, content, tags, updated_at FROM knowledge_docs ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+  let rows = stmt.query_map([], |row| {
+    let tags: String = row.get(3)?;
+    Ok(serde_json::json!({
+      "id": row.get::<_, String>(0)?, "title": row.get::<_, String>(1)?,
+      "content": row.get::<_, String>(2)?, "tags": parse_json_vec(&tags),
+      "updatedAt": row.get::<_, String>(4)?,
+    }))
+  }).map_err(|e| e.to_string())?;
+  let mut out = Vec::new();
+  for row in rows { out.push(row.map_err(|e| e.to_string())?); }
+  Ok(out)
+}
+
+#[tauri::command]
+fn get_knowledge_doc(app: AppHandle, id: String) -> Result<serde_json::Value, String> {
+  let conn = db(&app)?;
+  let mut stmt = conn.prepare("SELECT id, title, content, tags, updated_at FROM knowledge_docs WHERE id=?1").map_err(|e| e.to_string())?;
+  let mut rows = stmt.query_map(params![id], |row| {
+    let tags: String = row.get(3)?;
+    Ok(serde_json::json!({
+      "id": row.get::<_, String>(0)?, "title": row.get::<_, String>(1)?,
+      "content": row.get::<_, String>(2)?, "tags": parse_json_vec(&tags),
+      "updatedAt": row.get::<_, String>(4)?,
+    }))
+  }).map_err(|e| e.to_string())?;
+  match rows.next().transpose().map_err(|e| e.to_string())? {
+    Some(v) => Ok(v),
+    None => Err("Document not found".into()),
+  }
+}
+
+#[tauri::command]
+fn save_knowledge_doc(app: AppHandle, doc: KnowledgeDoc) -> Result<(), String> {
+  let conn = db(&app)?;
+  let tags = serde_json::to_string(&doc.tags).unwrap_or_else(|_| "[]".to_string());
+  conn.execute(
+    "INSERT INTO knowledge_docs (id, title, content, tags, updated_at) VALUES (?1,?2,?3,?4,?5)
+     ON CONFLICT(id) DO UPDATE SET title=excluded.title, content=excluded.content, tags=excluded.tags, updated_at=excluded.updated_at",
+    params![doc.id, doc.title, doc.content, tags, doc.updated_at],
+  ).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+#[tauri::command]
+fn delete_knowledge_doc(app: AppHandle, id: String) -> Result<(), String> {
+  let conn = db(&app)?;
+  conn.execute("DELETE FROM knowledge_docs WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 #[tauri::command]
 fn list_model_configs(app: AppHandle) -> Result<Vec<ModelConfigRecord>, String> {
   let conn = db(&app)?;
@@ -1865,6 +1930,8 @@ manager_tool!(ManagerCancelTask, "cancel_task", "Cancel a task. Params: taskId (
 manager_tool!(ManagerListModels, "list_models", "List configured models.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerListTools, "list_tools", "List configured tools.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerWorkspaceStatus, "get_workspace_status", "Get a condensed workspace status: agents, integrations, active tasks, recent runs.", serde_json::json!({}), serde_json::json!([]));
+manager_tool!(ManagerRecallMemory, "recall_memory", "Recall what was discussed or done recently: long-term facts, the last chat summary, and today's/yesterday's condensed context. Call this when the user asks 'what have we done/talked about', to continue prior work, or to reference past decisions. Does NOT inject history into the conversation — it returns it as tool output.", serde_json::json!({}), serde_json::json!([]));
+manager_tool!(ManagerKnowledgeBase, "knowledge_base", "Read and write the shared knowledge base. Params: action ('list' | 'get' | 'search' | 'save'), title (string, for save/search), content (string, for save), id (string, for get/save). Use it to store durable reference material (company wiki, ICP notes, decisions) that any agent can consult later.", serde_json::json!({ "action": { "type": "string" }, "title": { "type": "string" }, "content": { "type": "string" }, "id": { "type": "string" } }), serde_json::json!(["action"]));
 
 fn manager_tools() -> Vec<Box<dyn AgentTool>> {
   vec![
@@ -1890,6 +1957,8 @@ fn manager_tools() -> Vec<Box<dyn AgentTool>> {
     Box::new(ManagerListModels),
     Box::new(ManagerListTools),
     Box::new(ManagerWorkspaceStatus),
+    Box::new(ManagerRecallMemory),
+    Box::new(ManagerKnowledgeBase),
     Box::new(SearchFilesTool),
     Box::new(ReadAnyFileTool),
     Box::new(RunCommandTool),
@@ -2248,6 +2317,57 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
             let conn_n: i64 = conn.query_row("SELECT COUNT(*) FROM integration_configs WHERE connected=1", [], |r| r.get(0)).unwrap_or(0);
             Ok(format!("Agents: {agents_n}. Connected integrations: {conn_n}. Active tasks: {tasks_n}. Total runs: {runs_n}."))
           }
+          "recall_memory" => {
+            let manager_id = {
+              let mut stmt = conn.prepare("SELECT id FROM agents WHERE is_manager=1 LIMIT 1").map_err(|e| e.to_string())?;
+              let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+              rows.next().transpose().map_err(|e| e.to_string())?.unwrap_or_else(|| "manager".to_string())
+            };
+            let bundle = build_context_bundle(&conn, &manager_id).unwrap_or_default();
+            Ok(if bundle.trim().is_empty() { "No stored memory yet.".to_string() } else { bundle })
+          }
+          "knowledge_base" => {
+            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list").to_string();
+            let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            match action.as_str() {
+              "list" => {
+                let mut stmt = conn.prepare("SELECT id, title, updated_at FROM knowledge_docs ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+                let rows = stmt.query_map([], |row| Ok(format!("- {} (id: {})", row.get::<_, String>(1)?, row.get::<_, String>(0)?))).map_err(|e| e.to_string())?;
+                let mut out = Vec::new();
+                for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+                Ok(if out.is_empty() { "Knowledge base is empty.".into() } else { out.join("\n") })
+              }
+              "search" => {
+                let like = format!("%{}%", title);
+                let mut stmt = conn.prepare("SELECT id, title, content FROM knowledge_docs WHERE title LIKE ?1 OR content LIKE ?1 ORDER BY updated_at DESC LIMIT 5").map_err(|e| e.to_string())?;
+                let rows = stmt.query_map(params![like], |row| Ok(format!("- {} (id: {}): {}", row.get::<_, String>(1)?, row.get::<_, String>(0)?, row.get::<_, String>(2)?.chars().take(150).collect::<String>()))).map_err(|e| e.to_string())?;
+                let mut out = Vec::new();
+                for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+                Ok(if out.is_empty() { format!("No docs matching \"{title}\".") } else { out.join("\n") })
+              }
+              "get" => {
+                let mut stmt = conn.prepare("SELECT id, title, content FROM knowledge_docs WHERE id=?1 OR title=?1").map_err(|e| e.to_string())?;
+                let mut rows = stmt.query_map(params![if id.is_empty() { title.clone() } else { id.clone() }], |row| Ok(format!("# {}\n\n{}", row.get::<_, String>(1)?, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
+                match rows.next().transpose().map_err(|e| e.to_string())? {
+                  Some(v) => Ok(v),
+                  None => Ok(format!("No knowledge base doc found for \"{}\".", if id.is_empty() { title } else { id })),
+                }
+              }
+              "save" => {
+                if title.is_empty() { return Err("knowledge_base save requires a title.".into()); }
+                let doc_id = if id.is_empty() { format!("kb-{}", chrono::Utc::now().timestamp_millis()) } else { id };
+                conn.execute(
+                  "INSERT INTO knowledge_docs (id, title, content, tags, updated_at) VALUES (?1,?2,?3,'[]',?4)
+                   ON CONFLICT(id) DO UPDATE SET title=excluded.title, content=excluded.content, updated_at=excluded.updated_at",
+                  params![doc_id, title, content, chrono::Utc::now().to_rfc3339()],
+                ).map_err(|e| e.to_string())?;
+                Ok(format!("Saved knowledge base doc \"{title}\" (id: {doc_id})."))
+              }
+              _ => Err(format!("Unknown knowledge_base action {action}.")),
+            }
+          }
           _ => Err(format!("Unknown manager tool {name}.")),
         };
         let call_id = c["id"].as_str().unwrap_or("").to_string();
@@ -2392,6 +2512,57 @@ async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &serde_json::V
       let conn_n: i64 = conn.query_row("SELECT COUNT(*) FROM integration_configs WHERE connected=1", [], |r| r.get(0)).unwrap_or(0);
       Ok(format!("Agents: {agents_n}. Connected integrations: {conn_n}. Active tasks: {tasks_n}. Total runs: {runs_n}."))
     }
+    "recall_memory" => {
+      let manager_id = {
+        let mut stmt = conn.prepare("SELECT id FROM agents WHERE is_manager=1 LIMIT 1").map_err(|e| e.to_string())?;
+        let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.next().transpose().map_err(|e| e.to_string())?.unwrap_or_else(|| "manager".to_string())
+      };
+      let bundle = build_context_bundle(&conn, &manager_id).unwrap_or_default();
+      Ok(if bundle.trim().is_empty() { "No stored memory yet.".to_string() } else { bundle })
+    }
+    "knowledge_base" => {
+      let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list").to_string();
+      let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      match action.as_str() {
+        "list" => {
+          let mut stmt = conn.prepare("SELECT id, title, updated_at FROM knowledge_docs ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+          let rows = stmt.query_map([], |row| Ok(format!("- {} (id: {})", row.get::<_, String>(1)?, row.get::<_, String>(0)?))).map_err(|e| e.to_string())?;
+          let mut out = Vec::new();
+          for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+          Ok(if out.is_empty() { "Knowledge base is empty.".into() } else { out.join("\n") })
+        }
+        "search" => {
+          let like = format!("%{}%", title);
+          let mut stmt = conn.prepare("SELECT id, title, content FROM knowledge_docs WHERE title LIKE ?1 OR content LIKE ?1 ORDER BY updated_at DESC LIMIT 5").map_err(|e| e.to_string())?;
+          let rows = stmt.query_map(params![like], |row| Ok(format!("- {} (id: {}): {}", row.get::<_, String>(1)?, row.get::<_, String>(0)?, row.get::<_, String>(2)?.chars().take(150).collect::<String>()))).map_err(|e| e.to_string())?;
+          let mut out = Vec::new();
+          for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+          Ok(if out.is_empty() { format!("No docs matching \"{title}\".") } else { out.join("\n") })
+        }
+        "get" => {
+          let mut stmt = conn.prepare("SELECT id, title, content FROM knowledge_docs WHERE id=?1 OR title=?1").map_err(|e| e.to_string())?;
+          let mut rows = stmt.query_map(params![if id.is_empty() { title.clone() } else { id.clone() }], |row| Ok(format!("# {}\n\n{}", row.get::<_, String>(1)?, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
+          match rows.next().transpose().map_err(|e| e.to_string())? {
+            Some(v) => Ok(v),
+            None => Ok(format!("No knowledge base doc found for \"{}\".", if id.is_empty() { title } else { id })),
+          }
+        }
+        "save" => {
+          if title.is_empty() { return Err("knowledge_base save requires a title.".into()); }
+          let doc_id = if id.is_empty() { format!("kb-{}", chrono::Utc::now().timestamp_millis()) } else { id };
+          conn.execute(
+            "INSERT INTO knowledge_docs (id, title, content, tags, updated_at) VALUES (?1,?2,?3,'[]',?4)
+             ON CONFLICT(id) DO UPDATE SET title=excluded.title, content=excluded.content, updated_at=excluded.updated_at",
+            params![doc_id, title, content, chrono::Utc::now().to_rfc3339()],
+          ).map_err(|e| e.to_string())?;
+          Ok(format!("Saved knowledge base doc \"{title}\" (id: {doc_id})."))
+        }
+        _ => Err(format!("Unknown knowledge_base action {action}.")),
+      }
+    }
     "search_files" => SearchFilesTool.run(args).await,
     "read_file_any" => ReadAnyFileTool.run(args).await,
     "run_command" => RunCommandTool.run(args).await,
@@ -2422,6 +2593,230 @@ fn telegram_token(conn: &Connection) -> Result<Option<String>, String> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Telegram tunnel + webhook (one-click expose)
+// ---------------------------------------------------------------------------
+
+// Global state: current tunnel URL + whether a webhook is registered.
+// Kept in a OnceLock so the polling loop and commands share it.
+static TELEGRAM_TUNNEL_URL: std::sync::OnceLock<std::sync::Mutex<Option<String>>> = std::sync::OnceLock::new();
+fn tunnel_url_store() -> &'static std::sync::Mutex<Option<String>> {
+  TELEGRAM_TUNNEL_URL.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn set_tunnel_url(u: Option<String>) { *tunnel_url_store().lock().unwrap() = u; }
+fn get_tunnel_url() -> Option<String> { tunnel_url_store().lock().unwrap().clone() }
+
+// Spawns cloudflared (system binary) pointed at a local port. Returns the
+// generated trycloudflare.com URL by scraping cloudflared's stdout.
+#[tauri::command]
+async fn telegram_start_tunnel(app: AppHandle, local_port: Option<u16>) -> Result<String, String> {
+  let port = local_port.unwrap_or(14789);
+  if let Some(existing) = get_tunnel_url() { return Ok(existing); }
+
+  let cloudflared = which_cloudflared(&app).await.ok_or(
+    "cloudflared not found and auto-download failed. Install it manually (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) or place cloudflared.exe next to the app.",
+  )?;
+
+  let mut child = tokio::process::Command::new(&cloudflared)
+    .arg("tunnel")
+    .arg("--url")
+    .arg(format!("http://127.0.0.1:{port}"))
+    .arg("--no-autoupdate")
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
+    .spawn()
+    .map_err(|e| format!("Failed to start cloudflared: {e}"))?;
+
+  let stdout = child.stdout.take().ok_or("cloudflared stdout unavailable")?;
+  use tokio::io::AsyncBufReadExt;
+  let mut reader = tokio::io::BufReader::new(stdout).lines();
+  // cloudflared prints the tunnel URL in a line containing "trycloudflare.com".
+  let mut url: Option<String> = None;
+  for _ in 0..120 {
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    match tokio::time::timeout(std::time::Duration::from_millis(500), reader.next_line()).await {
+      Ok(Ok(Some(line))) => {
+        if let Some(idx) = line.find("https://") {
+          let candidate = line[idx..].split_whitespace().next().unwrap_or("").trim_end_matches('.').to_string();
+          if candidate.contains("trycloudflare.com") {
+            url = Some(candidate);
+            break;
+          }
+        }
+      }
+      Ok(Ok(None)) => break,
+      _ => continue,
+    }
+  }
+
+  let url = url.ok_or("Timed out waiting for cloudflared tunnel URL. Is the binary working?")?;
+  set_tunnel_url(Some(url.clone()));
+  // Keep the child alive for the app lifetime (detached handle).
+  let _ = child.id();
+  std::mem::forget(child);
+
+  // Persist the local port + tunnel URL so the webhook receiver knows where to bind.
+  let conn = db(&app)?;
+  conn.execute(
+    "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES ('telegram','Telegram','telegram',?1,1,1,?2)
+     ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, connected=1",
+    params![serde_json::to_string(&serde_json::json!({ "tunnelUrl": url, "tunnelPort": local_port })).map_err(|e| e.to_string())?, now()],
+  ).map_err(|e| e.to_string())?;
+
+  Ok(url)
+}
+
+// Finds the cloudflared binary: next to the app first, then on PATH. If missing,
+// downloads the official release into the app data dir (one-shot, cached).
+async fn which_cloudflared(app: &AppHandle) -> Option<std::path::PathBuf> {
+  if let Ok(exe) = std::env::current_exe() {
+    let sibling = exe.parent()?.join("cloudflared");
+    if sibling.exists() { return Some(sibling); }
+    #[cfg(windows)]
+    {
+      let sibling_exe = exe.parent()?.join("cloudflared.exe");
+      if sibling_exe.exists() { return Some(sibling_exe); }
+    }
+  }
+  // PATH lookup.
+  let out = tokio::process::Command::new(if cfg!(windows) { "where" } else { "which" })
+    .arg("cloudflared").output().await.ok()?;
+  if out.status.success() {
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !s.is_empty() { return Some(std::path::PathBuf::from(s.lines().next().unwrap_or(""))); }
+  }
+  // Auto-download into the app data dir.
+  let dir = app.path().app_data_dir().ok()?;
+  let _ = std::fs::create_dir_all(&dir);
+  let name = if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" };
+  let target = dir.join(name);
+  if target.exists() { return Some(target); }
+
+  let url = if cfg!(windows) {
+    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+  } else if cfg!(target_os = "macos") {
+    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz"
+  } else {
+    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+  };
+
+  match reqwest::Client::new().get(url).send().await {
+    Ok(resp) => {
+      if !resp.status().is_success() { return None; }
+      let bytes = match resp.bytes().await { Ok(b) => b, Err(_) => return None };
+      if cfg!(target_os = "macos") {
+        // The macOS release is a .tgz; the binary is cloudflared inside.
+        let _ = std::fs::write(dir.join("cloudflared.tgz"), &bytes);
+        // Best-effort extract via tar.
+        let _ = tokio::process::Command::new("tar").args(["-xzf", dir.join("cloudflared.tgz").to_str().unwrap_or(""), "-C"]).arg(&dir).output().await;
+        let extracted = dir.join("cloudflared");
+        if extracted.exists() { return Some(extracted); }
+        None
+      } else {
+        let ok = std::fs::write(&target, &bytes).is_ok();
+        if ok {
+          #[cfg(unix)]
+          { use std::os::unix::fs::PermissionsExt; let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)); }
+          Some(target)
+        } else { None }
+      }
+    }
+    Err(_) => None,
+  }
+}
+
+// Registers the Telegram webhook to point at the tunnel URL.
+#[tauri::command]
+async fn telegram_register_webhook(app: AppHandle) -> Result<String, String> {
+  let conn = db(&app)?;
+  let token = telegram_token(&conn)?.ok_or("Telegram token not configured.")?;
+  let url = get_tunnel_url().ok_or("Tunnel not running. Start the tunnel first.")?;
+  let webhook_url = format!("{url}/webhook/telegram");
+  let resp = reqwest::Client::new()
+    .get(format!("https://api.telegram.org/bot{token}/setWebhook?url={webhook_url}"))
+    .send().await.map_err(|e| format!("setWebhook request failed: {e}"))?;
+  let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+  if json.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+    conn.execute(
+      "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES ('telegram','Telegram','telegram',?1,1,1,?2)
+       ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, connected=1",
+      params![serde_json::to_string(&serde_json::json!({ "tunnelUrl": url, "tunnelPort": 0, "webhookRegistered": true })).map_err(|e| e.to_string())?, now()],
+    ).map_err(|e| e.to_string())?;
+    Ok(format!("Webhook registered at {webhook_url}"))
+  } else {
+    Err(json.get("description").and_then(|d| d.as_str()).unwrap_or("setWebhook failed").to_string())
+  }
+}
+
+// Unregisters the webhook and clears the tunnel state.
+#[tauri::command]
+async fn telegram_stop_tunnel(app: AppHandle) -> Result<(), String> {
+  let conn = db(&app)?;
+  let token = telegram_token(&conn).ok().flatten();
+  if let Some(t) = token {
+    let _ = reqwest::Client::new().get(format!("https://api.telegram.org/bot{t}/deleteWebhook")).send().await;
+  }
+  set_tunnel_url(None);
+  let _ = conn.execute("UPDATE integration_configs SET connected=0 WHERE id='telegram'", []);
+  Ok(())
+}
+
+#[tauri::command]
+async fn telegram_tunnel_status(app: AppHandle) -> Result<serde_json::Value, String> {
+  let url = get_tunnel_url();
+  let conn = db(&app)?;
+  let registered: bool = {
+    let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
+    let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+    match rows.next().transpose().map_err(|e| e.to_string())? {
+      Some(cfg) => serde_json::from_str::<serde_json::Value>(&cfg).map(|v| v.get("webhookRegistered").and_then(|w| w.as_bool()).unwrap_or(false)).unwrap_or(false),
+      None => false,
+    }
+  };
+  Ok(serde_json::json!({ "tunnelUrl": url, "webhookRegistered": registered }))
+}
+
+// Minimal HTTP server that receives Telegram webhook POSTs at /webhook/telegram
+// and routes the update to the Manager (same path as the polling loop).
+async fn telegram_webhook_server(app: AppHandle, port: u16) {
+  use tokio::io::{AsyncReadExt, AsyncWriteExt};
+  let listener = match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+    Ok(l) => l,
+    Err(e) => { eprintln!("webhook server bind failed: {e}"); return; }
+  };
+  loop {
+    let Ok((mut socket, _)) = listener.accept().await else { continue };
+    let app = app.clone();
+    tokio::spawn(async move {
+      let mut buf = vec![0u8; 8192];
+      let n = match tokio::time::timeout(std::time::Duration::from_secs(5), socket.read(&mut buf)).await {
+        Ok(Ok(n)) => n,
+        _ => return,
+      };
+      let req = String::from_utf8_lossy(&buf[..n]).to_string();
+      // Only handle POST /webhook/telegram.
+      if !req.starts_with("POST /webhook/telegram") { return; }
+      // Extract the JSON body (after the blank line).
+      let body = req.split("\r\n\r\n").nth(1).unwrap_or("");
+      if let Ok(update) = serde_json::from_str::<serde_json::Value>(body.trim_end_matches('\0')) {
+        let text = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string());
+        let chat_id = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64());
+        if let (Some(text), Some(chat_id)) = (text, chat_id) {
+          let reply = manager_turn(&app, &text).await.unwrap_or_else(|e| format!("Manager error: {e}"));
+          if let Ok(token) = db(&app).and_then(|c| telegram_token(&c)) {
+            if let Some(t) = token {
+              let send_url = format!("https://api.telegram.org/bot{t}/sendMessage");
+              let _ = reqwest::Client::new().post(&send_url).json(&serde_json::json!({ "chat_id": chat_id, "text": reply, "parse_mode": "Markdown" })).send().await;
+            }
+          }
+        }
+      }
+      let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
+    });
+  }
+}
+
 // Long-polls the Telegram Bot API; every incoming text message is routed to the
 // Manager (same logic as the UI chat) and the reply is sent back. Thin channel:
 // no business logic lives here.
@@ -2431,6 +2826,12 @@ async fn telegram_loop(app: AppHandle) {
       Ok(Some(t)) => t,
       _ => { std::thread::sleep(std::time::Duration::from_secs(5)); continue; }
     };
+    // If a tunnel webhook is active, long-polling must pause (Telegram rejects
+    // getUpdates while a webhook is set).
+    if get_tunnel_url().is_some() {
+      std::thread::sleep(std::time::Duration::from_secs(5));
+      continue;
+    }
     let mut offset: i64 = 0;
     loop {
       let url = format!("https://api.telegram.org/bot{token}/getUpdates?timeout=30&offset={offset}");
@@ -2842,7 +3243,10 @@ async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_mana
     let _ = summarize_old_turns(&app, &agent, &history).await;
   }
 
-  // Build memory context (summary + facts) for the system prompt.
+  // Build memory context (summary + facts) for the system prompt. Only compact
+  // long-term facts are injected — today's/yesterday's context and last-chat
+  // summaries are NOT force-fed (that causes hallucination across new chats).
+  // They're available on demand via the recall_memory tool.
   let memory = load_memory(&conn, &agent.id);
   let mut memory_blob = String::new();
   for (k, v) in &memory {
@@ -2852,9 +3256,7 @@ async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_mana
       memory_blob.push_str(&format!("- {fact}: {v}\n"));
     }
   }
-  // Long-term memory: facts + last chat + today's and yesterday's condensed context.
-  let context_bundle = build_context_bundle(&conn, &agent.id).unwrap_or_default();
-  let full_memory = format!("{memory_blob}{context_bundle}");
+  let full_memory = memory_blob;
 
   // Build the system prompt (workspace context for the Manager).
   let system = if is_manager {
@@ -3003,10 +3405,12 @@ fn main() {
     .setup(|app| {
       // Start the Telegram long-poll adapter (no-op until a token is configured).
       let handle = app.handle().clone();
-      tauri::async_runtime::spawn(telegram_loop(handle));
+      tauri::async_runtime::spawn(telegram_loop(handle.clone()));
+      // Start the local webhook receiver (used when a tunnel is active).
+      tauri::async_runtime::spawn(telegram_webhook_server(handle, 14789));
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, list_runs, stream_chat, get_conversation, clear_agent_memory, confirm_manager_tool, list_chat_sessions, get_chat_session, create_chat_session, delete_chat_session, rename_chat_session, close_session])
+    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, list_runs, stream_chat, get_conversation, clear_agent_memory, confirm_manager_tool, list_chat_sessions, get_chat_session, create_chat_session, delete_chat_session, rename_chat_session, close_session, telegram_tunnel_status, telegram_start_tunnel, telegram_register_webhook, telegram_stop_tunnel, list_knowledge_docs, get_knowledge_doc, save_knowledge_doc, delete_knowledge_doc])
     .run(tauri::generate_context!())
     .expect("error while running Local Agent OS");
 }
