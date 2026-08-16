@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Bot, Plus, Trash2 } from 'lucide-react';
 import type { Agent, Tool } from '../../types';
 
@@ -6,6 +7,13 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
 }) {
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
   const isReady = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent' && !!a.model.trim() && !!a.objective.trim();
+  const visible = agents.filter((a) => !a.isManager);
+  const [confirmTarget, setConfirmTarget] = useState<Agent | null>(null);
+  const [typedName, setTypedName] = useState('');
+
+  const openConfirm = (a: Agent) => { setConfirmTarget(a); setTypedName(''); };
+  const closeConfirm = () => { setConfirmTarget(null); setTypedName(''); };
+
   return (
     <>
       <header className="mb-6 flex items-end justify-between">
@@ -16,7 +24,7 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
         <button className="primary" onClick={onCreate}><Plus size={14} />New agent</button>
       </header>
 
-      {agents.length === 0 ? (
+      {visible.length === 0 ? (
         <div className="flex min-h-[370px] flex-col items-center justify-center rounded-[12px] border border-dashed border-soft text-center text-muted">
           <Bot size={28} className="mb-3 opacity-60" />
           <h2 className="mt-[13px] mb-[7px] text-text">No agents yet</h2>
@@ -25,12 +33,12 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
         </div>
       ) : (
         <div className="grid max-w-[1100px] grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
-          {agents.map((a) => (
+          {visible.map((a) => (
             <div key={a.id} className="group relative min-h-[165px] cursor-pointer rounded-[10px] border border-line bg-panel p-[18px] text-left transition-transform duration-150 hover:-translate-y-0.5 hover:border-dim" onClick={() => onOpen(a.id)} style={{ borderTop: `2px solid ${a.color}` }}>
               <button
                 className="absolute top-2.5 right-2.5 grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-[#e11d48] hover:text-white"
                 title="Delete agent"
-                onClick={(e) => { e.stopPropagation(); onDelete(a.id); }}
+                onClick={(e) => { e.stopPropagation(); openConfirm(a); }}
               >
                 <Trash2 size={13} />
               </button>
@@ -42,6 +50,36 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
               </em>
             </div>
           ))}
+        </div>
+      )}
+
+      {confirmTarget && (
+        <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60" onClick={closeConfirm}>
+          <div className="w-[380px] max-w-[92vw] rounded-[12px] border border-line bg-panel p-5 shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-1 flex items-center gap-2">
+              <Trash2 size={15} className="text-[#f87171]" />
+              <b className="text-[14px]">Delete "{confirmTarget.name}"?</b>
+            </div>
+            <p className="mb-4 text-[12px] leading-1.6 text-muted">This permanently removes the agent and its runs. Type the agent's name to confirm.</p>
+            <input
+              value={typedName}
+              onChange={(e) => setTypedName(e.target.value)}
+              placeholder={confirmTarget.name}
+              className="mb-4 w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[13px] text-text outline-none focus:border-mid"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button className="secondary" onClick={closeConfirm}>Cancel</button>
+              <button
+                className="primary"
+                style={{ background: '#e11d48', color: '#fff' }}
+                disabled={typedName.trim() !== confirmTarget.name}
+                onClick={() => { onDelete(confirmTarget.id); closeConfirm(); }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </>

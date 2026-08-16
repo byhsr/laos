@@ -252,6 +252,92 @@ impl AgentTool for WriteFileTool {
   }
 }
 
+// Host-filesystem tools (gated behind the agent's `host_fs` permission).
+// These deliberately escape the per-agent sandbox — treat as powerful.
+
+struct SearchFilesTool;   // recursive filename search from a root path
+struct ReadAnyFileTool;   // read any file by absolute path (size-capped)
+struct RunCommandTool;    // execute a shell command, return stdout+stderr
+
+#[async_trait]
+impl AgentTool for SearchFilesTool {
+  fn name(&self) -> String { "search_files".into() }
+  fn description(&self) -> String { "Recursively search a directory for files whose name contains a substring. Params: pattern (string, e.g. 'resume'), startPath (string, optional, e.g. 'A:/'), maxResults (integer, optional, default 20).".into() }
+  fn params_schema(&self) -> serde_json::Value {
+    serde_json::json!({ "type": "object", "properties": { "pattern": { "type": "string" }, "startPath": { "type": "string" }, "maxResults": { "type": "integer" } }, "required": ["pattern"] })
+  }
+  async fn run(&self, args: &serde_json::Value) -> Result<String, String> {
+    let pattern = str_arg(args, "pattern").ok_or("search_files requires a 'pattern' argument.")?;
+    let start = str_arg(args, "startPath").unwrap_or_else(|| "A:/".into());
+    let max = args.get("maxResults").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+    let root = std::path::Path::new(&start);
+    if !root.exists() { return Ok(format!("Path '{start}' does not exist.")); }
+    let lower = pattern.to_lowercase();
+    let mut found: Vec<String> = Vec::new();
+    let mut dirs = vec![root.to_path_buf()];
+    let mut visited: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
+    while let Some(dir) = dirs.pop() {
+      if !visited.insert(dir.clone()) { continue; }
+      let Ok(entries) = fs::read_dir(&dir) else { continue };
+      for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.is_dir() {
+          dirs.push(path);
+        } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+          if name.to_lowercase().contains(&lower) {
+            found.push(path.to_string_lossy().to_string());
+            if found.len() >= max { return Ok(found.join("\n")); }
+          }
+        }
+      }
+    }
+    Ok(if found.is_empty() { "No files found matching that name." .to_string() } else { found.join("\n") })
+  }
+}
+
+#[async_trait]
+impl AgentTool for ReadAnyFileTool {
+  fn name(&self) -> String { "read_file_any".into() }
+  fn description(&self) -> String { "Read a file by absolute path (anywhere on the device). Params: path (string), maxBytes (integer, optional, default 20000).".into() }
+  fn params_schema(&self) -> serde_json::Value {
+    serde_json::json!({ "type": "object", "properties": { "path": { "type": "string" }, "maxBytes": { "type": "integer" } }, "required": ["path"] })
+  }
+  async fn run(&self, args: &serde_json::Value) -> Result<String, String> {
+    let path = str_arg(args, "path").ok_or("read_file_any requires a 'path' argument.")?;
+    let max = args.get("maxBytes").and_then(|v| v.as_u64()).unwrap_or(20000) as usize;
+    let p = std::path::Path::new(&path);
+    if !p.exists() { return Ok(format!("File '{path}' does not exist.")); }
+    let bytes = fs::read(p).map_err(|e| e.to_string())?;
+    if bytes.len() > max { return Ok(format!("File is {} bytes (over the {} byte cap). Showing the first {}:\n{}", bytes.len(), max, max, String::from_utf8_lossy(&bytes[..max]))); }
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+  }
+}
+
+#[async_trait]
+impl AgentTool for RunCommandTool {
+  fn name(&self) -> String { "run_command".into() }
+  fn description(&self) -> String { "Run a shell command on the host machine and return stdout + stderr. Params: command (string). Requires explicit user approval — the user confirms before it executes.".into() }
+  fn params_schema(&self) -> serde_json::Value {
+    serde_json::json!({ "type": "object", "properties": { "command": { "type": "string" } }, "required": ["command"] })
+  }
+  async fn run(&self, args: &serde_json::Value) -> Result<String, String> {
+    let command = str_arg(args, "command").ok_or("run_command requires a 'command' argument.")?;
+    // Runs through the system shell; on Windows this is cmd /C.
+    #[cfg(windows)] let output = std::process::Command::new("cmd").args(["/C", &command]).output();
+    #[cfg(not(windows))] let output = std::process::Command::new("sh").args(["-c", &command]).output();
+    let output = output.map_err(|e| format!("Failed to run command: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let status = output.status;
+    let mut out = String::new();
+    if !status.success() { out.push_str(&format!("Exit code: {}\n", status.code().unwrap_or(-1))); }
+    out.push_str(&stdout);
+    if !stderr.is_empty() { out.push_str(&format!("\n[stderr]\n{stderr}")); }
+    Ok(clip(&out))
+  }
+}
+
 fn fill_template(template: &str, args: &serde_json::Value) -> Result<String, String> {
   let mut out = template.to_string();
   // Replace {name} with the string value of args.name (JSON-encoded for body use).
@@ -476,8 +562,26 @@ fn db(app: &AppHandle) -> Result<Connection, String> {
 // Commands
 // ---------------------------------------------------------------------------
 
+// Ensures the Manager system agent exists; creates it if missing.
+fn ensure_manager(conn: &Connection) -> Result<(), String> {
+  let exists: bool = conn.query_row("SELECT COUNT(*) FROM agents WHERE id='manager'", [], |r| r.get::<_, i64>(0)).map(|c| c > 0).unwrap_or(false);
+  if !exists {
+    let model = manager_default_model(conn);
+    let model = if model.is_empty() { "".into() } else { model };
+    conn.execute(
+      "INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, is_manager, description) VALUES ('manager','Manager','You are the workspace Manager. Orchestrate agents, control the workspace, and coordinate work.',?1,'[]','[]',1,'[\"network\"]','agents/manager','#22c55e',1,'')",
+      params![model],
+    ).map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
 #[tauri::command]
-fn initialize_storage(app: AppHandle) -> Result<(), String> { db(&app).map(|_| ()) }
+fn initialize_storage(app: AppHandle) -> Result<(), String> {
+  let conn = db(&app)?;
+  ensure_manager(&conn)?;
+  Ok(())
+}
 
 #[tauri::command]
 fn list_model_configs(app: AppHandle) -> Result<Vec<ModelConfigRecord>, String> {
@@ -601,6 +705,11 @@ fn save_agent(app: AppHandle, agent: AgentRecord) -> Result<(), String> {
 #[tauri::command]
 fn delete_agent(app: AppHandle, id: String) -> Result<(), String> {
   let conn = db(&app)?;
+  // The Manager is a system agent and can never be deleted.
+  let is_manager: bool = conn.query_row("SELECT is_manager FROM agents WHERE id=?1", params![id], |r| r.get::<_, i64>(0)).map(|v| v != 0).unwrap_or(false);
+  if is_manager {
+    return Err("The Manager is a system agent and cannot be deleted.".into());
+  }
   conn.execute("DELETE FROM agents WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
   Ok(())
 }
@@ -918,6 +1027,7 @@ fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::path::Path) 
   let mut tools: Vec<Box<dyn AgentTool>> = Vec::new();
   let has_network = agent.permissions.iter().any(|p| p == "network");
   let has_files = agent.permissions.iter().any(|p| p == "files");
+  let has_host_fs = agent.permissions.iter().any(|p| p == "host_fs");
   let mut stmt = conn.prepare("SELECT kind, enabled, config_json FROM tools WHERE id=?1").map_err(|e| e.to_string())?;
   for tool_id in &agent.tool_ids {
     let mut rows = stmt.query_map(params![tool_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
@@ -974,6 +1084,12 @@ fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::path::Path) 
         }
       }
     }
+  }
+  // Host-filesystem tools: granted only to agents with the explicit host_fs permission.
+  if has_host_fs {
+    tools.push(Box::new(SearchFilesTool));
+    tools.push(Box::new(ReadAnyFileTool));
+    tools.push(Box::new(RunCommandTool));
   }
   Ok(tools)
 }
@@ -1397,7 +1513,7 @@ macro_rules! manager_tool {
   };
 }
 
-manager_tool!(ManagerCreateAgent, "create_agent", "Create a new agent. Params: name (string), objective (string), model (string), toolIds (array, optional), integrations (array, optional), permissions (array, optional).", serde_json::json!({ "name": { "type": "string" }, "objective": { "type": "string" }, "model": { "type": "string" }, "toolIds": { "type": "array", "items": { "type": "string" } }, "integrations": { "type": "array", "items": { "type": "string" } }, "permissions": { "type": "array", "items": { "type": "string" } } }), serde_json::json!(["name", "objective", "model"]));
+manager_tool!(ManagerCreateAgent, "create_agent", "Create a new agent. Params: name (string), objective (string), model (string, e.g. 'groq:llama-3.3-70b-versatile'), toolIds (array, optional), integrations (array, optional), permissions (array, optional: 'network', 'files', or 'host_fs' for host file access). No credentials are needed to create an agent — host file access is granted via the permissions array ('host_fs').", serde_json::json!({ "name": { "type": "string" }, "objective": { "type": "string" }, "model": { "type": "string" }, "toolIds": { "type": "array", "items": { "type": "string" } }, "integrations": { "type": "array", "items": { "type": "string" } }, "permissions": { "type": "array", "items": { "type": "string" } } }), serde_json::json!(["name", "objective", "model"]));
 manager_tool!(ManagerUpdateAgent, "update_agent", "Update fields on an existing agent. Params: agentId (string), name?, objective?, model?, toolIds?, integrations?, permissions?.", serde_json::json!({ "agentId": { "type": "string" }, "name": { "type": "string" }, "objective": { "type": "string" }, "model": { "type": "string" }, "toolIds": { "type": "array" }, "integrations": { "type": "array" }, "permissions": { "type": "array" } }), serde_json::json!(["agentId"]));
 manager_tool!(ManagerDeleteAgent, "delete_agent", "Delete an agent. Params: agentId (string).", serde_json::json!({ "agentId": { "type": "string" } }), serde_json::json!(["agentId"]));
 manager_tool!(ManagerCreateWorkflow, "create_workflow", "Create a new workflow. Params: name (string), nodes (string, optional JSON), edges (string, optional JSON).", serde_json::json!({ "name": { "type": "string" }, "nodes": { "type": "string" }, "edges": { "type": "string" } }), serde_json::json!(["name"]));
@@ -1440,6 +1556,30 @@ fn manager_tools() -> Vec<Box<dyn AgentTool>> {
   ]
 }
 
+// Builds the Manager's system prompt by enumerating its actual tools, so its
+// capabilities are always in sync with the code and never need hand-writing.
+fn build_manager_system_prompt(conn: &Connection, memory_blob: &str) -> Result<String, String> {
+  let context = build_workspace_context(conn)?;
+  let mut tool_list = String::new();
+  for t in manager_tools() {
+    tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
+  }
+  Ok(format!(
+    "You are the Manager of a real, running agent workspace application. You are NOT a simulated or virtual entity — you have real tools and real effects on the user's machine.\n\n\
+     You can actually do these things right now (do not claim you cannot):\n{tool_list}\n\
+     When a tool returns a result, that result is real. When you create an agent or run a task, it really happens on the user's device.\n\n\
+     Rules:\n\
+     - Never say you are 'just a language model' or that you lack the ability to do something that is in your tool list. If a user asks for something you can do with your tools, do it.\n\
+     - Inspect the workspace freely with read-only tools.\n\
+     - When you need to change state (creating/deleting agents or workflows, configuring integrations, running tasks), CALL THE TOOL IN THIS TURN. You must emit the tool call now — never ask the user to type 'yes', never ask them to 'provide permissions', never request credentials in your reply, and never describe the tool you would use. The application intercepts your tool call and shows the user a confirmation popup automatically; they approve or reject there. After the tool executes, report its result. If you are not sure you are allowed to do something, call the tool anyway — the popup is the permission gate.\n\
+     - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent — file access is just a permission value in the create_agent call.\n\
+     - Never store secrets (API keys/tokens) without the user's explicit approval in the confirmation popup.\n\
+     - Delegate domain work to agents rather than doing it inline.\n\n\
+     Workspace context:\n{context}\n\n{memory_blob}\n\
+     Return a concise, helpful reply to the user."
+  ))
+}
+
 // Picks a reachable model for the Manager: prefer an enabled cloud model
 // (Groq/OpenRouter, which only needs a key) before falling back to Ollama.
 fn manager_default_model(conn: &Connection) -> String {
@@ -1480,7 +1620,7 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
       if model.is_empty() {
         return Err("No model configured. Add an enabled model in the Models tab first.".into());
       }
-      let m = AgentRequest { id: "manager".into(), name: "Manager".into(), objective: "You are the workspace Manager. Orchestrate agents, answer questions about the workspace, delegate tasks, and coordinate work.".into(), model: model.clone(), tool_ids: vec![], integrations: vec![], home_path: "agents/manager".into(), permissions: vec!["network".into()] };
+      let m = AgentRequest { id: "manager".into(), name: "Manager".into(), objective: "You are the workspace Manager. Orchestrate agents, control the workspace, and coordinate work.".into(), model: model.clone(), tool_ids: vec![], integrations: vec![], home_path: "agents/manager".into(), permissions: vec!["network".into()] };
       conn.execute("INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, is_manager) VALUES (?1,?2,?3,?4,'[]','[]',1,?5,?6,'#22c55e',1)", params![m.id, m.name, m.objective, m.model, serde_json::to_string(&m.permissions).unwrap_or_else(|_| "[]".into()), m.home_path]).map_err(|e| e.to_string())?;
       m
     }
@@ -1509,8 +1649,8 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
     }
   }
 
-  let context = build_workspace_context(&conn)?;
-  let prompt = format!("You are the workspace Manager. You can control this workspace: create/update/delete agents and workflows, configure integrations, run tasks, and delegate work. Always confirm with the user before storing secrets (API keys/tokens).\n\n{context}\n\nUser message: {message}\n\nUse your tools to inspect or change the workspace. Return a concise, helpful reply to the user.");
+  let context = build_manager_system_prompt(&conn, "")?;
+  let prompt = format!("{context}\n\nUser message: {message}");
 
   // Manager tools execute against real backend functions.
   let tools = manager_tools();
@@ -2027,6 +2167,36 @@ fn list_runs(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
 const ROLLING_WINDOW: usize = 12; // max messages (user+assistant) sent as context
 const MEMORY_SUMMARY_KEY: &str = "__summary__";
 
+// Confirmation gating for mutating manager tools: stream_chat emits a confirm
+// request, and confirm_manager_tool (from the UI) records the user's decision.
+struct Approval { approved: bool, edited_args: serde_json::Value }
+static PENDING_APPROVALS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Approval>>> = std::sync::OnceLock::new();
+fn approvals() -> &'static std::sync::Mutex<std::collections::HashMap<String, Approval>> {
+  PENDING_APPROVALS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+// Tools that mutate state and therefore need user confirmation.
+fn requires_confirmation(tool: &str) -> bool {
+  matches!(tool,
+    "create_agent" | "update_agent" | "delete_agent"
+    | "create_workflow" | "update_workflow" | "delete_workflow" | "run_workflow"
+    | "configure_integration" | "create_task" | "cancel_task" | "delegate_task")
+}
+
+#[tauri::command]
+async fn confirm_manager_tool(app: AppHandle, request_id: String, approved: bool, args: Option<serde_json::Value>, tool: String) -> Result<Option<String>, String> {
+  // Record the decision; if approved, execute the tool now and return the result.
+  let edited = args.unwrap_or_else(|| serde_json::json!({}));
+  if approved {
+    let result = dispatch_manager_tool(&app, &tool, &edited).await?;
+    approvals().lock().map_err(|e| e.to_string())?.insert(request_id.clone(), Approval { approved: true, edited_args: edited });
+    Ok(Some(result))
+  } else {
+    approvals().lock().map_err(|e| e.to_string())?.insert(request_id.clone(), Approval { approved: false, edited_args: edited });
+    Ok(None)
+  }
+}
+
 fn load_memory(conn: &Connection, agent_id: &str) -> Vec<(String, String)> {
   let stmt = conn.prepare("SELECT key, value FROM memory WHERE agent_id=?1 ORDER BY updated_at DESC LIMIT 20").ok();
   let mut out = Vec::new();
@@ -2135,6 +2305,14 @@ fn get_conversation(app: AppHandle, agent_id: String) -> Result<Vec<serde_json::
   Ok(load_conversation(&conn, &agent_id))
 }
 
+#[tauri::command]
+fn clear_agent_memory(app: AppHandle, agent_id: String) -> Result<(), String> {
+  let conn = db(&app)?;
+  conn.execute("DELETE FROM memory WHERE agent_id=?1", params![agent_id]).map_err(|e| e.to_string())?;
+  conn.execute("DELETE FROM agent_conversations WHERE agent_id=?1", params![agent_id]).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 // Streams a chat completion from the configured provider as token deltas.
 // Supports the Manager (is_manager agent) and regular agents. Ollama uses NDJSON
 // (stream:true); Groq/OpenRouter use SSE `data:` lines. Context is a rolling
@@ -2165,8 +2343,7 @@ async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_mana
 
   // Build the system prompt (workspace context for the Manager).
   let system = if is_manager {
-    let context = build_workspace_context(&conn)?;
-    format!("You are the workspace Manager.\n\n{context}\n\n{memory_blob}\nUse your tools to list agents, delegate tasks, check task status, or switch agents. Return a concise, helpful reply to the user.")
+    build_manager_system_prompt(&conn, &memory_blob)?
   } else {
     format!("You are {}. Objective: {}\n\n{memory_blob}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
@@ -2216,8 +2393,33 @@ async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_mana
       // Append the assistant tool-call message, then the tool results.
       messages.push(parsed["message"].clone());
       for (name, args) in tool_calls {
-        let result = dispatch_manager_tool(&app, &name, &args).await.unwrap_or_else(|e| e);
-        messages.push(serde_json::json!({ "role": "tool", "content": result }));
+        if requires_confirmation(&name) {
+          // Emit a confirmation request and wait for the user's decision.
+          let request_id = format!("req-{}", chrono::Utc::now().timestamp_millis());
+          let event = serde_json::json!({ "type": "confirm", "requestId": request_id, "tool": name, "args": args });
+          on_event.send(event.to_string()).map_err(|e| e.to_string())?;
+          let decision = {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            loop {
+              let mut map = approvals().lock().map_err(|e| e.to_string())?;
+              if let Some(a) = map.remove(&request_id) {
+                break a;
+              }
+              drop(map);
+              if std::time::Instant::now() > deadline { break Approval { approved: false, edited_args: serde_json::json!({}) }; }
+              std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+          };
+          let result = if decision.approved {
+            dispatch_manager_tool(&app, &name, &decision.edited_args).await.unwrap_or_else(|e| e)
+          } else {
+            "The user declined this action.".to_string()
+          };
+          messages.push(serde_json::json!({ "role": "tool", "content": result }));
+        } else {
+          let result = dispatch_manager_tool(&app, &name, &args).await.unwrap_or_else(|e| e);
+          messages.push(serde_json::json!({ "role": "tool", "content": result }));
+        }
       }
     }
   }
@@ -2278,7 +2480,7 @@ fn main() {
       tauri::async_runtime::spawn(telegram_loop(handle));
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, list_runs, stream_chat, get_conversation])
+    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, list_runs, stream_chat, get_conversation, clear_agent_memory, confirm_manager_tool])
     .run(tauri::generate_context!())
     .expect("error while running Local Agent OS");
 }

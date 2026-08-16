@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { loadConversation, streamChat } from '../runtime';
+import { clearAgentMemory, loadConversation, streamChat } from '../runtime';
+import { useConfirmStore } from './useConfirm';
 import { useRunsStore } from './useRuns';
 import type { Agent } from '../types';
 
@@ -12,6 +13,7 @@ type ManagerState = {
   busy: boolean;
   setCurrentAgent: (agentId: string | null) => void;
   loadHistory: (agentId: string) => Promise<void>;
+  reset: (agentId: string) => Promise<void>;
   send: (message: string, managerAgent: Agent) => Promise<void>;
 };
 
@@ -36,6 +38,14 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     });
   },
 
+  reset: async (agentId) => {
+    await clearAgentMemory(agentId);
+    set((s) => {
+      const conv = { ...s.conversations, [agentId]: [] };
+      return { conversations: conv, messages: s.currentAgentId === agentId ? [] : s.messages };
+    });
+  },
+
   send: async (message, managerAgent) => {
     set({ busy: true });
     const userEntry: ChatEntry = { role: 'user', content: message, time: new Date().toLocaleTimeString() };
@@ -55,6 +65,9 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
           const updated = list.map((e, i) => (i === list.length - 1 ? { ...e, content: buffer } : e));
           return { conversations: { ...s.conversations, [agentId]: updated }, messages: updated };
         });
+      }, (confirmReq) => {
+        // Pop the confirmation dialog; the backend waits for the decision.
+        useConfirmStore.getState().request(confirmReq);
       });
       useRunsStore.getState().loadRuns();
     } catch (e) {

@@ -259,7 +259,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
 
             <label className="mt-3.5 block text-[11px] font-semibold text-muted">PERMISSIONS</label>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-              {(['network', 'files'] as const).map((p) => (
+              {(['network', 'files', 'host_fs'] as const).map((p) => (
                 <label key={p} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                   <input type="checkbox" checked={draft.permissions.includes(p)} onChange={() => setDraft({ ...draft, permissions: draft.permissions.includes(p) ? draft.permissions.filter((x) => x !== p) : [...draft.permissions, p] })} />{p}
                 </label>

@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, CornerDownLeft, Send } from 'lucide-react';
+import { Bot, CornerDownLeft, Send, Settings2 } from 'lucide-react';
 import type { Agent, Integration, ModelConfig, Task } from '../../types';
 import { useManagerStore } from '../../hooks/useManager';
 import { useTasksStore } from '../../hooks/useTasks';
+import { useAgentsStore } from '../../hooks/useAgents';
 import { StreamIndicator } from '../ui/StreamIndicator';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { Drawer } from '../ui/Drawer';
+import { Dropdown } from '../ui/Dropdown';
+import { toast } from '../../hooks/useToast';
 
 const STATUS_COLOR: Record<string, string> = {
   pending: 'text-[#facc15]',
@@ -20,10 +25,27 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   const setCurrentAgent = useManagerStore((s) => s.setCurrentAgent);
   const send = useManagerStore((s) => s.send);
   const loadHistory = useManagerStore((s) => s.loadHistory);
+  const reset = useManagerStore((s) => s.reset);
   const tasks = useTasksStore((s) => s.tasks);
   const loadTasks = useTasksStore((s) => s.loadTasks);
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [mgrDraft, setMgrDraft] = useState<Agent | null>(null);
+  const persistAgent = useAgentsStore((s) => s.persistAgent);
+
+  const openConfig = () => {
+    const m = agents.find((a) => a.isManager) ?? managerAgent;
+    setMgrDraft({ ...m });
+    setConfigOpen(true);
+  };
+
+  const saveConfig = async () => {
+    if (!mgrDraft) return;
+    await persistAgent(mgrDraft);
+    toast('Manager config saved', 'success');
+    setConfigOpen(false);
+  };
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
   useEffect(() => {
@@ -74,7 +96,11 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             <b className="text-[13px]">Manager</b>
             <span className="font-mono text-[10px] text-muted">{currentAgentId ? `→ ${agents.find((a) => a.id === currentAgentId)?.name ?? currentAgentId}` : 'orchestrator'}</span>
           </div>
-          <button className="secondary" onClick={() => setCurrentAgent(null)}>Reset to Manager</button>
+          <div className="flex items-center gap-2">
+            <button className="secondary" onClick={openConfig}><Settings2 size={12} />Config</button>
+            <button className="secondary" onClick={() => setCurrentAgent(null)}>Reset to Manager</button>
+            <button className="secondary" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; reset(id); }} title="Clear the Manager's memory and conversation">Reset memory</button>
+          </div>
         </div>
 
         <div ref={scrollRef} className="chat-log flex-1 overflow-y-auto p-4">
@@ -95,6 +121,8 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             </div>
           ))}
         </div>
+
+        <ConfirmDialog />
 
         <div className="flex flex-none items-end gap-2.5 border-t border-line p-3">
           <textarea
@@ -159,6 +187,55 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           <CornerDownLeft size={12} className="mt-1 opacity-50" />
         </div>
       </div>
+
+      {configOpen && mgrDraft && (
+        <Drawer
+          title="Manager config"
+          onClose={() => setConfigOpen(false)}
+          initialWidth={Math.round(window.innerWidth / 2)}
+          resizable
+          headerAction={<button className="primary" onClick={saveConfig}>Save</button>}
+        >
+          <div className="w-full rounded-[10px] border border-line bg-panel p-[22px]">
+            <label className="block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">MODEL</label>
+            <Dropdown
+              value={mgrDraft.model}
+              options={models.map((m) => ({ value: m.id, label: m.label }))}
+              onChange={(v) => setMgrDraft({ ...mgrDraft, model: v })}
+            />
+            {models.length === 0 && <p className="mt-2 text-[12px] text-muted">No models configured. Add one in the Models tab.</p>}
+
+            <label className="mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">OBJECTIVE / PROMPT</label>
+            <textarea
+              value={mgrDraft.objective}
+              onChange={(e) => setMgrDraft({ ...mgrDraft, objective: e.target.value })}
+              rows={5}
+              placeholder="Describe the Manager's role…"
+              className="mt-1.5 w-full resize-y rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] leading-1.6 text-text outline-none focus:border-mid"
+            />
+            <p className="mt-1.5 text-[11px] leading-1.5 text-muted">The system prompt is generated dynamically from your workspace and the Manager's tools. This objective is a seed/fallback description.</p>
+
+            <label className="mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">PERMISSIONS</label>
+            <div className="mt-1.5 flex flex-wrap gap-3">
+              {(['network', 'files', 'host_fs'] as const).map((p) => (
+                <label key={p} className="flex items-center gap-1.5 text-[12px]">
+                  <input
+                    type="checkbox"
+                    checked={mgrDraft.permissions.includes(p)}
+                    onChange={() => setMgrDraft({ ...mgrDraft, permissions: mgrDraft.permissions.includes(p) ? mgrDraft.permissions.filter((x) => x !== p) : [...mgrDraft.permissions, p] })}
+                  />
+                  {p}
+                </label>
+              ))}
+            </div>
+
+            <label className="mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">MEMORY</label>
+            <div className="mt-1.5 flex items-center gap-2">
+              <button className="secondary" onClick={() => { const id = mgrDraft.id; reset(id); toast('Manager memory cleared', 'success'); }}>Reset memory</button>
+            </div>
+          </div>
+        </Drawer>
+      )}
     </div>
   );
 }

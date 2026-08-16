@@ -66,6 +66,11 @@ export default function App() {
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
 
   const openAgent = (id: string) => {
+    // The Manager is a root-level view; opening it goes to the Manager tab.
+    if (agents.find((a) => a.id === id)?.isManager) {
+      setView('manager');
+      return;
+    }
     setSelectedAgentId(id);
     setView('agent');
   };

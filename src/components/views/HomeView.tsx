@@ -33,7 +33,7 @@ export function HomeView({ agents, tools, runs, onOpen, onCreate }: { agents: Ag
         </div>
       </div>
       <div className="grid max-w-[1100px] grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
-        {agents.map((a) => (
+        {agents.filter((a) => !a.isManager).map((a) => (
           <button key={a.id} className="home-agent min-h-[165px] cursor-pointer rounded-[10px] border border-line bg-panel p-[18px] text-left transition-transform duration-150 hover:-translate-y-0.5 hover:border-dim" onClick={() => onOpen(a.id)} style={{ borderTop: `2px solid ${a.color}` }}>
             <span className="agent-dot mr-1.5 inline-block h-2 w-2 rounded-full" style={{ background: a.color }} />
             <b className="mt-2.5 block text-[14px]">{a.name}</b>

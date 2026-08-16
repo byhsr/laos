@@ -1,11 +1,37 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type { Agent, Integration, ModelConfig, Run, RunEvent, Task, Tool, Workflow, WorkflowRunResult } from './types';
 
-// Streams a chat completion, calling onDelta with each token chunk.
-export async function streamChat(agent: Agent, input: string, isManager: boolean, onDelta: (d: string) => void): Promise<void> {
+// Streams a chat completion, calling onDelta with each token chunk and onConfirm
+// with structured confirmation requests from the Manager.
+export type ManagerConfirmRequest = { requestId: string; tool: string; args: Record<string, unknown> };
+export async function streamChat(
+  agent: Agent, input: string, isManager: boolean,
+  onDelta: (d: string) => void,
+  onConfirm?: (r: ManagerConfirmRequest) => void,
+): Promise<void> {
   const channel = new Channel<string>();
-  channel.onmessage = (d) => onDelta(d);
+  channel.onmessage = (raw) => {
+    // Structured events are JSON; token deltas are plain text.
+    if (raw.startsWith('{')) {
+      try {
+        const evt = JSON.parse(raw);
+        if (evt.type === 'confirm' && onConfirm) {
+          onConfirm({ requestId: evt.requestId, tool: evt.tool, args: evt.args ?? {} });
+          return;
+        }
+      } catch { /* fall through to delta */ }
+    }
+    onDelta(raw);
+  };
   await invoke('stream_chat', { agent, input, isManager, onEvent: channel });
+}
+
+export async function confirmManagerTool(requestId: string, approved: boolean, tool: string, args: Record<string, unknown>): Promise<string | null> {
+  try {
+    return await invoke<string | null>('confirm_manager_tool', { requestId, approved, tool, args });
+  } catch {
+    return null;
+  }
 }
 
 // Loads a persisted conversation (assistant+user turns) for an agent.
@@ -19,6 +45,10 @@ export async function loadConversation(agentId: string): Promise<{ role: 'user' 
 
 export async function listRuns(): Promise<Run[]> {
   try { return await invoke<Run[]>('list_runs'); } catch { return []; }
+}
+
+export async function clearAgentMemory(agentId: string): Promise<void> {
+  await invoke('clear_agent_memory', { agentId });
 }
 
 export async function executeAgent(agent: Agent, input: string, apiKey?: string): Promise<{ output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number }> {
