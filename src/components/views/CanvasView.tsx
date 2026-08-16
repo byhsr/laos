@@ -48,6 +48,7 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
   const [moving, setMoving] = useState<{ id: string; dx: number; dy: number } | null>(null);
   const [drawingEdge, setDrawingEdge] = useState<{ from: string; x: number; y: number } | null>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
   const [panning, setPanning] = useState<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const [search, setSearch] = useState('');
   const [confirmTarget, setConfirmTarget] = useState<Workflow | null>(null);
@@ -57,6 +58,11 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
   const update = (fn: (w: Workflow) => Workflow) => {
     setCurrent((prev) => prev ? fn(prev) : prev);
   };
+
+  // Convert a pointer position (relative to the canvas element) into world
+  // coordinates, so node placement/dragging/edge drawing all match the
+  // panned + zoomed view.
+  const screenToWorld = (sx: number, sy: number) => ({ x: (sx - pan.x) / zoom, y: (sy - pan.y) / zoom });
 
   useEffect(() => {
     if (!initialWorkflowId) return;
@@ -141,30 +147,76 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
   const onPointerMove = (e: React.PointerEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    if (drag) setDragPos({ x, y });
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    if (drag) setDragPos({ x: sx, y: sy });
     if (moving) {
-      moveNode(moving.id, Math.round(x - moving.dx - pan.x), Math.round(y - moving.dy - pan.y));
+      const w = screenToWorld(sx, sy);
+      moveNode(moving.id, Math.round(w.x - moving.dx), Math.round(w.y - moving.dy));
     }
-    if (drawingEdge) setDrawingEdge({ ...drawingEdge, x, y });
+    if (drawingEdge) setDrawingEdge({ from: drawingEdge.from, x: sx, y: sy });
     if (panning) {
       setPan({ x: panning.origX + (e.clientX - panning.startX), y: panning.origY + (e.clientY - panning.startY) });
     }
   };
 
   const onPointerUp = () => {
-    if (drag && dragPos) { addNode(drag.type, dragPos.x - NODE_W / 2 - pan.x, dragPos.y - 20 - pan.y); }
+    if (drag && dragPos) {
+      const w = screenToWorld(dragPos.x, dragPos.y);
+      addNode(drag.type, Math.round(w.x - NODE_W / 2), Math.round(w.y - 20));
+    }
     setDrag(null); setDragPos(null); setMoving(null); setDrawingEdge(null); setPanning(null);
   };
 
   const onCanvasPointerDown = (e: React.PointerEvent) => {
-    // Only pan when clicking on empty canvas (no node, no port). Buttons/inputs stop propagation.
+    // Pan when clicking any empty space. Nodes/ports call stopPropagation on
+    // their own pointerdown, so whatever reaches here is background.
     if (drag || moving || drawingEdge) return;
-    if (e.target !== e.currentTarget && !(e.target as HTMLElement).classList.contains('canvas-empty')) return;
     e.preventDefault();
+    // Capture the pointer so panning keeps working even if the cursor leaves
+    // the canvas and releases outside it.
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     setPanning({ startX: e.clientX, startY: e.clientY, origX: pan.x, origY: pan.y });
   };
+
+  // Wheel = zoom toward the cursor.
+  const onCanvasWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const next = Math.min(Math.max(zoom * factor, 0.25), 3);
+    if (next === zoom) return;
+    // Keep the world point under the cursor stationary.
+    const wx = (sx - pan.x) / zoom;
+    const wy = (sy - pan.y) / zoom;
+    setZoom(next);
+    setPan({ x: sx - wx * next, y: sy - wy * next });
+  };
+
+  const zoomIn = () => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const cx = rect ? rect.width / 2 : 0;
+    const cy = rect ? rect.height / 2 : 0;
+    const wx = (cx - pan.x) / zoom, wy = (cy - pan.y) / zoom;
+    const next = Math.min(zoom * 1.2, 3);
+    setZoom(next);
+    setPan({ x: cx - wx * next, y: cy - wy * next });
+  };
+
+  const zoomOut = () => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const cx = rect ? rect.width / 2 : 0;
+    const cy = rect ? rect.height / 2 : 0;
+    const wx = (cx - pan.x) / zoom, wy = (cy - pan.y) / zoom;
+    const next = Math.max(zoom / 1.2, 0.25);
+    setZoom(next);
+    setPan({ x: cx - wx * next, y: cy - wy * next });
+  };
+
+  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
 
   const startPaletteDrag = (type: WorkflowNodeType) => (e: React.PointerEvent) => {
     e.preventDefault();
@@ -185,7 +237,10 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
       setDrag((d) => {
         if (d && over) {
           setDragPos((pos) => {
-            if (pos) addNode(d.type, pos.x - NODE_W / 2, pos.y - 20);
+            if (pos) {
+              const w = screenToWorld(pos.x, pos.y);
+              addNode(d.type, Math.round(w.x - NODE_W / 2), Math.round(w.y - 20));
+            }
             return null;
           });
         }
@@ -211,12 +266,14 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
           const rect = canvasRef.current?.getBoundingClientRect();
           if (!rect) return;
           setSelectedNodeId(n.id);
-          const dx = e.clientX - rect.left - n.x - pan.x, dy = e.clientY - rect.top - n.y - pan.y;
+          const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+          const dx = w.x - n.x, dy = w.y - n.y;
           setMoving({ id: n.id, dx, dy });
           const onMove = (ev: PointerEvent) => {
             const r = canvasRef.current?.getBoundingClientRect();
             if (!r) return;
-            moveNode(n.id, Math.round(ev.clientX - r.left - dx - pan.x), Math.round(ev.clientY - r.top - dy - pan.y));
+            const w2 = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
+            moveNode(n.id, Math.round(w2.x - dx), Math.round(w2.y - dy));
           };
           const onUp = () => {
             window.removeEventListener('pointermove', onMove);
@@ -239,18 +296,23 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
           className="absolute -right-[7px] top-1/2 z-[3] h-3.5 w-3.5 -translate-y-1/2 cursor-crosshair rounded-full border-2 border-line bg-panel2 hover:border-[var(--green)]"
           onPointerDown={(e) => {
             e.stopPropagation(); e.preventDefault();
-            setDrawingEdge({ from: n.id, x: n.x + NODE_W, y: n.y + NODE_H / 2 });
+            const rect0 = canvasRef.current?.getBoundingClientRect();
+            if (!rect0) return;
+            const w0 = screenToWorld(e.clientX - rect0.left, e.clientY - rect0.top);
+            setDrawingEdge({ from: n.id, x: w0.x + NODE_W, y: w0.y + NODE_H / 2 });
             const onMove = (ev: PointerEvent) => {
               const rect = canvasRef.current?.getBoundingClientRect();
               if (!rect) return;
-              setDrawingEdge({ from: n.id, x: ev.clientX - rect.left, y: ev.clientY - rect.top });
+              const wm = screenToWorld(ev.clientX - rect.left, ev.clientY - rect.top);
+              setDrawingEdge({ from: n.id, x: wm.x, y: wm.y });
             };
             const onUp = (ev: PointerEvent) => {
               window.removeEventListener('pointermove', onMove);
               window.removeEventListener('pointerup', onUp);
               const rect = canvasRef.current?.getBoundingClientRect();
               if (!rect) { setDrawingEdge(null); return; }
-              const px = ev.clientX - rect.left, py = ev.clientY - rect.top;
+              const wu = screenToWorld(ev.clientX - rect.left, ev.clientY - rect.top);
+              const px = wu.x, py = wu.y;
               let target: string | null = null;
               for (const other of nodes) {
                 if (other.id === n.id) continue;
@@ -320,37 +382,56 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
             style={{ backgroundImage: 'radial-gradient(#2b2b30 1px, transparent 1px)', backgroundSize: '24px 24px' }}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
+            onPointerDown={onCanvasPointerDown}
+            onWheel={onCanvasWheel}
             onPointerLeave={() => { setDragPos(null); setDrawingEdge(null); }}
           >
-            <svg className="pointer-events-none absolute inset-0 z-0 h-full w-full">
-              {current.edges.map((e) => {
-                const from = current.nodes.find((n) => n.id === e.from);
-                const to = current.nodes.find((n) => n.id === e.to);
-                if (!from || !to) return null;
-                const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2;
-                const x2 = to.x, y2 = to.y + NODE_H / 2;
-                return <path key={e.id} className="fill-none stroke-dim stroke-[1.5]" d={`M ${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`} />;
-              })}
-              {drawingEdge && <path className="fill-none stroke-[var(--green)] stroke-[1.5] [stroke-dasharray:5_5]" d={`M ${drawingEdge.x} ${drawingEdge.y} C ${drawingEdge.x + 40} ${drawingEdge.y}, ${drawingEdge.x - 40} ${drawingEdge.y}, ${drawingEdge.x} ${drawingEdge.y}`} />}
-            </svg>
+            {/* Panned + zoomed world layer */}
+            <div
+              className="absolute inset-0 z-[1] origin-top-left"
+              style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+            >
+              <svg className="pointer-events-none absolute top-0 left-0 z-0 h-full w-full">
+                {current.edges.map((e) => {
+                  const from = current.nodes.find((n) => n.id === e.from);
+                  const to = current.nodes.find((n) => n.id === e.to);
+                  if (!from || !to) return null;
+                  const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2;
+                  const x2 = to.x, y2 = to.y + NODE_H / 2;
+                  return <path key={e.id} className="fill-none stroke-dim stroke-[1.5]" d={`M ${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`} />;
+                })}
+                {drawingEdge && <path className="fill-none stroke-[var(--green)] stroke-[1.5] [stroke-dasharray:5_5]" d={`M ${drawingEdge.x} ${drawingEdge.y} C ${drawingEdge.x + 40} ${drawingEdge.y}, ${drawingEdge.x - 40} ${drawingEdge.y}, ${drawingEdge.x} ${drawingEdge.y}`} />}
+              </svg>
 
-            {current.nodes.map(nodeEl)}
+              {current.nodes.map(nodeEl)}
 
-            {drag && dragPos && (
-              <div className="pointer-events-none absolute z-[5] w-[200px] rounded-[10px] border border-[var(--green)] border-dashed bg-panel/80 p-3 opacity-80" style={{ left: dragPos.x - NODE_W / 2, top: dragPos.y - 20 }}>
-                <b className="text-[12px]">{TYPE_META[drag.type].label}</b>
-              </div>
-            )}
+              {drag && dragPos && (() => {
+                const w = screenToWorld(dragPos.x, dragPos.y);
+                return (
+                  <div className="pointer-events-none absolute z-[5] w-[200px] rounded-[10px] border border-[var(--green)] border-dashed bg-panel/80 p-3 opacity-80" style={{ left: w.x - NODE_W / 2, top: w.y - 20 }}>
+                    <b className="text-[12px]">{TYPE_META[drag.type].label}</b>
+                  </div>
+                );
+              })()}
+            </div>
 
             {current.nodes.length === 0 && (
-              <div className="absolute inset-0 grid place-items-center">
+              <div className="pointer-events-none absolute inset-0 z-0 grid place-items-center">
                 <div className="text-center text-muted">
                   <WorkflowIcon size={26} className="mx-auto mb-2 opacity-50" />
                   <p className="text-[12px]">Drag nodes from the palette onto the canvas.</p>
-                  <p className="text-[11px]">Connect ports (dots on node edges) to chain agents.</p>
+                  <p className="text-[11px]">Scroll to zoom · drag empty space to pan · connect ports to chain agents.</p>
                 </div>
               </div>
             )}
+
+            {/* Zoom controls */}
+            <div className="absolute bottom-3 left-3 z-[6] flex items-center gap-1 rounded-lg border border-line bg-panel p-1 shadow-[0_8px_24px_#0008]">
+              <button className="grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted hover:bg-line hover:text-text" onClick={zoomOut} title="Zoom out">−</button>
+              <span className="w-10 text-center font-mono text-[10px] text-muted">{Math.round(zoom * 100)}%</span>
+              <button className="grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted hover:bg-line hover:text-text" onClick={zoomIn} title="Zoom in">+</button>
+              <button className="cursor-pointer rounded-md border-0 bg-transparent px-2 py-1 text-[10px] text-muted hover:bg-line hover:text-text" onClick={resetView} title="Reset view">Reset</button>
+            </div>
           </div>
 
           <div className="w-[260px] shrink-0 overflow-y-auto rounded-[10px] border border-line bg-panel p-3.5">

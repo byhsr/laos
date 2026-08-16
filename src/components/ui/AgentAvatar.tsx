@@ -11,6 +11,16 @@ import medievalQueen from '../../assets/agents/medieval-queen-persona.json';
 import pirate from '../../assets/agents/pirate-persona.json';
 import scientist from '../../assets/agents/scientist-persona.json';
 import wizard from '../../assets/agents/wizard-persona.json';
+import browserAgent from '../../assets/agents/browser-agent.json';
+import coderAgent from '../../assets/agents/coder-agent.json';
+import creativeAgent from '../../assets/agents/creative-agent.json';
+import dataAgent from '../../assets/agents/data-agent.json';
+import managerAgent from '../../assets/agents/manager-agent.json';
+import plannerAgent from '../../assets/agents/planner-agent.json';
+import researcherAgent from '../../assets/agents/researcher-agent.json';
+import scoutAgent from '../../assets/agents/scout-agent.json';
+import securityAgent from '../../assets/agents/security-agent.json';
+import writerAgent from '../../assets/agents/writer-agent.json';
 
 // Persona registry: each persona maps to a Lottie gremlin animation file.
 // Drop new .json files in src/assets/agents/ and add them here so the config
@@ -26,6 +36,16 @@ export const PERSONAS: { id: string; label: string; data: string | object }[] = 
   { id: 'pirate', label: 'Pirate', data: pirate },
   { id: 'scientist', label: 'Scientist', data: scientist },
   { id: 'wizard', label: 'Wizard', data: wizard },
+  { id: 'browser', label: 'Browser', data: browserAgent },
+  { id: 'coder', label: 'Coder', data: coderAgent },
+  { id: 'creative', label: 'Creative', data: creativeAgent },
+  { id: 'data', label: 'Data', data: dataAgent },
+  { id: 'manager', label: 'Manager', data: managerAgent },
+  { id: 'planner', label: 'Planner', data: plannerAgent },
+  { id: 'researcher', label: 'Researcher', data: researcherAgent },
+  { id: 'scout', label: 'Scout', data: scoutAgent },
+  { id: 'security', label: 'Security', data: securityAgent },
+  { id: 'writer', label: 'Writer', data: writerAgent },
 ];
 
 const personaData = (id?: string) => PERSONAS.find((p) => p.id === id)?.data ?? PERSONAS[0].data;
