@@ -204,6 +204,18 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
             />
             {enabledTools.length === 0 && <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>No enabled tools. Add some in the Tools tab.</p>}
 
+            <label className="mt-3.5 block text-[11px] font-semibold text-muted">INTEGRATIONS</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {integrations.filter((i) => i.connected).map((i) => (
+                <label key={i.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                  <input type="checkbox" checked={draft.integrations.includes(i.id)} onChange={() => setDraft({ ...draft, integrations: draft.integrations.includes(i.id) ? draft.integrations.filter((x) => x !== i.id) : [...draft.integrations, i.id] })} />
+                  {i.name}
+                  <span className="font-mono text-[9px] text-muted">({i.actions.length} actions)</span>
+                </label>
+              ))}
+              {integrations.filter((i) => i.connected).length === 0 && <p style={{ fontSize: 11, color: 'var(--muted)', margin: 0 }}>No connected integrations. Connect them in the Integrations tab.</p>}
+            </div>
+
             <label className="mt-3.5 block text-[11px] font-semibold text-muted">PERMISSIONS</label>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               {(['network', 'files'] as const).map((p) => (

@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AgentRequest { id: String, name: String, objective: String, model: String, tool_ids: Vec<String>, home_path: String, permissions: Vec<String> }
+struct AgentRequest { id: String, name: String, objective: String, model: String, tool_ids: Vec<String>, integrations: Vec<String>, home_path: String, permissions: Vec<String> }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +34,7 @@ struct AgentRecord {
   tool_ids: Vec<String>, integrations: Vec<String>, memory: bool,
   permissions: Vec<String>, home_path: String, color: String,
   #[serde(default)] x: f64, #[serde(default)] y: f64,
+  #[serde(default)] is_manager: bool, #[serde(default)] description: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -47,6 +48,20 @@ struct WorkflowStep { node_id: String, node_label: String, output: String, promp
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkflowExecution { steps: Vec<WorkflowStep>, final_output: String, total_prompt_tokens: u64, total_completion_tokens: u64 }
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct IntegrationRecord { id: String, name: String, provider: String, enabled: bool, connected: bool, config: serde_json::Value, actions: Vec<IntegrationAction> }
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct IntegrationAction { name: String, description: String }
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TaskRecord { id: String, requester: String, assigned_agent: String, status: String, input: String, context: String, result: Option<String>, created_at: String, completed_at: Option<String> }
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ConversationRecord { agent_id: String, messages: serde_json::Value }
 
 // Ollama chat (tool-calling) request/response
 #[derive(Serialize)]
@@ -300,6 +315,136 @@ impl AgentTool for ApiTool {
   }
 }
 
+// Generic integration tool: executes a provider REST action using the stored
+// integration credentials. Data-driven — new actions are added to the provider match.
+struct IntegrationTool {
+  action: String,
+  credentials: serde_json::Value,
+}
+
+#[async_trait]
+impl AgentTool for IntegrationTool {
+  fn name(&self) -> String { self.action.clone() }
+  fn description(&self) -> String {
+    match self.action.as_str() {
+      "notion_search" => "Search Notion pages and databases. Params: query (string).".into(),
+      "notion_create_page" => "Create a Notion page. Params: parentId (string, database or page id), title (string).".into(),
+      "notion_get_page" => "Fetch a Notion page's content. Params: pageId (string).".into(),
+      "airtable_list_records" => "List records from an Airtable table. Params: baseId (string), tableName (string), maxRecords (integer, optional).".into(),
+      "airtable_create_record" => "Create a record in an Airtable table. Params: baseId (string), tableName (string), fields (object of field values).".into(),
+      "airtable_update_record" => "Update a record in an Airtable table. Params: baseId (string), tableName (string), recordId (string), fields (object).".into(),
+      "sheets_read" => "Read rows from a Google Sheet. Params: spreadsheetId (string), range (string, e.g. 'Sheet1!A1:C10').".into(),
+      "sheets_append" => "Append rows to a Google Sheet. Params: spreadsheetId (string), range (string), values (array of arrays).".into(),
+      "sheets_update" => "Update cells in a Google Sheet. Params: spreadsheetId (string), range (string), values (array of arrays).".into(),
+      "docs_create" => "Create a Google Doc with content. Params: title (string), content (string).".into(),
+      "docs_get" => "Read a Google Doc's content. Params: documentId (string).".into(),
+      _ => "Integration action".into(),
+    }
+  }
+  fn params_schema(&self) -> serde_json::Value {
+    serde_json::json!({ "type": "object", "properties": { "query": { "type": "string" }, "parentId": { "type": "string" }, "title": { "type": "string" }, "pageId": { "type": "string" }, "baseId": { "type": "string" }, "tableName": { "type": "string" }, "maxRecords": { "type": "integer" }, "fields": { "type": "object" }, "recordId": { "type": "string" }, "spreadsheetId": { "type": "string" }, "range": { "type": "string" }, "values": { "type": "array" }, "documentId": { "type": "string" }, "content": { "type": "string" } }, "required": [] })
+  }
+  async fn run(&self, args: &serde_json::Value) -> Result<String, String> {
+    let token = self.credentials.get("token").and_then(|t| t.as_str()).or_else(|| self.credentials.get("apiKey").and_then(|t| t.as_str())).or_else(|| self.credentials.get("accessToken").and_then(|t| t.as_str())).unwrap_or("");
+    let client = reqwest::Client::new();
+    let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    match self.action.as_str() {
+      "notion_search" => {
+        let body = serde_json::json!({ "query": arg("query") });
+        let resp = client.post("https://api.notion.com/v1/search")
+          .header("Authorization", format!("Bearer {token}"))
+          .header("Notion-Version", "2022-06-28")
+          .json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "notion_create_page" => {
+        let body = serde_json::json!({
+          "parent": { "type": "page_id", "page_id": arg("parentId") },
+          "properties": { "title": { "title": [{ "text": { "content": arg("title") } }] } }
+        });
+        let resp = client.post("https://api.notion.com/v1/pages")
+          .header("Authorization", format!("Bearer {token}"))
+          .header("Notion-Version", "2022-06-28")
+          .json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "notion_get_page" => {
+        let resp = client.get(format!("https://api.notion.com/v1/pages/{}", arg("pageId")))
+          .header("Authorization", format!("Bearer {token}"))
+          .header("Notion-Version", "2022-06-28")
+          .send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "airtable_list_records" => {
+        let resp = client.get(format!("https://api.airtable.com/v0/{}/{}/listRecords", arg("baseId"), arg("tableName")))
+          .header("Authorization", format!("Bearer {token}"))
+          .send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "airtable_create_record" => {
+        let body = serde_json::json!({ "fields": args.get("fields").cloned().unwrap_or(serde_json::json!({})) });
+        let resp = client.post(format!("https://api.airtable.com/v0/{}/{}", arg("baseId"), arg("tableName")))
+          .header("Authorization", format!("Bearer {token}"))
+          .json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "airtable_update_record" => {
+        let body = serde_json::json!({ "fields": args.get("fields").cloned().unwrap_or(serde_json::json!({})) });
+        let resp = client.patch(format!("https://api.airtable.com/v0/{}/{}/{}", arg("baseId"), arg("tableName"), arg("recordId")))
+          .header("Authorization", format!("Bearer {token}"))
+          .json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "sheets_read" => {
+        let resp = client.get(format!("https://sheets.googleapis.com/v4/spreadsheets/{}/values/{}", arg("spreadsheetId"), arg("range")))
+          .header("Authorization", format!("Bearer {token}"))
+          .send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "sheets_append" => {
+        let body = serde_json::json!({ "values": args.get("values").cloned().unwrap_or(serde_json::json!([])) });
+        let resp = client.post(format!("https://sheets.googleapis.com/v4/spreadsheets/{}/values/{}:append?valueInputOption=RAW", arg("spreadsheetId"), arg("range")))
+          .header("Authorization", format!("Bearer {token}"))
+          .json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "sheets_update" => {
+        let body = serde_json::json!({ "values": args.get("values").cloned().unwrap_or(serde_json::json!([])) });
+        let resp = client.put(format!("https://sheets.googleapis.com/v4/spreadsheets/{}/values/{}?valueInputOption=RAW", arg("spreadsheetId"), arg("range")))
+          .header("Authorization", format!("Bearer {token}"))
+          .json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "docs_create" => {
+        let body = serde_json::json!({ "title": arg("title") });
+        let resp = client.post("https://docs.googleapis.com/v1/documents")
+          .header("Authorization", format!("Bearer {token}"))
+          .json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "docs_get" => {
+        let resp = client.get(format!("https://docs.googleapis.com/v1/documents/{}", arg("documentId")))
+          .header("Authorization", format!("Bearer {token}"))
+          .send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      _ => Err(format!("Unknown integration action: {}", self.action)),
+    }
+  }
+}
+
 fn now() -> String { chrono::Local::now().format("%H:%M:%S").to_string() }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +455,13 @@ fn db(app: &AppHandle) -> Result<Connection, String> {
   let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
   fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
   let conn = Connection::open(dir.join("local-agent-os.sqlite3")).map_err(|e| e.to_string())?;
-  conn.execute_batch("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, started_at TEXT NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL, input TEXT NOT NULL, output TEXT, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS memory (agent_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(agent_id,key)); CREATE TABLE IF NOT EXISTS model_configs (id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL, model TEXT NOT NULL, host TEXT, api_key TEXT, enabled INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS tools (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, integration_id TEXT NOT NULL, description TEXT, enabled INTEGER NOT NULL DEFAULT 1, config_json TEXT NOT NULL DEFAULT '{}'); CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, objective TEXT NOT NULL, model TEXT NOT NULL, tool_ids TEXT NOT NULL DEFAULT '[]', integrations TEXT NOT NULL DEFAULT '[]', memory INTEGER NOT NULL DEFAULT 1, permissions TEXT NOT NULL DEFAULT '[]', home_path TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#8b5cf6', x REAL NOT NULL DEFAULT 0, y REAL NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, name TEXT NOT NULL, nodes TEXT NOT NULL DEFAULT '[]', edges TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL);") .map_err(|e| e.to_string())?;
+  conn.execute_batch("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, started_at TEXT NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL, input TEXT NOT NULL, output TEXT, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS memory (agent_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(agent_id,key)); CREATE TABLE IF NOT EXISTS model_configs (id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL, model TEXT NOT NULL, host TEXT, api_key TEXT, enabled INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS tools (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, integration_id TEXT NOT NULL, description TEXT, enabled INTEGER NOT NULL DEFAULT 1, config_json TEXT NOT NULL DEFAULT '{}'); CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, objective TEXT NOT NULL, model TEXT NOT NULL, tool_ids TEXT NOT NULL DEFAULT '[]', integrations TEXT NOT NULL DEFAULT '[]', memory INTEGER NOT NULL DEFAULT 1, permissions TEXT NOT NULL DEFAULT '[]', home_path TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#8b5cf6', x REAL NOT NULL DEFAULT 0, y REAL NOT NULL DEFAULT 0, is_manager INTEGER NOT NULL DEFAULT 0, description TEXT NOT NULL DEFAULT ''); CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, name TEXT NOT NULL, nodes TEXT NOT NULL DEFAULT '[]', edges TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS integration_configs (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, config_json TEXT NOT NULL DEFAULT '{}', enabled INTEGER NOT NULL DEFAULT 0, connected INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, requester TEXT NOT NULL, assigned_agent TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', input TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', result TEXT, created_at TEXT NOT NULL, completed_at TEXT); CREATE TABLE IF NOT EXISTS agent_conversations (agent_id TEXT PRIMARY KEY, messages TEXT NOT NULL DEFAULT '[]');") .map_err(|e| e.to_string())?;
+  // Migrate older DBs: ensure new agent columns exist.
+  let cols: Vec<String> = conn.prepare("PRAGMA table_info(agents)").map_err(|e| e.to_string())?
+    .query_map([], |row| row.get::<_, String>(1)).map_err(|e| e.to_string())?
+    .collect::<Result<_, _>>().map_err(|e| e.to_string())?;
+  if !cols.iter().any(|c| c == "is_manager") { conn.execute("ALTER TABLE agents ADD COLUMN is_manager INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
+  if !cols.iter().any(|c| c == "description") { conn.execute("ALTER TABLE agents ADD COLUMN description TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   Ok(conn)
 }
 
@@ -405,7 +556,7 @@ fn parse_json_vec(s: &str) -> Vec<String> {
 #[tauri::command]
 fn list_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
   let conn = db(&app)?;
-  let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y FROM agents ORDER BY name").map_err(|e| e.to_string())?;
+  let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description FROM agents ORDER BY name").map_err(|e| e.to_string())?;
   let rows = stmt.query_map([], |row| {
     let tool_ids: String = row.get(4)?;
     let integrations: String = row.get(5)?;
@@ -415,6 +566,7 @@ fn list_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
       tool_ids: parse_json_vec(&tool_ids), integrations: parse_json_vec(&integrations),
       memory: row.get::<_, i64>(6)? != 0, permissions: parse_json_vec(&permissions),
       home_path: row.get(8)?, color: row.get(9)?, x: row.get(10)?, y: row.get(11)?,
+      is_manager: row.get::<_, i64>(12)? != 0, description: row.get(13)?,
     })
   }).map_err(|e| e.to_string())?;
   let mut out = Vec::new();
@@ -426,14 +578,15 @@ fn list_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
 fn save_agent(app: AppHandle, agent: AgentRecord) -> Result<(), String> {
   let conn = db(&app)?;
   conn.execute(
-    "INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
-     ON CONFLICT(id) DO UPDATE SET name=excluded.name, objective=excluded.objective, model=excluded.model, tool_ids=excluded.tool_ids, integrations=excluded.integrations, memory=excluded.memory, permissions=excluded.permissions, home_path=excluded.home_path, color=excluded.color, x=excluded.x, y=excluded.y",
+    "INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, objective=excluded.objective, model=excluded.model, tool_ids=excluded.tool_ids, integrations=excluded.integrations, memory=excluded.memory, permissions=excluded.permissions, home_path=excluded.home_path, color=excluded.color, x=excluded.x, y=excluded.y, is_manager=excluded.is_manager, description=excluded.description",
     params![agent.id, agent.name, agent.objective, agent.model,
       serde_json::to_string(&agent.tool_ids).unwrap_or_else(|_| "[]".into()),
       serde_json::to_string(&agent.integrations).unwrap_or_else(|_| "[]".into()),
       if agent.memory { 1 } else { 0 },
       serde_json::to_string(&agent.permissions).unwrap_or_else(|_| "[]".into()),
-      agent.home_path, agent.color, agent.x, agent.y],
+      agent.home_path, agent.color, agent.x, agent.y,
+      if agent.is_manager { 1 } else { 0 }, agent.description],
   ).map_err(|e| e.to_string())?;
   Ok(())
 }
@@ -492,6 +645,265 @@ fn delete_workflow(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// Integrations
+// ---------------------------------------------------------------------------
+
+fn integration_definitions() -> Vec<IntegrationRecord> {
+  vec![
+    IntegrationRecord { id: "notion".into(), name: "Notion".into(), provider: "notion".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
+      IntegrationAction { name: "notion_search".into(), description: "Search Notion pages and databases".into() },
+      IntegrationAction { name: "notion_create_page".into(), description: "Create a page in a Notion database or parent page".into() },
+      IntegrationAction { name: "notion_get_page".into(), description: "Fetch a Notion page's content".into() },
+    ] },
+    IntegrationRecord { id: "airtable".into(), name: "Airtable".into(), provider: "airtable".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
+      IntegrationAction { name: "airtable_list_records".into(), description: "List records from an Airtable table".into() },
+      IntegrationAction { name: "airtable_create_record".into(), description: "Create a record in an Airtable table".into() },
+      IntegrationAction { name: "airtable_update_record".into(), description: "Update a record in an Airtable table".into() },
+    ] },
+    IntegrationRecord { id: "sheets".into(), name: "Google Sheets".into(), provider: "google".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
+      IntegrationAction { name: "sheets_read".into(), description: "Read rows from a Google Sheet".into() },
+      IntegrationAction { name: "sheets_append".into(), description: "Append rows to a Google Sheet".into() },
+      IntegrationAction { name: "sheets_update".into(), description: "Update cells in a Google Sheet".into() },
+    ] },
+    IntegrationRecord { id: "docs".into(), name: "Google Docs".into(), provider: "google".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
+      IntegrationAction { name: "docs_create".into(), description: "Create a Google Doc with content".into() },
+      IntegrationAction { name: "docs_get".into(), description: "Read a Google Doc's content".into() },
+    ] },
+    IntegrationRecord { id: "telegram".into(), name: "Telegram".into(), provider: "telegram".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
+      IntegrationAction { name: "telegram_send".into(), description: "Send a Telegram message".into() },
+    ] },
+  ]
+}
+
+fn integration_secret(conn: &Connection, id: &str) -> Result<serde_json::Value, String> {
+  let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id=?1").map_err(|e| e.to_string())?;
+  let mut rows = stmt.query_map(params![id], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+  let cfg: serde_json::Value = match rows.next() {
+    Some(Ok(s)) => serde_json::from_str(&s).map_err(|e| e.to_string())?,
+    Some(Err(e)) => return Err(e.to_string()),
+    None => serde_json::json!({}),
+  };
+  // Sanitize: string-only fields must never be numbers (e.g. a bad clientId: 0).
+  let mut out = cfg;
+  if let Some(obj) = out.as_object_mut() {
+    for k in ["clientId", "clientSecret", "token", "apiKey", "accessToken", "refreshToken"] {
+      if let Some(v) = obj.get_mut(k) {
+        if !v.is_string() { *v = serde_json::Value::Null; }
+      }
+    }
+  }
+  Ok(out)
+}
+
+fn mask_config(cfg: &serde_json::Value) -> serde_json::Value {
+  let mut out = serde_json::Map::new();
+  if let Some(obj) = cfg.as_object() {
+    for (k, v) in obj {
+      // Never expose secrets to the frontend; show a "set" marker instead.
+      if k.to_lowercase().contains("token") || k.to_lowercase().contains("key") || k.to_lowercase().contains("secret") {
+        if v.as_str().map(|s| !s.is_empty()).unwrap_or(false) { out.insert(k.clone(), serde_json::json!("••••••••")); }
+        else { out.insert(k.clone(), serde_json::Value::Null); }
+      } else {
+        out.insert(k.clone(), v.clone());
+      }
+    }
+  }
+  serde_json::Value::Object(out)
+}
+
+#[tauri::command]
+fn list_integrations(app: AppHandle) -> Result<Vec<IntegrationRecord>, String> {
+  let conn = db(&app)?;
+  let defs = integration_definitions();
+  let mut out = Vec::new();
+  for mut d in defs {
+    let mut stmt = conn.prepare("SELECT config_json, enabled, connected FROM integration_configs WHERE id=?1").map_err(|e| e.to_string())?;
+    let mut rows = stmt.query_map(params![d.id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0, row.get::<_, i64>(2)? != 0))).map_err(|e| e.to_string())?;
+    if let Some(Ok((cfg, enabled, connected))) = rows.next() {
+      d.config = mask_config(&serde_json::from_str::<serde_json::Value>(&cfg).unwrap_or_else(|_| serde_json::json!({})));
+      d.enabled = enabled; d.connected = connected;
+    }
+    out.push(d);
+  }
+  Ok(out)
+}
+
+#[tauri::command]
+fn save_integration_config(app: AppHandle, id: String, config: serde_json::Value) -> Result<(), String> {
+  let conn = db(&app)?;
+  let def = integration_definitions().into_iter().find(|d| d.id == id).ok_or("Unknown integration")?;
+  // Merge with any existing secret config so the frontend's masked values don't clobber real tokens.
+  let existing = integration_secret(&conn, &id)?;
+  let merged = merge_config(&existing, &config)?;
+  conn.execute(
+    "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, provider=excluded.provider, config_json=excluded.config_json, enabled=excluded.enabled, connected=excluded.connected, updated_at=excluded.updated_at",
+    params![id, def.name, def.provider, serde_json::to_string(&merged).map_err(|e| e.to_string())?, 1, 0, now()],
+  ).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+fn merge_config(existing: &serde_json::Value, incoming: &serde_json::Value) -> Result<serde_json::Value, String> {
+  let mut out = existing.clone();
+  let obj = out.as_object_mut().ok_or("config must be an object")?;
+  if let Some(inc) = incoming.as_object() {
+    for (k, v) in inc {
+      // Only merge strings, booleans, arrays, objects — never numbers that
+      // sneak in as bad values (e.g. clientId: 0).
+      if !v.is_string() && !v.is_boolean() && !v.is_array() && !v.is_object() && !v.is_null() {
+        continue;
+      }
+      // Keep the stored secret if the frontend sent the masked placeholder or null.
+      let masked = v.as_str().map(|s| s == "••••••••" || s.is_empty()).unwrap_or(v.is_null());
+      if masked { continue; }
+      obj.insert(k.clone(), v.clone());
+    }
+  }
+  Ok(out)
+}
+
+#[tauri::command]
+async fn test_integration(app: AppHandle, id: String) -> Result<bool, String> {
+  let conn = db(&app)?;
+  let cfg = integration_secret(&conn, &id)?;
+  let token = cfg.get("token").and_then(|t| t.as_str()).or_else(|| cfg.get("apiKey").and_then(|t| t.as_str())).unwrap_or("");
+  if token.is_empty() { return Ok(false); }
+  let url: String = match id.as_str() {
+    "notion" => "https://api.notion.com/v1/users/me".into(),
+    "airtable" => "https://api.airtable.com/v0/meta/whoami".into(),
+    "telegram" => format!("https://api.telegram.org/bot{token}/getMe"),
+    _ => return Ok(true), // Google OAuth tokens: assume connected until a call fails
+  };
+  let response = reqwest::Client::new().get(url)
+    .header("Authorization", format!("Bearer {token}"))
+    .header("Notion-Version", "2022-06-28")
+    .send().await.map_err(|e| e.to_string())?;
+  let ok = response.status().is_success();
+  conn.execute("UPDATE integration_configs SET connected=?1 WHERE id=?2", params![if ok { 1 } else { 0 }, id]).map_err(|e| e.to_string())?;
+  Ok(ok)
+}
+
+// ---------------------------------------------------------------------------
+// OAuth (loopback)
+// ---------------------------------------------------------------------------
+
+const OAUTH_REDIRECT_PORT: u16 = 14852;
+
+fn oauth_redirect_uri() -> String { format!("http://127.0.0.1:{OAUTH_REDIRECT_PORT}/callback") }
+
+// Builds the provider authorize URL. Client IDs come from the integration config
+// (set in the UI), scopes are per provider.
+#[tauri::command]
+fn start_oauth(app: AppHandle, id: String) -> Result<String, String> {
+  let conn = db(&app)?;
+  let cfg = integration_secret(&conn, &id)?;
+  let client_id = cfg.get("clientId").and_then(|c| c.as_str()).unwrap_or("").to_string();
+  if client_id.is_empty() {
+    return Err(format!("OAuth for '{id}' needs a clientId. Set it in the integration config first."));
+  }
+  let redirect = oauth_redirect_uri();
+  let url = match id.as_str() {
+    "sheets" | "docs" => format!(
+      "https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={redirect}&response_type=code&scope=https://www.googleapis.com/auth/spreadsheets%20https://www.googleapis.com/auth/documents&access_type=offline&prompt=consent"
+    ),
+    "notion" => format!(
+      "https://api.notion.com/v1/oauth/authorize?client_id={client_id}&redirect_uri={redirect}&response_type=code&owner=user"
+    ),
+    _ => return Err(format!("OAuth is not available for '{id}'. Configure it with an API token instead.")),
+  };
+  let _ = app; // app kept for signature consistency with future token refresh
+  Ok(url)
+}
+
+// Opens the provider authorize URL in the system browser and starts a loopback
+// listener on a background task to capture the redirect and exchange the code.
+// Returns immediately so the UI isn't blocked; the browser does the waiting.
+#[tauri::command]
+async fn connect_oauth(app: AppHandle, id: String) -> Result<String, String> {
+  let url = start_oauth(app.clone(), id.clone())?;
+  tauri_plugin_opener::open_url(&url, None::<&str>).map_err(|e| e.to_string())?;
+
+  let handle = app.clone();
+  tauri::async_runtime::spawn(async move {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let listener = match TcpListener::bind(("127.0.0.1", OAUTH_REDIRECT_PORT)) {
+      Ok(l) => l,
+      Err(e) => { eprintln!("OAuth loopback bind failed: {e}"); return; }
+    };
+    let (mut stream, _) = match listener.accept() {
+      Ok(pair) => pair,
+      Err(e) => { eprintln!("OAuth loopback accept failed: {e}"); return; }
+    };
+    let mut buf = [0u8; 8192];
+    let n = match stream.read(&mut buf) {
+      Ok(n) => n,
+      Err(_) => return,
+    };
+    let request = String::from_utf8_lossy(&buf[..n]).to_string();
+    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 58\r\n\r\n<html><body>Connected! You can close this tab.</body></html>");
+    let _ = stream.flush();
+
+    let first_line = request.lines().next().unwrap_or("");
+    let code = first_line.split('?').nth(1).and_then(|q| q.split('&').find_map(|kv| {
+      let mut it = kv.split('=');
+      let k = it.next()?; let v = it.next()?;
+      if k == "code" { Some(v.to_string()) } else { None }
+    }));
+    if let Some(code) = code {
+      let _ = complete_oauth_inner(&handle, &id, &code).await;
+    }
+  });
+
+  Ok(url)
+}
+
+async fn complete_oauth_inner(app: &AppHandle, id: &str, code: &str) -> Result<(), String> {
+  let conn = db(app)?;
+  let cfg = integration_secret(&conn, id)?;
+  let client_id = cfg.get("clientId").and_then(|c| c.as_str()).unwrap_or("").to_string();
+  let client_secret = cfg.get("clientSecret").and_then(|c| c.as_str()).unwrap_or("").to_string();
+  if client_id.is_empty() || client_secret.is_empty() {
+    return Err("OAuth client ID/secret not configured for this integration.".into());
+  }
+  let token_url = match id {
+    "sheets" | "docs" => "https://oauth2.googleapis.com/token",
+    "notion" => "https://api.notion.com/v1/oauth/token",
+    _ => return Err(format!("OAuth is not available for '{id}'.")),
+  };
+  let body = serde_json::json!({
+    "code": code,
+    "client_id": client_id,
+    "client_secret": client_secret,
+    "redirect_uri": oauth_redirect_uri(),
+    "grant_type": "authorization_code",
+  });
+  let response = reqwest::Client::new().post(token_url).header("Content-Type", "application/json").json(&body).send().await.map_err(|e| e.to_string())?;
+  if !response.status().is_success() {
+    let text = response.text().await.unwrap_or_default();
+    return Err(format!("OAuth token exchange failed: {text}"));
+  }
+  let tokens: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+  let mut stored = cfg.clone();
+  if let Some(obj) = stored.as_object_mut() {
+    obj.insert("accessToken".into(), tokens.get("access_token").cloned().unwrap_or(serde_json::Value::Null));
+    obj.insert("refreshToken".into(), tokens.get("refresh_token").cloned().unwrap_or(serde_json::Value::Null));
+  }
+  conn.execute(
+    "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)
+     ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, enabled=excluded.enabled, connected=excluded.connected, updated_at=excluded.updated_at",
+    params![id.to_string(), id.to_string(), id.to_string(), serde_json::to_string(&stored).map_err(|e| e.to_string())?, 1, 1, now()],
+  ).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+// Exchanges an OAuth code (provided by the frontend, e.g. pasted) for tokens.
+#[tauri::command]
+async fn complete_oauth(app: AppHandle, id: String, code: String) -> Result<(), String> {
+  complete_oauth_inner(&app, &id, &code).await
+}
+
+// ---------------------------------------------------------------------------
 // Agent execution
 // ---------------------------------------------------------------------------
 
@@ -536,6 +948,24 @@ fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::path::Path) 
       "read_file" if has_files => tools.push(Box::new(ReadFileTool { home: home.to_path_buf() })),
       "write_file" if has_files => tools.push(Box::new(WriteFileTool { home: home.to_path_buf() })),
       _ => {}
+    }
+  }
+  // Grant integration actions to agents that explicitly have the integration AND
+  // the integration is enabled+connected. Explicit per-agent grants only.
+  for integration_id in &agent.integrations {
+    let mut stmt = conn.prepare("SELECT enabled, connected, config_json FROM integration_configs WHERE id=?1").map_err(|e| e.to_string())?;
+    let mut rows = stmt.query_map(params![integration_id], |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
+    if let Some(Ok((enabled, connected, cfg_json))) = rows.next() {
+      if !enabled || !connected { continue; }
+      let credentials: serde_json::Value = serde_json::from_str(&cfg_json).unwrap_or_else(|_| serde_json::json!({}));
+      let def = integration_definitions().into_iter().find(|d| d.id == *integration_id);
+      if let Some(def) = def {
+        for action in def.actions {
+          if has_network {
+            tools.push(Box::new(IntegrationTool { action: action.name, credentials: credentials.clone() }));
+          }
+        }
+      }
     }
   }
   Ok(tools)
@@ -639,7 +1069,125 @@ async fn run_agent_once(app: &AppHandle, agent: &AgentRequest, input: &str, api_
     let ct = json["usage"]["completion_tokens"].as_u64().unwrap_or(0);
     events.push(ExecutionEvent { time: now(), kind: "result".into(), title: "Generated final result".into(), detail: None });
     Ok((output, pt, ct))
-  } else { Err("Unknown model provider. Select Ollama or OpenRouter in the agent Model tab.".into()) }
+  } else if let Some(model) = agent.model.strip_prefix("groq:") {
+    let key = api_key
+      .filter(|k| !k.trim().is_empty())
+      .map(|k| k.to_string())
+      .or(stored_api_key(&conn, &agent.model).ok().flatten())
+      .ok_or("Groq requires an API key. Add it in Models first.")?;
+    events.push(ExecutionEvent { time: now(), kind: "thought".into(), title: "Asking Groq".into(), detail: Some(model.into()) });
+    let response = reqwest::Client::new().post("https://api.groq.com/openai/v1/chat/completions")
+      .header("Authorization", format!("Bearer {key}"))
+      .json(&serde_json::json!({"model":model,"messages":[{"role":"user","content":prompt}]})).send().await.map_err(|e| format!("Could not reach Groq: {e}"))?;
+    if !response.status().is_success() { return Err(format!("Groq returned {}", response.status())); }
+    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    let output = json["choices"][0]["message"]["content"].as_str().unwrap_or("Groq returned no text.").to_string();
+    let pt = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
+    let ct = json["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+    events.push(ExecutionEvent { time: now(), kind: "result".into(), title: "Generated final result".into(), detail: None });
+    Ok((output, pt, ct))
+  } else { Err("Unknown model provider. Select Ollama, OpenRouter or Groq in the agent Model tab.".into()) }
+}
+
+// ---------------------------------------------------------------------------
+// Tasks + conversations
+// ---------------------------------------------------------------------------
+
+fn create_task(conn: &Connection, requester: &str, assigned_agent: &str, input: &str, context: &str) -> Result<String, String> {
+  let id = format!("task-{}", chrono::Utc::now().timestamp_millis());
+  conn.execute("INSERT INTO tasks (id, requester, assigned_agent, status, input, context, created_at) VALUES (?1,?2,?3,'pending',?4,?5,?6)",
+    params![id, requester, assigned_agent, input, context, chrono::Utc::now().to_rfc3339()]).map_err(|e| e.to_string())?;
+  Ok(id)
+}
+
+fn task_from_row(row: &rusqlite::Row) -> rusqlite::Result<TaskRecord> {
+  Ok(TaskRecord {
+    id: row.get(0)?, requester: row.get(1)?, assigned_agent: row.get(2)?, status: row.get(3)?,
+    input: row.get(4)?, context: row.get(5)?, result: row.get(6)?,
+    created_at: row.get(7)?, completed_at: row.get(8)?,
+  })
+}
+
+fn list_tasks(conn: &Connection) -> Result<Vec<TaskRecord>, String> {
+  let mut stmt = conn.prepare("SELECT id, requester, assigned_agent, status, input, context, result, created_at, completed_at FROM tasks ORDER BY created_at DESC").map_err(|e| e.to_string())?;
+  let rows = stmt.query_map([], task_from_row).map_err(|e| e.to_string())?;
+  let mut out = Vec::new();
+  for row in rows { out.push(row.map_err(|e| e.to_string())?); }
+  Ok(out)
+}
+
+// Runs a domain agent for a delegated task, storing the result.
+async fn delegate_task(app: &AppHandle, task_id: &str, assigned_agent: &str, input: &str, context: &str) -> Result<String, String> {
+  let conn = db(app)?;
+  let agent = {
+    let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, home_path, permissions FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
+    let mut rows = stmt.query_map(params![assigned_agent], |row| {
+      let tool_ids: String = row.get(4)?;
+      let integrations: String = row.get(5)?;
+      let permissions: String = row.get(7)?;
+      Ok(AgentRequest {
+        id: row.get(0)?, name: row.get(1)?, objective: row.get(2)?, model: row.get(3)?,
+        tool_ids: parse_json_vec(&tool_ids), integrations: parse_json_vec(&integrations),
+        home_path: row.get(6)?, permissions: parse_json_vec(&permissions),
+      })
+    }).map_err(|e| e.to_string())?;
+    rows.next().transpose().map_err(|e| e.to_string())?
+  };
+  conn.execute("UPDATE tasks SET status='running' WHERE id=?1", params![task_id]).map_err(|e| e.to_string())?;
+  let prompt = if context.is_empty() { input.to_string() } else { format!("Context:\n{context}\n\nTask:\n{input}") };
+  let mut events = Vec::new();
+  let result = match agent {
+    Some(a) => run_agent_once(app, &a, &prompt, None, &mut events).await.map(|(out, _, _)| out),
+    None => Err("Assigned agent not found.".into()),
+  };
+  match result {
+    Ok(out) => {
+      conn.execute("UPDATE tasks SET status='completed', result=?1, completed_at=?2 WHERE id=?3", params![out, chrono::Utc::now().to_rfc3339(), task_id]).map_err(|e| e.to_string())?;
+      Ok(out)
+    }
+    Err(e) => {
+      conn.execute("UPDATE tasks SET status='failed', result=?1, completed_at=?2 WHERE id=?3", params![format!("Error: {e}"), chrono::Utc::now().to_rfc3339(), task_id]).map_err(|e| e.to_string())?;
+      Err(e)
+    }
+  }
+}
+
+// Builds the Manager's workspace context: agents, integrations, active tasks.
+fn build_workspace_context(conn: &Connection) -> Result<String, String> {
+  let mut agents = String::new();
+  {
+    let mut stmt = conn.prepare("SELECT id, name, description, objective, model, integrations, permissions FROM agents WHERE is_manager=0 ORDER BY name").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| {
+      let integrations: String = row.get(5)?;
+      let permissions: String = row.get(6)?;
+      Ok(format!("- {} (id: {}): {}. Model: {}. Integrations: {}. Permissions: {}.",
+        row.get::<_, String>(1)?, row.get::<_, String>(0)?,
+        row.get::<_, String>(2)?, row.get::<_, String>(3)?,
+        integrations, permissions))
+    }).map_err(|e| e.to_string())?;
+    for row in rows { agents.push_str(&row.map_err(|e| e.to_string())?); agents.push('\n'); }
+  }
+  let mut ints = String::new();
+  {
+    let defs = integration_definitions();
+    for d in defs {
+      let mut stmt = conn.prepare("SELECT enabled, connected FROM integration_configs WHERE id=?1").map_err(|e| e.to_string())?;
+      let mut rows = stmt.query_map(params![d.id], |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0))).map_err(|e| e.to_string())?;
+      let (enabled, connected) = rows.next().transpose().map_err(|e| e.to_string())?.unwrap_or((false, false));
+      let actions = d.actions.iter().map(|a| a.name.clone()).collect::<Vec<_>>().join(", ");
+      ints.push_str(&format!("- {} (id: {}): enabled={} connected={}. Actions: {}\n", d.name, d.id, enabled, connected, actions));
+    }
+  }
+  let tasks = list_tasks(conn)?;
+  let active: Vec<String> = tasks.iter().filter(|t| t.status == "pending" || t.status == "running").map(|t| format!("- {} → {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect();
+  let recent: Vec<String> = tasks.iter().take(5).filter(|t| t.status == "completed").map(|t| format!("- {} → {}: result: {}", t.id, t.assigned_agent, t.result.as_deref().unwrap_or(""))).collect();
+  Ok(format!(
+    "## Available Agents\n{}\n## Available Integrations\n{}\n## Active Tasks\n{}\n## Recent Task Results\n{}",
+    if agents.is_empty() { "- none".to_string() } else { agents },
+    if ints.is_empty() { "- none".to_string() } else { ints },
+    if active.is_empty() { "- none".to_string() } else { active.join("\n") },
+    if recent.is_empty() { "- none".to_string() } else { recent.join("\n") },
+  ))
 }
 
 #[tauri::command]
@@ -729,13 +1277,15 @@ async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: Strin
           current_input.clone()
         } else {
           let agent_opt = {
-            let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, home_path, permissions FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
+            let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, home_path, permissions FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
             let mut rows = stmt.query_map(params![agent_id], |row| {
               let tool_ids: String = row.get(4)?;
-              let permissions: String = row.get(6)?;
+              let integrations: String = row.get(5)?;
+              let permissions: String = row.get(7)?;
               Ok(AgentRequest {
                 id: row.get(0)?, name: row.get(1)?, objective: row.get(2)?, model: row.get(3)?,
-                tool_ids: parse_json_vec(&tool_ids), home_path: row.get(5)?, permissions: parse_json_vec(&permissions),
+                tool_ids: parse_json_vec(&tool_ids), integrations: parse_json_vec(&integrations),
+                home_path: row.get(6)?, permissions: parse_json_vec(&permissions),
               })
             }).map_err(|e| e.to_string())?;
             rows.next().transpose().map_err(|e| e.to_string())?
@@ -758,10 +1308,301 @@ async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: Strin
   Ok(WorkflowExecution { steps, final_output, total_prompt_tokens: total_prompt, total_completion_tokens: total_completion })
 }
 
+// ---------------------------------------------------------------------------
+// Manager Agent
+// ---------------------------------------------------------------------------
+
+struct ManagerListAgents;
+struct ManagerDelegate;
+struct ManagerTaskStatus;
+struct ManagerListTasks;
+struct ManagerSwitch;
+
+#[async_trait]
+impl AgentTool for ManagerListAgents {
+  fn name(&self) -> String { "list_agents".into() }
+  fn description(&self) -> String { "List all available agents with their ids, descriptions and capabilities.".into() }
+  fn params_schema(&self) -> serde_json::Value { serde_json::json!({ "type": "object", "properties": {}, "required": [] }) }
+  async fn run(&self, _args: &serde_json::Value) -> Result<String, String> { Ok("list_agents".into()) } // replaced at runtime
+}
+
+#[async_trait]
+impl AgentTool for ManagerDelegate {
+  fn name(&self) -> String { "delegate_task".into() }
+  fn description(&self) -> String { "Delegate a task to an agent. Params: agentId (string), task (string), context (string, optional). Creates a task and runs the agent.".into() }
+  fn params_schema(&self) -> serde_json::Value {
+    serde_json::json!({ "type": "object", "properties": { "agentId": { "type": "string" }, "task": { "type": "string" }, "context": { "type": "string" } }, "required": ["agentId", "task"] })
+  }
+  async fn run(&self, _args: &serde_json::Value) -> Result<String, String> { Ok("delegate_task".into()) } // replaced at runtime
+}
+
+#[async_trait]
+impl AgentTool for ManagerTaskStatus {
+  fn name(&self) -> String { "get_task_status".into() }
+  fn description(&self) -> String { "Get the status and result of a task. Params: taskId (string).".into() }
+  fn params_schema(&self) -> serde_json::Value {
+    serde_json::json!({ "type": "object", "properties": { "taskId": { "type": "string" } }, "required": ["taskId"] })
+  }
+  async fn run(&self, _args: &serde_json::Value) -> Result<String, String> { Ok("get_task_status".into()) } // replaced at runtime
+}
+
+#[async_trait]
+impl AgentTool for ManagerListTasks {
+  fn name(&self) -> String { "list_tasks".into() }
+  fn description(&self) -> String { "List all tasks and their statuses.".into() }
+  fn params_schema(&self) -> serde_json::Value { serde_json::json!({ "type": "object", "properties": {}, "required": [] }) }
+  async fn run(&self, _args: &serde_json::Value) -> Result<String, String> { Ok("list_tasks".into()) } // replaced at runtime
+}
+
+#[async_trait]
+impl AgentTool for ManagerSwitch {
+  fn name(&self) -> String { "switch_agent".into() }
+  fn description(&self) -> String { "Switch the current conversation to another agent. Params: agentId (string).".into() }
+  fn params_schema(&self) -> serde_json::Value {
+    serde_json::json!({ "type": "object", "properties": { "agentId": { "type": "string" } }, "required": ["agentId"] })
+  }
+  async fn run(&self, _args: &serde_json::Value) -> Result<String, String> { Ok("switch_agent".into()) } // replaced at runtime
+}
+
+// Runs a Manager conversation turn: loads the Manager agent, injects workspace
+// context, attaches manager tools, executes tool-calls against real backend functions.
+async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> {
+  let conn = db(app)?;
+  // Find the manager agent (is_manager=1); create a default if missing.
+  let manager = {
+    let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, home_path, permissions FROM agents WHERE is_manager=1 LIMIT 1").map_err(|e| e.to_string())?;
+    let mut rows = stmt.query_map([], |row| {
+      let tool_ids: String = row.get(4)?;
+      let integrations: String = row.get(5)?;
+      let permissions: String = row.get(7)?;
+      Ok(AgentRequest {
+        id: row.get(0)?, name: row.get(1)?, objective: row.get(2)?, model: row.get(3)?,
+        tool_ids: parse_json_vec(&tool_ids), integrations: parse_json_vec(&integrations),
+        home_path: row.get(6)?, permissions: parse_json_vec(&permissions),
+      })
+    }).map_err(|e| e.to_string())?;
+    rows.next().transpose().map_err(|e| e.to_string())?
+  };
+  let manager = match manager {
+    Some(m) => m,
+    None => {
+      let m = AgentRequest { id: "manager".into(), name: "Manager".into(), objective: "You are the workspace Manager. Orchestrate agents, answer questions about the workspace, delegate tasks, and coordinate work.".into(), model: "ollama:qwen3:8b".into(), tool_ids: vec![], integrations: vec![], home_path: "agents/manager".into(), permissions: vec!["network".into()] };
+      conn.execute("INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, is_manager) VALUES (?1,?2,?3,?4,'[]','[]',1,?5,?6,'#22c55e',1)", params![m.id, m.name, m.objective, m.model, serde_json::to_string(&m.permissions).unwrap_or_else(|_| "[]".into()), m.home_path]).map_err(|e| e.to_string())?;
+      m
+    }
+  };
+
+  let context = build_workspace_context(&conn)?;
+  let prompt = format!("You are the workspace Manager.\n\n{context}\n\nUser message: {message}\n\nUse your tools to list agents, delegate tasks, check task status, or switch agents. Return a concise, helpful reply to the user.");
+
+  // Manager tools execute against real backend functions.
+  let tools: Vec<Box<dyn AgentTool>> = vec![
+    Box::new(ManagerListAgents),
+    Box::new(ManagerDelegate),
+    Box::new(ManagerTaskStatus),
+    Box::new(ManagerListTasks),
+    Box::new(ManagerSwitch),
+  ];
+
+  let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&manager.id);
+  let mut messages = vec![
+    ChatMessage { role: "system".into(), content: Some(prompt), tool_calls: None, tool_call_id: None },
+  ];
+  let client = reqwest::Client::new();
+  let mut final_output = String::new();
+  for _round in 0..MAX_TOOL_ROUNDS {
+    let body = ChatRequest { model: manager.model.clone(), messages: messages.clone(), tools: Some(tool_schemas(&tools)), stream: false };
+    let response = if manager.model.starts_with("ollama:") {
+      client.post("http://127.0.0.1:11434/api/chat").json(&body).send().await
+    } else {
+      let key = api_key_for(&conn, &manager.model)?;
+      client.post("https://openrouter.ai/api/v1/chat/completions")
+        .header("Authorization", format!("Bearer {key}"))
+        .json(&serde_json::json!({ "model": manager.model, "messages": messages, "tools": tool_schemas(&tools) })).send().await
+    }.map_err(|e| format!("Could not reach the model provider: {e}"))?;
+    if !response.status().is_success() { return Err(format!("Model provider returned {}", response.status())); }
+    let parsed: ChatResponse = response.json().await.map_err(|e| e.to_string())?;
+    if let Some(calls) = parsed.message.tool_calls {
+      for call in calls {
+        let name = call.function.name.clone();
+        let args = call.function.arguments.clone();
+        let result = match name.as_str() {
+          "list_agents" => {
+            let mut out = String::new();
+            let mut stmt = conn.prepare("SELECT id, name, description, objective, model, integrations FROM agents WHERE is_manager=0 ORDER BY name").map_err(|e| e.to_string())?;
+            let rows = stmt.query_map([], |row| {
+              let integrations: String = row.get(5)?;
+              Ok(format!("- {} (id: {}): {}. Model: {}. Integrations: {}", row.get::<_, String>(1)?, row.get::<_, String>(0)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, integrations))
+            }).map_err(|e| e.to_string())?;
+            for row in rows { out.push_str(&row.map_err(|e| e.to_string())?); out.push('\n'); }
+            Ok(if out.is_empty() { "No agents yet.".into() } else { out })
+          }
+          "list_tasks" => {
+            let tasks = list_tasks(&conn)?;
+            Ok(if tasks.is_empty() { "No tasks.".into() } else { tasks.iter().map(|t| format!("- {} → {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect::<Vec<_>>().join("\n") })
+          }
+          "get_task_status" => {
+            let task_id = args.get("taskId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let mut stmt = conn.prepare("SELECT id, requester, assigned_agent, status, input, context, result, created_at, completed_at FROM tasks WHERE id=?1").map_err(|e| e.to_string())?;
+            let mut rows = stmt.query_map(params![task_id], task_from_row).map_err(|e| e.to_string())?;
+            match rows.next().transpose().map_err(|e| e.to_string())? {
+              Some(t) => Ok(format!("{} → {}: {} — result: {}", t.id, t.assigned_agent, t.status, t.result.unwrap_or_default())),
+              None => Ok(format!("Task {task_id} not found.")),
+            }
+          }
+          "delegate_task" => {
+            let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if agent_id.is_empty() || task.is_empty() { return Err("delegate_task requires agentId and task.".into()); }
+            let task_id = create_task(&conn, "manager", &agent_id, &task, &context)?;
+            match delegate_task(app, &task_id, &agent_id, &task, &context).await {
+              Ok(out) => Ok(format!("Task {task_id} completed. Result:\n{out}")),
+              Err(e) => Ok(format!("Task {task_id} failed: {e}")),
+            }
+          }
+          "switch_agent" => {
+            let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            Ok(format!("Switching conversation to agent {agent_id}. The user can now talk to that agent directly."))
+          }
+          _ => Err(format!("Unknown manager tool {name}.")),
+        };
+        messages.push(ChatMessage { role: "assistant".into(), content: None, tool_calls: Some(vec![call.clone()]), tool_call_id: None });
+        messages.push(ChatMessage { role: "tool".into(), content: Some(result.map_err(|e| e.to_string())?), tool_calls: None, tool_call_id: Some(call.id.clone()) });
+      }
+    } else {
+      final_output = parsed.message.content.unwrap_or_default();
+      break;
+    }
+  }
+  let _ = home;
+  Ok(final_output)
+}
+
+#[tauri::command]
+async fn manager_message(app: AppHandle, message: String) -> Result<String, String> {
+  manager_turn(&app, &message).await
+}
+
+// ---------------------------------------------------------------------------
+// Telegram adapter (long-poll)
+// ---------------------------------------------------------------------------
+
+// Reads the Telegram bot token from the telegram integration config, if enabled.
+fn telegram_token(conn: &Connection) -> Result<Option<String>, String> {
+  let mut stmt = conn.prepare("SELECT enabled, connected, config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
+  let mut rows = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
+  match rows.next().transpose().map_err(|e| e.to_string())? {
+    Some((enabled, connected, cfg_json)) => {
+      if !enabled || !connected { return Ok(None); }
+      let cfg: serde_json::Value = serde_json::from_str(&cfg_json).map_err(|e| e.to_string())?;
+      Ok(cfg.get("token").and_then(|t| t.as_str()).map(|s| s.to_string()))
+    }
+    None => Ok(None),
+  }
+}
+
+// Long-polls the Telegram Bot API; every incoming text message is routed to the
+// Manager (same logic as the UI chat) and the reply is sent back. Thin channel:
+// no business logic lives here.
+async fn telegram_loop(app: AppHandle) {
+  loop {
+    let token = match db(&app).and_then(|c| telegram_token(&c)) {
+      Ok(Some(t)) => t,
+      _ => { std::thread::sleep(std::time::Duration::from_secs(5)); continue; }
+    };
+    let mut offset: i64 = 0;
+    loop {
+      let url = format!("https://api.telegram.org/bot{token}/getUpdates?timeout=30&offset={offset}");
+      let response = match reqwest::Client::new().get(&url).send().await {
+        Ok(r) => r,
+        Err(_) => { std::thread::sleep(std::time::Duration::from_secs(5)); continue; }
+      };
+      let json: serde_json::Value = match response.json().await {
+        Ok(v) => v,
+        Err(_) => { std::thread::sleep(std::time::Duration::from_secs(5)); continue; }
+      };
+      let updates = json.get("result").and_then(|r| r.as_array()).cloned().unwrap_or_default();
+      for update in updates {
+        let update_id = update.get("update_id").and_then(|u| u.as_i64()).unwrap_or(0);
+        offset = update_id + 1;
+        let Some(text) = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string()) else { continue };
+        let Some(chat_id) = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64()) else { continue };
+        // Handle /agents and /tasks locally for snappy replies; everything else → Manager.
+        let reply = match text.trim() {
+          "/agents" | "/agents@" => {
+            let conn = db(&app).ok();
+            match conn {
+              Some(c) => {
+                let ctx = build_workspace_context(&c).unwrap_or_default();
+                ctx.lines().take_while(|l| !l.starts_with("## Available Integrations")).collect::<Vec<_>>().join("\n")
+              }
+              None => "No agents.".into(),
+            }
+          }
+          "/tasks" | "/tasks@" => {
+            let conn = db(&app).ok();
+            match conn {
+              Some(c) => list_tasks(&c).map(|ts| if ts.is_empty() { "No tasks.".into() } else { ts.iter().map(|t| format!("- {} → {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect::<Vec<_>>().join("\n") }).unwrap_or_default(),
+              None => "No tasks.".into(),
+            }
+          }
+          _ => manager_turn(&app, &text).await.unwrap_or_else(|e| format!("Manager error: {e}")),
+        };
+        let send_url = format!("https://api.telegram.org/bot{token}/sendMessage");
+        let _ = reqwest::Client::new().post(&send_url).json(&serde_json::json!({ "chat_id": chat_id, "text": reply, "parse_mode": "Markdown" })).send().await;
+      }
+    }
+  }
+}
+
+fn api_key_for(conn: &Connection, model: &str) -> Result<String, String> {
+  stored_api_key(conn, model).ok().flatten().filter(|k| !k.is_empty()).ok_or("OpenRouter requires an API key. Add it in Models first.".into())
+}
+
+// ---------------------------------------------------------------------------
+// Tasks
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn list_all_tasks(app: AppHandle) -> Result<Vec<TaskRecord>, String> {
+  let conn = db(&app)?;
+  list_tasks(&conn)
+}
+
+#[tauri::command]
+fn get_task(app: AppHandle, id: String) -> Result<Option<TaskRecord>, String> {
+  let conn = db(&app)?;
+  let mut stmt = conn.prepare("SELECT id, requester, assigned_agent, status, input, context, result, created_at, completed_at FROM tasks WHERE id=?1").map_err(|e| e.to_string())?;
+  let mut rows = stmt.query_map(params![id], task_from_row).map_err(|e| e.to_string())?;
+  rows.next().transpose().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn run_task(app: AppHandle, requester: String, assigned_agent: String, input: String, context: String) -> Result<TaskRecord, String> {
+  let conn = db(&app)?;
+  let task_id = create_task(&conn, &requester, &assigned_agent, &input, &context)?;
+  let _ = delegate_task(&app, &task_id, &assigned_agent, &input, &context).await;
+  get_task(app, task_id)?.ok_or("Task disappeared".into())
+}
+
+#[tauri::command]
+fn cancel_task(app: AppHandle, id: String) -> Result<(), String> {
+  let conn = db(&app)?;
+  conn.execute("UPDATE tasks SET status='cancelled', completed_at=?1 WHERE id=?2 AND status IN ('pending','running')", params![chrono::Utc::now().to_rfc3339(), id]).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
-    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, execute_agent, execute_workflow])
+    .setup(|app| {
+      // Start the Telegram long-poll adapter (no-op until a token is configured).
+      let handle = app.handle().clone();
+      tauri::async_runtime::spawn(telegram_loop(handle));
+      Ok(())
+    })
+    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task])
     .run(tauri::generate_context!())
     .expect("error while running Local Agent OS");
 }

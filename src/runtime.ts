@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Agent, ModelConfig, RunEvent, Tool, Workflow, WorkflowRunResult } from './types';
+import type { Agent, Integration, ModelConfig, RunEvent, Task, Tool, Workflow, WorkflowRunResult } from './types';
 
 export async function executeAgent(agent: Agent, input: string, apiKey?: string): Promise<{ output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number }> {
   try {
@@ -88,4 +88,48 @@ export async function deleteWorkflow(id: string): Promise<void> {
 
 export async function executeWorkflow(workflow: Workflow, input: string): Promise<WorkflowRunResult> {
   return await invoke<WorkflowRunResult>('execute_workflow', { workflow, input });
+}
+
+export async function listIntegrations(): Promise<Integration[]> {
+  try {
+    return await invoke<Integration[]>('list_integrations');
+  } catch {
+    return [];
+  }
+}
+
+export async function saveIntegrationConfig(id: string, config: Record<string, unknown>): Promise<void> {
+  await invoke('save_integration_config', { id, config });
+}
+
+export async function testIntegration(id: string): Promise<boolean> {
+  try { return await invoke<boolean>('test_integration', { id }); } catch { return false; }
+}
+
+export async function startOAuth(id: string): Promise<string> {
+  return await invoke<string>('start_oauth', { id });
+}
+
+export async function connectOAuth(id: string): Promise<string> {
+  return await invoke<string>('connect_oauth', { id });
+}
+
+export async function completeOAuth(id: string, code: string): Promise<void> {
+  await invoke('complete_oauth', { id, code });
+}
+
+export async function managerMessage(message: string): Promise<string> {
+  return await invoke<string>('manager_message', { message });
+}
+
+export async function listTasks(): Promise<Task[]> {
+  try { return await invoke<Task[]>('list_all_tasks'); } catch { return []; }
+}
+
+export async function runTask(requester: string, assignedAgent: string, input: string, context: string): Promise<Task> {
+  return await invoke<Task>('run_task', { requester, assignedAgent, input, context });
+}
+
+export async function cancelTask(id: string): Promise<void> {
+  await invoke('cancel_task', { id });
 }

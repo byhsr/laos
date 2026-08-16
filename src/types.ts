@@ -1,10 +1,11 @@
 export type Provider = 'ollama' | 'openrouter';
-export type Agent = { id: string; name: string; objective: string; model: string; toolIds: string[]; integrations: string[]; memory: boolean; permissions: string[]; homePath: string; color: string; x: number; y: number };
+export type Agent = { id: string; name: string; objective: string; model: string; toolIds: string[]; integrations: string[]; memory: boolean; permissions: string[]; homePath: string; color: string; x: number; y: number; isManager?: boolean; description?: string };
 export type RunEvent = { time: string; type: 'thought' | 'tool' | 'result'; title: string; detail?: string };
 export type Run = { id: string; agentId: string; startedAt: string; endedAt?: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; model: string; input: string; events: RunEvent[]; output?: string; promptTokens?: number; completionTokens?: number };
 export type Edge = { id: string; from: string; to: string };
 export type ModelConfig = { id: string; provider: Provider; label: string; model: string; host?: string; apiKey?: string; enabled: boolean };
-export type Integration = { id: string; name: string; kind: string; enabled: boolean; configured: boolean; description: string };
+export type IntegrationAction = { name: string; description: string };
+export type Integration = { id: string; name: string; provider: string; enabled: boolean; connected: boolean; config: Record<string, unknown>; actions: IntegrationAction[] };
 export type ToolParam = { name: string; type: string; description: string; required: boolean };
 export type ToolConfig = {
   [key: string]: string | number | boolean | undefined | ToolParam[] | { name: string; value: string }[];
@@ -28,8 +29,9 @@ export type WorkflowEdge = { id: string; from: string; to: string };
 export type Workflow = { id: string; name: string; nodes: WorkflowNode[]; edges: WorkflowEdge[]; updatedAt: string };
 export type WorkflowRunStep = { nodeId: string; nodeLabel: string; output: string; promptTokens: number; completionTokens: number };
 export type WorkflowRunResult = { steps: WorkflowRunStep[]; finalOutput: string; totalPromptTokens: number; totalCompletionTokens: number };
+export type Task = { id: string; requester: string; assignedAgent: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; input: string; context: string; result?: string | null; createdAt: string; completedAt?: string | null };
 
-export type View = 'home' | 'agents' | 'workflows' | 'runs' | 'agent' | 'integrations' | 'tools' | 'models' | 'settings';
+export type View = 'home' | 'agents' | 'workflows' | 'manager' | 'tasks' | 'runs' | 'agent' | 'integrations' | 'tools' | 'models' | 'settings';
 
 export type DrawerForm =
   | { kind: 'tool'; editing: Tool; isNew: boolean }

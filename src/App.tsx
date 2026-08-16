@@ -7,6 +7,7 @@ import { useModelsStore } from './hooks/useModels';
 import { useToolsStore } from './hooks/useTools';
 import { useWorkflowsStore } from './hooks/useWorkflows';
 import { useWorkspaceStore } from './hooks/useWorkspace';
+import { useIntegrationsStore } from './hooks/useIntegrations';
 import { Topbar } from './components/Topbar';
 import { Sidebar } from './components/Sidebar';
 import { AgentWindow } from './components/AgentWindow';
@@ -18,6 +19,8 @@ import { IntegrationsView } from './components/views/IntegrationsView';
 import { ToolsView, ToolFormDrawer } from './components/views/ToolsView';
 import { ModelsView, ModelFormDrawer } from './components/views/ModelsView';
 import { SettingsView } from './components/views/SettingsView';
+import { ManagerView } from './components/views/ManagerView';
+import { TasksView } from './components/views/TasksView';
 import { Toaster } from './components/ui/Toaster';
 import { toast } from './hooks/useToast';
 import { Plus } from 'lucide-react';
@@ -41,7 +44,8 @@ export default function App() {
   const saveTool = useToolsStore((s) => s.saveTool);
   const deleteTool = useToolsStore((s) => s.deleteTool);
   const loadTools = useToolsStore((s) => s.loadTools);
-  const integrations = useWorkspaceStore((s) => s.integrations);
+  const integrations = useIntegrationsStore((s) => s.integrations);
+  const loadIntegrations = useIntegrationsStore((s) => s.loadIntegrations);
   const loadWorkspace = useWorkspaceStore((s) => s.loadWorkspace);
   const workflows = useWorkflowsStore((s) => s.workflows);
   const saveWorkflow = useWorkflowsStore((s) => s.saveWorkflow);
@@ -50,8 +54,8 @@ export default function App() {
   const loadWorkflows = useWorkflowsStore((s) => s.loadWorkflows);
 
   useEffect(() => {
-    loadAgents(); loadModels(); loadTools(); loadWorkspace(); loadWorkflows();
-  }, [loadAgents, loadModels, loadTools, loadWorkspace, loadWorkflows]);
+    loadAgents(); loadModels(); loadTools(); loadWorkspace(); loadWorkflows(); loadIntegrations();
+  }, [loadAgents, loadModels, loadTools, loadWorkspace, loadWorkflows, loadIntegrations]);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [view, setView] = useState<View>('home');
@@ -88,6 +92,8 @@ export default function App() {
               onRunWorkflow={runWorkflow}
             />
           )}
+          {view === 'manager' && <ManagerView agents={agents} integrations={integrations} />}
+          {view === 'tasks' && <TasksView agents={agents} />}
           {view === 'runs' && <RunsConsole runs={runs} agents={agents} onOpenAgent={openAgent} onClear={clearRuns} />}
           {view === 'integrations' && <IntegrationsView integrations={integrations} />}
           {view === 'tools' && <ToolsView tools={tools} integrations={integrations} onAdd={() => setDrawerForm({ kind: 'tool', editing: emptyTool(), isNew: true })} onEdit={(t) => setDrawerForm({ kind: 'tool', editing: t, isNew: false })} onDelete={async (id) => { await deleteTool(id); setTools((prev) => prev.filter((p) => p.id !== id)); setAgents((prev) => prev.map((a) => ({ ...a, toolIds: a.toolIds.filter((t) => t !== id) }))); toast('Tool deleted', 'success'); }} />}
