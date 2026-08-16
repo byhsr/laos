@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, CornerDownLeft, Info, Send, Trash2 } from 'lucide-react';
+import { Bot, CornerDownLeft, Info, RefreshCw, Send, Trash2 } from 'lucide-react';
 import type { Agent, Integration, ModelConfig, Task } from '../../types';
 import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
 import { useTasksStore } from '../../hooks/useTasks';
@@ -12,7 +12,7 @@ import { Drawer } from '../ui/Drawer';
 import { Dropdown } from '../ui/Dropdown';
 import { AgentAvatar, PersonaPicker } from '../ui/AgentAvatar';
 import { toast } from '../../hooks/useToast';
-import { deleteChatSession, getChatSession, listChatSessions } from '../../runtime';
+import { deleteChatSession, getChatSession, listChatSessions, listTelegramLogs, type TelegramLogEntry } from '../../runtime';
 
 const STATUS_COLOR: Record<string, string> = {
   pending: 'text-[#facc15]',
@@ -130,7 +130,20 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   };
 
   const activeTasks = tasks.filter((t) => t.status === 'pending' || t.status === 'running');
-  const [infoOpen, setInfoOpen] = useState(false);
+  const [tab, setTab] = useState<'chat' | 'info' | 'telegram'>('chat');
+  const [telegramLogs, setTelegramLogs] = useState<TelegramLogEntry[]>([]);
+
+  const loadTelegramLogs = async () => {
+    setTelegramLogs(await listTelegramLogs());
+  };
+  useEffect(() => {
+    if (tab === 'telegram') {
+      loadTelegramLogs();
+      const iv = setInterval(loadTelegramLogs, 3000);
+      return () => clearInterval(iv);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   return (
     <div className="flex h-full flex-col gap-2">
@@ -142,21 +155,22 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           <span className="font-mono text-[10px] text-muted">{currentAgentId ? `→ ${agents.find((a) => a.id === currentAgentId)?.name ?? currentAgentId}` : ''}</span>
         </div>
         <div className="flex items-center gap-1">
-          <button className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${!infoOpen ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setInfoOpen(false)}>Chat</button>
-          <button className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${infoOpen ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setInfoOpen(true)}>
+          <button className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'chat' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('chat')}>Chat</button>
+          <button className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'info' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('info')}>
             Info
             <span className="group relative inline-flex">
               <Info size={11} className="text-mid" />
               <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 hidden -translate-x-1/2 whitespace-nowrap rounded-[5px] border border-line bg-panel2 px-2 py-1 text-[10px] font-normal text-text shadow-[0_8px_20px_#000a] group-hover:block">Agents, integrations, active tasks, chats &amp; commands</span>
             </span>
           </button>
+          <button className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'telegram' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('telegram')}>Telegram</button>
           <button className="rounded-[6px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; const m = agents.find((a) => a.id === id)?.model ?? models.find((x) => x.enabled)?.id ?? ''; newSession(id, m); }}>New chat</button>
           <button className="rounded-[6px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={openConfig}>Config</button>
           <button className="rounded-[6px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; reset(id); }} title="Clear Laos's memory">Reset memory</button>
         </div>
       </header>
 
-      {!infoOpen && (
+      {tab === 'chat' && (
         <div className="relative flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
             <div ref={scrollRef} className="chat-log flex-1 scrollbar-thin scrollbar-color-mid overflow-y-auto px-4 pt-4 pb-24">
@@ -198,7 +212,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
         </div>
       )}
 
-      {infoOpen && (
+      {tab === 'info' && (
         <div className="grid max-h-[calc(100vh-220px)] grid-cols-1 gap-4 overflow-y-auto md:grid-cols-2 xl:grid-cols-3">
           {/* Agents */}
           <div className="rounded-[10px] border border-line bg-panel p-3.5">
@@ -280,6 +294,33 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
               <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[10px]">/help</span>
               <CornerDownLeft size={12} className="mt-1 opacity-50" />
             </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'telegram' && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="font-mono text-[10px] tracking-[1px] text-muted">TELEGRAM ACTIVITY</span>
+            <button className="secondary" onClick={loadTelegramLogs}><RefreshCw size={12} />Refresh</button>
+          </div>
+          <div className="runs-console flex-1 overflow-y-auto rounded-lg border border-line bg-[#0a0a0c] p-3.5 font-mono text-[12px] leading-[1.6]">
+            {telegramLogs.length === 0 ? (
+              <div className="console-empty p-2.5 text-center text-[12px] text-muted">
+                <p>No Telegram activity yet. Send a message to your bot — inbound messages, processing, and replies show up here live.</p>
+              </div>
+            ) : telegramLogs.map((l, i) => (
+              <div key={i} className="border-b border-[#1c1c1f] py-2 last:border-0">
+                <div className="flex items-center gap-2.5 text-[11px]">
+                  <span className={l.direction === 'in' ? 'text-[#38bdf8]' : 'text-[#22c55e]'}>{l.direction === 'in' ? '▸ IN' : '◂ OUT'}</span>
+                  <span className={`font-mono text-[10px] ${l.status === 'error' ? 'text-[#f87171]' : l.status === 'sent' ? 'text-[#22c55e]' : 'text-[#facc15]'}`}>{l.status}</span>
+                  <span className="ml-auto text-mid">{l.createdAt ? (() => { const d = new Date(l.createdAt); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString(); })() : ''}</span>
+                </div>
+                <div className="mt-1 text-[#d4d4d8]">in: {l.text}</div>
+                {l.reply && <div className="mt-0.5 text-[#a1a1aa]">out: {l.reply.length > 300 ? `${l.reply.slice(0, 300)}…` : l.reply}</div>}
+                {l.detail && <div className="mt-0.5 text-[#f87171]">detail: {l.detail}</div>}
+              </div>
+            ))}
           </div>
         </div>
       )}

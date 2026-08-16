@@ -29,6 +29,7 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
   const [webhookRegistered, setWebhookRegistered] = useState(false);
+  const [tunnelSteps, setTunnelSteps] = useState<string[]>([]);
 
   const active = integrations.find((i) => i.id === drawerId) ?? null;
 
@@ -84,19 +85,47 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
     const st = await telegramTunnelStatus();
     setTunnelUrl(st.tunnelUrl);
     setWebhookRegistered(st.webhookRegistered);
+    // If the tunnel is up but the webhook isn't registered, try again — the
+    // token may have been saved since the last attempt.
+    if (st.tunnelUrl && !st.webhookRegistered) {
+      await onRegisterWebhook();
+    }
+  };
+
+  const onRegisterWebhook = async () => {
+    setTunnelBusy(true);
+    setTunnelSteps([]);
+    const addStep = (s: string) => setTunnelSteps((prev) => [...prev, s]);
+    try {
+      const msg = await telegramRegisterWebhook(addStep);
+      setWebhookRegistered(true);
+      addStep(msg);
+      toast('Webhook registered', 'success');
+    } catch (e) {
+      const msg = typeof e === 'string' ? e : 'Webhook registration failed';
+      addStep(`✕ ${msg}`);
+      toast(msg, 'error');
+    } finally {
+      setTunnelBusy(false);
+    }
   };
 
   const onExposeTelegram = async () => {
     setTunnelBusy(true);
+    setTunnelSteps([]);
+    const addStep = (s: string) => setTunnelSteps((prev) => [...prev, s]);
     try {
       // Start the tunnel (spawns cloudflared), then register the webhook.
-      const url = await telegramStartTunnel();
+      const url = await telegramStartTunnel(addStep);
       setTunnelUrl(url);
-      const msg = await telegramRegisterWebhook();
+      const msg = await telegramRegisterWebhook(addStep);
       setWebhookRegistered(true);
-      toast(msg, 'success');
+      addStep(msg);
+      toast('Telegram connected', 'success');
     } catch (e) {
-      toast(typeof e === 'string' ? e : 'Tunnel failed', 'error');
+      const msg = typeof e === 'string' ? e : 'Tunnel failed';
+      addStep(`✕ ${msg}`);
+      toast(msg, 'error');
     } finally {
       setTunnelBusy(false);
     }
@@ -225,14 +254,35 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
                         {webhookRegistered ? '✓ Webhook registered' : '… Webhook not yet registered'}
                       </span>
                     </div>
-                    <button className="secondary w-full" onClick={onStopTunnel} disabled={tunnelBusy}><X size={12} />Stop tunnel</button>
+                    {!webhookRegistered && (
+                      <p className="mb-3 rounded-md border border-[#facc15]/40 bg-panel px-3 py-2 text-[11px] leading-[1.5] text-muted">
+                        Make sure the bot token is saved above (TOKEN / API KEY), then click <b className="text-text">Register webhook</b>.
+                      </p>
+                    )}
+                    <div className="flex gap-2">
+                      {!webhookRegistered && (
+                        <button className="primary flex-1" onClick={onRegisterWebhook} disabled={tunnelBusy}><Rocket size={13} />Register webhook</button>
+                      )}
+                      <button className="secondary flex-1" onClick={onStopTunnel} disabled={tunnelBusy}><X size={12} />Stop tunnel</button>
+                    </div>
                   </>
                 ) : (
                   <button className="primary w-full" onClick={onExposeTelegram} disabled={tunnelBusy}>
-                    <Rocket size={13} />{tunnelBusy ? 'Starting…' : 'Expose & register webhook'}
+                    <Rocket size={13} />{tunnelBusy ? 'Working…' : 'Expose & register webhook'}
                   </button>
                 )}
-                <p className="mt-3 text-[11px] leading-[1.5] text-muted">Requires <code className="font-mono text-[10px]">cloudflared</code> installed (or placed next to the app). While the tunnel is active, long-polling pauses.</p>
+
+                {tunnelSteps.length > 0 && (
+                  <div className="mt-3 rounded-md border border-line bg-panel p-2.5">
+                    {tunnelSteps.map((s, i) => (
+                      <div key={i} className="flex items-start gap-2 py-0.5 font-mono text-[10.5px] leading-[1.5]">
+                        <span className="text-mid">{tunnelBusy && i === tunnelSteps.length - 1 ? '▸' : '·'}</span>
+                        <span className={s.startsWith('✕') ? 'text-[#f87171]' : s.includes('✓') || s.includes('registered at') ? 'text-[var(--green)]' : 'text-muted'}>{s}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-3 text-[11px] leading-[1.5] text-muted">Requires <code className="font-mono text-[10px]">cloudflared</code> (auto-downloaded if missing). While the tunnel is active, long-polling pauses.</p>
               </div>
             )}
           </div>

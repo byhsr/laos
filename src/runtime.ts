@@ -59,17 +59,39 @@ export async function confirmManagerTool(requestId: string, approved: boolean, t
 }
 
 // Telegram tunnel + webhook (one-click expose).
-export async function telegramStartTunnel(): Promise<string> {
-  return await invoke<string>('telegram_start_tunnel');
+export type TelegramLogEntry = { direction: string; chatId: string; text: string; reply: string; status: string; detail: string; createdAt: string };
+export async function listTelegramLogs(): Promise<TelegramLogEntry[]> {
+  try { return await invoke<TelegramLogEntry[]>('list_telegram_logs'); } catch { return []; }
 }
-export async function telegramRegisterWebhook(): Promise<string> {
-  return await invoke<string>('telegram_register_webhook');
+export type WebhookHealth = {
+  tunnelUrl: string | null;
+  webhookRegistered: boolean;
+  receiverListening: boolean;
+  liveTunnel: string | null;
+  urlMismatch: boolean;
+  telegram: { url?: string; pending_update_count?: number; last_error_message?: string; last_error_date?: number; [k: string]: unknown };
+};
+export async function telegramWebhookHealth(): Promise<WebhookHealth> {
+  try { return await invoke<WebhookHealth>('telegram_webhook_health'); } catch { return { tunnelUrl: null, webhookRegistered: false, receiverListening: false, liveTunnel: null, urlMismatch: false, telegram: {} }; }
+}
+export async function telegramStartTunnel(onProgress?: (s: string) => void): Promise<string> {
+  return await invoke<string>('telegram_start_tunnel', { onProgress: progressChannel(onProgress) });
+}
+export async function telegramRegisterWebhook(onProgress?: (s: string) => void): Promise<string> {
+  return await invoke<string>('telegram_register_webhook', { onProgress: progressChannel(onProgress) });
 }
 export async function telegramStopTunnel(): Promise<void> {
   await invoke('telegram_stop_tunnel');
 }
 export async function telegramTunnelStatus(): Promise<{ tunnelUrl: string | null; webhookRegistered: boolean }> {
   try { return await invoke('telegram_tunnel_status'); } catch { return { tunnelUrl: null, webhookRegistered: false }; }
+}
+
+// Wraps a callback into a Tauri Channel for streaming progress events.
+function progressChannel(onProgress?: (s: string) => void): Channel<string> {
+  const ch = new Channel<string>();
+  ch.onmessage = (s) => onProgress?.(s);
+  return ch;
 }
 
 // Knowledge base (shared, user-writable persistent docs).

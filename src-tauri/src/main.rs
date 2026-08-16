@@ -2581,13 +2581,12 @@ async fn manager_message(app: AppHandle, message: String) -> Result<String, Stri
 
 // Reads the Telegram bot token from the telegram integration config, if enabled.
 fn telegram_token(conn: &Connection) -> Result<Option<String>, String> {
-  let mut stmt = conn.prepare("SELECT enabled, connected, config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
-  let mut rows = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
+  let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
+  let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
   match rows.next().transpose().map_err(|e| e.to_string())? {
-    Some((enabled, connected, cfg_json)) => {
-      if !enabled || !connected { return Ok(None); }
+    Some(cfg_json) => {
       let cfg: serde_json::Value = serde_json::from_str(&cfg_json).map_err(|e| e.to_string())?;
-      Ok(cfg.get("token").and_then(|t| t.as_str()).map(|s| s.to_string()))
+      Ok(cfg.get("token").and_then(|t| t.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string()))
     }
     None => Ok(None),
   }
@@ -2596,6 +2595,33 @@ fn telegram_token(conn: &Connection) -> Result<Option<String>, String> {
 // ---------------------------------------------------------------------------
 // Telegram tunnel + webhook (one-click expose)
 // ---------------------------------------------------------------------------
+
+// Records a telegram message event (inbound or outbound) for the laos log feed.
+fn telegram_log(conn: &Connection, direction: &str, chat_id: &str, text: &str, reply: &str, status: &str, detail: &str) {
+  let _ = conn.execute(
+    "INSERT INTO telegram_logs (direction, chat_id, text, reply, status, detail, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+    params![direction, chat_id, text, reply, status, detail, chrono::Utc::now().to_rfc3339()],
+  );
+  // Cap the log to the most recent 500 rows.
+  let _ = conn.execute("DELETE FROM telegram_logs WHERE id NOT IN (SELECT id FROM telegram_logs ORDER BY id DESC LIMIT 500)", []);
+}
+
+#[tauri::command]
+fn list_telegram_logs(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+  let conn = db(&app)?;
+  let mut stmt = conn.prepare("SELECT direction, chat_id, text, reply, status, detail, created_at FROM telegram_logs ORDER BY id DESC LIMIT 100").map_err(|e| e.to_string())?;
+  let rows = stmt.query_map([], |row| {
+    Ok(serde_json::json!({
+      "direction": row.get::<_, String>(0)?, "chatId": row.get::<_, String>(1)?,
+      "text": row.get::<_, String>(2)?, "reply": row.get::<_, String>(3)?,
+      "status": row.get::<_, String>(4)?, "detail": row.get::<_, String>(5)?,
+      "createdAt": row.get::<_, String>(6)?,
+    }))
+  }).map_err(|e| e.to_string())?;
+  let mut out = Vec::new();
+  for row in rows { out.push(row.map_err(|e| e.to_string())?); }
+  Ok(out)
+}
 
 // Global state: current tunnel URL + whether a webhook is registered.
 // Kept in a OnceLock so the polling loop and commands share it.
@@ -2607,17 +2633,37 @@ fn tunnel_url_store() -> &'static std::sync::Mutex<Option<String>> {
 fn set_tunnel_url(u: Option<String>) { *tunnel_url_store().lock().unwrap() = u; }
 fn get_tunnel_url() -> Option<String> { tunnel_url_store().lock().unwrap().clone() }
 
+// Reads the persisted tunnel URL from the telegram integration config (survives
+// app restarts where the in-memory state is lost).
+fn get_persisted_tunnel_url(conn: &Connection) -> Option<String> {
+  let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").ok()?;
+  let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).ok()?;
+  let cfg = rows.next().transpose().ok()??;
+  let v: serde_json::Value = serde_json::from_str(&cfg).ok()?;
+  v.get("tunnelUrl").and_then(|t| t.as_str()).map(|s| s.to_string())
+}
+
 // Spawns cloudflared (system binary) pointed at a local port. Returns the
 // generated trycloudflare.com URL by scraping cloudflared's stdout.
 #[tauri::command]
-async fn telegram_start_tunnel(app: AppHandle, local_port: Option<u16>) -> Result<String, String> {
+async fn telegram_start_tunnel(app: AppHandle, local_port: Option<u16>, on_progress: tauri::ipc::Channel<String>) -> Result<String, String> {
   let port = local_port.unwrap_or(14789);
-  if let Some(existing) = get_tunnel_url() { return Ok(existing); }
+  let step = |s: &str| { let _ = on_progress.send(s.to_string()); };
+  if let Some(existing) = get_tunnel_url() { step("Tunnel already running"); return Ok(existing); }
 
-  let cloudflared = which_cloudflared(&app).await.ok_or(
-    "cloudflared not found and auto-download failed. Install it manually (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) or place cloudflared.exe next to the app.",
-  )?;
+  step("Looking for cloudflared…");
+  let cloudflared = match which_cloudflared().await {
+    Some(c) => { step("cloudflared found"); c }
+    None => {
+      step("cloudflared missing — downloading official release (~50MB)…");
+      match which_cloudflared_download(&app).await {
+        Some(c) => { step("cloudflared downloaded"); c }
+        None => return Err("cloudflared not found and auto-download failed. Install it manually (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) or place cloudflared.exe next to the app.".into()),
+      }
+    }
+  };
 
+  step("Starting tunnel…");
   let mut child = tokio::process::Command::new(&cloudflared)
     .arg("tunnel")
     .arg("--url")
@@ -2628,48 +2674,91 @@ async fn telegram_start_tunnel(app: AppHandle, local_port: Option<u16>) -> Resul
     .spawn()
     .map_err(|e| format!("Failed to start cloudflared: {e}"))?;
 
+  step("Waiting for tunnel URL…");
   let stdout = child.stdout.take().ok_or("cloudflared stdout unavailable")?;
+  let stderr = child.stderr.take().ok_or("cloudflared stderr unavailable")?;
   use tokio::io::AsyncBufReadExt;
-  let mut reader = tokio::io::BufReader::new(stdout).lines();
-  // cloudflared prints the tunnel URL in a line containing "trycloudflare.com".
+  let mut out_reader = tokio::io::BufReader::new(stdout).lines();
+  let mut err_reader = tokio::io::BufReader::new(stderr).lines();
+  // cloudflared prints the tunnel URL to stderr (newer versions) or stdout.
   let mut url: Option<String> = None;
-  for _ in 0..120 {
+  let mut saw_line = false;
+  for _ in 0..160 {
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    match tokio::time::timeout(std::time::Duration::from_millis(500), reader.next_line()).await {
-      Ok(Ok(Some(line))) => {
-        if let Some(idx) = line.find("https://") {
-          let candidate = line[idx..].split_whitespace().next().unwrap_or("").trim_end_matches('.').to_string();
-          if candidate.contains("trycloudflare.com") {
-            url = Some(candidate);
-            break;
+    let mut found = false;
+    // Read whatever lines are available from both streams.
+    loop {
+      match tokio::time::timeout(std::time::Duration::from_millis(50), out_reader.next_line()).await {
+        Ok(Ok(Some(line))) => {
+          saw_line = true;
+          if let Some(idx) = line.find("https://") {
+            let candidate = line[idx..].split_whitespace().next().unwrap_or("").trim_end_matches('.').to_string();
+            if candidate.contains("trycloudflare.com") { url = Some(candidate.clone()); step(&format!("Tunnel URL: {candidate}")); found = true; break; }
           }
         }
+        Ok(Ok(None)) | Err(_) => break,
+        Ok(Err(_)) => break,
       }
-      Ok(Ok(None)) => break,
-      _ => continue,
+    }
+    if found { break; }
+    loop {
+      match tokio::time::timeout(std::time::Duration::from_millis(50), err_reader.next_line()).await {
+        Ok(Ok(Some(line))) => {
+          saw_line = true;
+          let trimmed = line.trim();
+          if let Some(idx) = trimmed.find("https://") {
+            let candidate = trimmed[idx..].split_whitespace().next().unwrap_or("").trim_end_matches('.').to_string();
+            if candidate.contains("trycloudflare.com") { url = Some(candidate.clone()); step(&format!("Tunnel URL: {candidate}")); found = true; break; }
+          }
+          // Surface meaningful stderr lines (connection errors, retries) as progress.
+          if !trimmed.is_empty() && (trimmed.contains("ERR") || trimmed.contains("error") || trimmed.contains("failed") || trimmed.contains("connect") || trimmed.contains("retry")) {
+            step(trimmed);
+          }
+        }
+        Ok(Ok(None)) | Err(_) => break,
+        Ok(Err(_)) => break,
+      }
+    }
+    if found { break; }
+    // Give up early if the process already exited without printing anything.
+    if child.try_wait().map(|s| s.is_some()).unwrap_or(false) && !saw_line {
+      break;
     }
   }
 
-  let url = url.ok_or("Timed out waiting for cloudflared tunnel URL. Is the binary working?")?;
+  let url = url.ok_or("Timed out waiting for cloudflared tunnel URL. Check that cloudflared can reach Cloudflare's edge (firewall/proxy?), or run cloudflared manually to see the error.")?;
   set_tunnel_url(Some(url.clone()));
   // Keep the child alive for the app lifetime (detached handle).
   let _ = child.id();
   std::mem::forget(child);
 
-  // Persist the local port + tunnel URL so the webhook receiver knows where to bind.
+  // Persist the local port + tunnel URL, MERGING with any existing config
+  // (never clobber the stored bot token).
   let conn = db(&app)?;
+  let existing: serde_json::Value = {
+    let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
+    let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+    match rows.next().transpose().map_err(|e| e.to_string())? {
+      Some(cfg) => serde_json::from_str(&cfg).unwrap_or(serde_json::json!({})),
+      None => serde_json::json!({}),
+    }
+  };
+  let mut merged = existing;
+  if let Some(obj) = merged.as_object_mut() {
+    obj.insert("tunnelUrl".into(), serde_json::json!(url));
+    obj.insert("tunnelPort".into(), serde_json::json!(port));
+  }
   conn.execute(
     "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES ('telegram','Telegram','telegram',?1,1,1,?2)
      ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, connected=1",
-    params![serde_json::to_string(&serde_json::json!({ "tunnelUrl": url, "tunnelPort": local_port })).map_err(|e| e.to_string())?, now()],
+    params![serde_json::to_string(&merged).map_err(|e| e.to_string())?, now()],
   ).map_err(|e| e.to_string())?;
 
   Ok(url)
 }
 
-// Finds the cloudflared binary: next to the app first, then on PATH. If missing,
-// downloads the official release into the app data dir (one-shot, cached).
-async fn which_cloudflared(app: &AppHandle) -> Option<std::path::PathBuf> {
+// Finds the cloudflared binary: next to the app first, then on PATH.
+async fn which_cloudflared() -> Option<std::path::PathBuf> {
   if let Ok(exe) = std::env::current_exe() {
     let sibling = exe.parent()?.join("cloudflared");
     if sibling.exists() { return Some(sibling); }
@@ -2686,7 +2775,11 @@ async fn which_cloudflared(app: &AppHandle) -> Option<std::path::PathBuf> {
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !s.is_empty() { return Some(std::path::PathBuf::from(s.lines().next().unwrap_or(""))); }
   }
-  // Auto-download into the app data dir.
+  None
+}
+
+// Downloads the official cloudflared release into the app data dir (one-shot, cached).
+async fn which_cloudflared_download(app: &AppHandle) -> Option<std::path::PathBuf> {
   let dir = app.path().app_data_dir().ok()?;
   let _ = std::fs::create_dir_all(&dir);
   let name = if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" };
@@ -2728,24 +2821,45 @@ async fn which_cloudflared(app: &AppHandle) -> Option<std::path::PathBuf> {
 
 // Registers the Telegram webhook to point at the tunnel URL.
 #[tauri::command]
-async fn telegram_register_webhook(app: AppHandle) -> Result<String, String> {
+async fn telegram_register_webhook(app: AppHandle, on_progress: tauri::ipc::Channel<String>) -> Result<String, String> {
   let conn = db(&app)?;
+  let step = |s: &str| { let _ = on_progress.send(s.to_string()); };
+  step("Reading bot token…");
   let token = telegram_token(&conn)?.ok_or("Telegram token not configured.")?;
+  step("Token OK — checking tunnel…");
   let url = get_tunnel_url().ok_or("Tunnel not running. Start the tunnel first.")?;
   let webhook_url = format!("{url}/webhook/telegram");
+  step(&format!("Registering webhook at {webhook_url}…"));
   let resp = reqwest::Client::new()
     .get(format!("https://api.telegram.org/bot{token}/setWebhook?url={webhook_url}"))
     .send().await.map_err(|e| format!("setWebhook request failed: {e}"))?;
   let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
   if json.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+    // Merge webhook status into config, preserving the stored token.
+    let existing: serde_json::Value = {
+      let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
+      let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+      match rows.next().transpose().map_err(|e| e.to_string())? {
+        Some(cfg) => serde_json::from_str(&cfg).unwrap_or(serde_json::json!({})),
+        None => serde_json::json!({}),
+      }
+    };
+    let mut merged = existing;
+    if let Some(obj) = merged.as_object_mut() {
+      obj.insert("tunnelUrl".into(), serde_json::json!(url));
+      obj.insert("webhookRegistered".into(), serde_json::json!(true));
+    }
     conn.execute(
       "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES ('telegram','Telegram','telegram',?1,1,1,?2)
        ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, connected=1",
-      params![serde_json::to_string(&serde_json::json!({ "tunnelUrl": url, "tunnelPort": 0, "webhookRegistered": true })).map_err(|e| e.to_string())?, now()],
+      params![serde_json::to_string(&merged).map_err(|e| e.to_string())?, now()],
     ).map_err(|e| e.to_string())?;
+    step("Webhook registered ✓");
     Ok(format!("Webhook registered at {webhook_url}"))
   } else {
-    Err(json.get("description").and_then(|d| d.as_str()).unwrap_or("setWebhook failed").to_string())
+    let desc = json.get("description").and_then(|d| d.as_str()).unwrap_or("setWebhook failed").to_string();
+    step(&format!("setWebhook failed: {desc}"));
+    Err(desc)
   }
 }
 
@@ -2764,8 +2878,12 @@ async fn telegram_stop_tunnel(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn telegram_tunnel_status(app: AppHandle) -> Result<serde_json::Value, String> {
-  let url = get_tunnel_url();
   let conn = db(&app)?;
+  let live = get_tunnel_url();
+  let persisted = get_persisted_tunnel_url(&conn);
+  // If the in-memory state is empty (e.g. after restart), fall back to the
+  // persisted URL so the UI reflects what Telegram is actually pointed at.
+  let url = live.clone().or(persisted);
   let registered: bool = {
     let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
     let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
@@ -2774,7 +2892,54 @@ async fn telegram_tunnel_status(app: AppHandle) -> Result<serde_json::Value, Str
       None => false,
     }
   };
-  Ok(serde_json::json!({ "tunnelUrl": url, "webhookRegistered": registered }))
+  Ok(serde_json::json!({ "tunnelUrl": url, "webhookRegistered": registered, "liveTunnel": live }))
+}
+
+// Full webhook health: local receiver port listening? tunnel up? webhook set
+// with Telegram? what does Telegram report?
+#[tauri::command]
+async fn telegram_webhook_health(app: AppHandle) -> Result<serde_json::Value, String> {
+  let conn = db(&app)?;
+  let live = get_tunnel_url();
+  let persisted = get_persisted_tunnel_url(&conn);
+  let url = live.clone().or_else(|| persisted.clone());
+  let registered: bool = {
+    let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
+    let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+    match rows.next().transpose().map_err(|e| e.to_string())? {
+      Some(cfg) => serde_json::from_str::<serde_json::Value>(&cfg).map(|v| v.get("webhookRegistered").and_then(|w| w.as_bool()).unwrap_or(false)).unwrap_or(false),
+      None => false,
+    }
+  };
+
+  // Is the local webhook receiver listening on port 14789?
+  let receiver_up = tokio::net::TcpStream::connect(("127.0.0.1", 14789)).await.is_ok();
+
+  // What does Telegram report about the webhook?
+  let mut telegram_info = serde_json::json!({});
+  if let Ok(Some(token)) = telegram_token(&conn) {
+    let resp = reqwest::Client::new()
+      .get(format!("https://api.telegram.org/bot{token}/getWebhookInfo"))
+      .send().await;
+    if let Ok(r) = resp {
+      if let Ok(j) = r.json::<serde_json::Value>().await {
+        telegram_info = j.get("result").cloned().unwrap_or(serde_json::json!({}));
+      }
+    }
+  }
+
+  // Detect a mismatch: Telegram's registered URL differs from the live tunnel.
+  let telegram_url = telegram_info.get("url").and_then(|u| u.as_str()).map(|s| s.to_string()).unwrap_or_default();
+  let mismatch = !telegram_url.is_empty() && live.is_some() && !telegram_url.contains(live.as_deref().unwrap_or(""));
+
+  Ok(serde_json::json!({
+    "tunnelUrl": url,
+    "webhookRegistered": registered,
+    "receiverListening": receiver_up,
+    "liveTunnel": live,
+    "urlMismatch": mismatch,
+    "telegram": telegram_info,
+  }))
 }
 
 // Minimal HTTP server that receives Telegram webhook POSTs at /webhook/telegram
@@ -2783,7 +2948,14 @@ async fn telegram_webhook_server(app: AppHandle, port: u16) {
   use tokio::io::{AsyncReadExt, AsyncWriteExt};
   let listener = match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
     Ok(l) => l,
-    Err(e) => { eprintln!("webhook server bind failed: {e}"); return; }
+    Err(e) => {
+      // Record the bind failure so it's visible in the webhook health UI.
+      if let Ok(c) = db(&app) {
+        telegram_log(&c, "sys", "", "", "", "error", &format!("Webhook receiver failed to bind port {port}: {e}"));
+      }
+      eprintln!("webhook server bind failed: {e}");
+      return;
+    }
   };
   loop {
     let Ok((mut socket, _)) = listener.accept().await else { continue };
@@ -2803,11 +2975,19 @@ async fn telegram_webhook_server(app: AppHandle, port: u16) {
         let text = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string());
         let chat_id = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64());
         if let (Some(text), Some(chat_id)) = (text, chat_id) {
+          if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "received", "webhook"); }
           let reply = manager_turn(&app, &text).await.unwrap_or_else(|e| format!("Manager error: {e}"));
           if let Ok(token) = db(&app).and_then(|c| telegram_token(&c)) {
             if let Some(t) = token {
               let send_url = format!("https://api.telegram.org/bot{t}/sendMessage");
-              let _ = reqwest::Client::new().post(&send_url).json(&serde_json::json!({ "chat_id": chat_id, "text": reply, "parse_mode": "Markdown" })).send().await;
+              let send_result = reqwest::Client::new().post(&send_url).json(&serde_json::json!({ "chat_id": chat_id, "text": reply, "parse_mode": "Markdown" })).send().await;
+              if let Ok(c) = db(&app) {
+                match send_result {
+                  Ok(r) if r.status().is_success() => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", "webhook"),
+                  Ok(r) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &format!("Telegram returned {}", r.status())),
+                  Err(e) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &e.to_string()),
+                }
+              }
             }
           }
         }
@@ -2849,6 +3029,7 @@ async fn telegram_loop(app: AppHandle) {
         offset = update_id + 1;
         let Some(text) = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string()) else { continue };
         let Some(chat_id) = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64()) else { continue };
+        if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "received", ""); }
         // Handle /agents and /tasks locally for snappy replies; everything else â†’ Manager.
         let reply = match text.trim() {
           "/agents" | "/agents@" => {
@@ -2871,7 +3052,14 @@ async fn telegram_loop(app: AppHandle) {
           _ => manager_turn(&app, &text).await.unwrap_or_else(|e| format!("Manager error: {e}")),
         };
         let send_url = format!("https://api.telegram.org/bot{token}/sendMessage");
-        let _ = reqwest::Client::new().post(&send_url).json(&serde_json::json!({ "chat_id": chat_id, "text": reply, "parse_mode": "Markdown" })).send().await;
+        let send_result = reqwest::Client::new().post(&send_url).json(&serde_json::json!({ "chat_id": chat_id, "text": reply, "parse_mode": "Markdown" })).send().await;
+        if let Ok(c) = db(&app) {
+          match send_result {
+            Ok(r) if r.status().is_success() => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", ""),
+            Ok(r) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &format!("Telegram returned {}", r.status())),
+            Err(e) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &e.to_string()),
+          }
+        }
       }
     }
   }
@@ -3410,7 +3598,7 @@ fn main() {
       tauri::async_runtime::spawn(telegram_webhook_server(handle, 14789));
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, list_runs, stream_chat, get_conversation, clear_agent_memory, confirm_manager_tool, list_chat_sessions, get_chat_session, create_chat_session, delete_chat_session, rename_chat_session, close_session, telegram_tunnel_status, telegram_start_tunnel, telegram_register_webhook, telegram_stop_tunnel, list_knowledge_docs, get_knowledge_doc, save_knowledge_doc, delete_knowledge_doc])
+    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, list_runs, stream_chat, get_conversation, clear_agent_memory, confirm_manager_tool, list_chat_sessions, get_chat_session, create_chat_session, delete_chat_session, rename_chat_session, close_session, telegram_tunnel_status, telegram_webhook_health, telegram_start_tunnel, telegram_register_webhook, telegram_stop_tunnel, list_telegram_logs, list_knowledge_docs, get_knowledge_doc, save_knowledge_doc, delete_knowledge_doc])
     .run(tauri::generate_context!())
     .expect("error while running Local Agent OS");
 }
