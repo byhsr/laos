@@ -52,10 +52,11 @@ export default function App() {
   const deleteWorkflow = useWorkflowsStore((s) => s.deleteWorkflow);
   const runWorkflow = useWorkflowsStore((s) => s.runWorkflow);
   const loadWorkflows = useWorkflowsStore((s) => s.loadWorkflows);
+  const loadRuns = useRunsStore((s) => s.loadRuns);
 
   useEffect(() => {
-    loadAgents(); loadModels(); loadTools(); loadWorkspace(); loadWorkflows(); loadIntegrations();
-  }, [loadAgents, loadModels, loadTools, loadWorkspace, loadWorkflows, loadIntegrations]);
+    loadAgents(); loadModels(); loadTools(); loadWorkspace(); loadWorkflows(); loadIntegrations(); loadRuns();
+  }, [loadAgents, loadModels, loadTools, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns]);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [view, setView] = useState<View>('home');

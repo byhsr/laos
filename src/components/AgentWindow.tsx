@@ -4,7 +4,8 @@ import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run
 import { Dropdown } from './ui/Dropdown';
 import { MultiDropdown } from './ui/MultiDropdown';
 import { toast } from '../hooks/useToast';
-import { streamChat } from '../runtime';
+import { loadConversation, streamChat } from '../runtime';
+import { useRunsStore } from '../hooks/useRuns';
 import { StreamIndicator } from './ui/StreamIndicator';
 
 const isComplete = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent' && !!a.model.trim() && !!a.objective.trim();
@@ -14,8 +15,9 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
   onBack: () => void; onSave: (a: Agent) => Promise<void>; onDelete: (id: string) => Promise<void>; onRun: (input: string, agent: Agent) => Promise<ExecutionResult>;
 }) {
   const complete = isComplete(agent);
-  const [tab, setTab] = useState<'chat' | 'runs' | 'info' | 'config'>(complete ? 'chat' : 'config');
+  const [tab, setTab] = useState<'chat' | 'runs' | 'info' | 'config' | 'history'>(complete ? 'chat' : 'config');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [history, setHistory] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -24,10 +26,18 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
   const enabledTools = tools.filter((t) => t.enabled);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const switchTab = (t: 'chat' | 'runs' | 'info' | 'config') => {
+  const switchTab = (t: 'chat' | 'runs' | 'info' | 'config' | 'history') => {
     if ((t === 'chat' || t === 'runs') && !complete) { setTab('config'); return; }
     setTab(t);
   };
+
+  useEffect(() => {
+    if (tab === 'history') {
+      loadConversation(agent.id).then((turns) => {
+        setHistory(turns.map((m, i) => ({ role: m.role, content: m.content, time: `#${i + 1}` })));
+      }).catch(() => setHistory([]));
+    }
+  }, [tab, agent.id]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -47,6 +57,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
         buffer += delta;
         setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: buffer } : m)));
       });
+      useRunsStore.getState().loadRuns();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setError(message);
@@ -81,7 +92,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
       </header>
 
       <div className="flex gap-2 border-b border-line px-3">
-        {(['chat', 'runs', 'info', 'config'] as const).map((t) => {
+        {(['chat', 'runs', 'info', 'config', 'history'] as const).map((t) => {
           const locked = !complete && (t === 'chat' || t === 'runs');
           return (
             <button key={t} className={`flex cursor-pointer items-center gap-1 border-0 bg-none px-[5px] py-2.5 text-[11px] capitalize ${tab === t ? 'border-b-2 border-[var(--green)] text-text' : 'text-muted'}`} onClick={() => switchTab(t)}>
@@ -154,7 +165,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
                 <span className="ml-auto text-mid">{r.startedAt ? new Date(r.startedAt).toLocaleTimeString() : ''}</span>
               </div>
               <div className="my-1.5 text-[#d4d4d8]">$ {r.input}</div>
-              {r.events.map((ev, i) => (
+              {(r.events ?? []).map((ev, i) => (
                 <div key={i} className="console-line flex items-baseline gap-2">
                   <span className="flex-none text-mid">{ev.time}</span>
                   <span className={`w-10 flex-none text-muted ${ev.type === 'tool' ? 'text-[#38bdf8]' : ev.type === 'thought' ? 'text-[#c4b5fd]' : 'text-[#22c55e]'}`}>{ev.type === 'tool' ? 'tool' : ev.type === 'thought' ? 'think' : 'out'}</span>
@@ -179,6 +190,25 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
           <div className="flex items-center gap-2.5 rounded-[6px] bg-panel2 p-2.5 text-[10px]"><span>{agent.homePath}</span></div>
           <div className="mb-2.5 mt-5 flex justify-between text-[11px] font-bold"><span>MODEL</span></div>
           <div className="flex items-center gap-2.5 rounded-[6px] bg-panel2 p-2.5 text-[10px]"><span>{agent.model}</span></div>
+        </div>
+      )}
+
+      {tab === 'history' && (
+        <div className="mt-4 max-h-[calc(100vh-280px)] overflow-y-auto rounded-lg border border-line bg-panel p-4">
+          {history.length === 0 ? (
+            <p className="text-center text-[12px] text-muted">No chat history yet. Messages are saved as you chat.</p>
+          ) : (
+            <div className="grid gap-2">
+              {history.map((m, i) => (
+                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[78%] rounded-[10px] px-3 py-2 text-[12.5px] leading-1.6 whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
+                    <span className="mb-0.5 block font-mono text-[9px] text-muted">{m.role === 'user' ? 'you' : agent.name}</span>
+                    {m.content}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -1655,25 +1655,184 @@ fn cancel_task(app: AppHandle, id: String) -> Result<(), String> {
   Ok(())
 }
 
+#[tauri::command]
+fn list_runs(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+  let conn = db(&app)?;
+  let mut stmt = conn.prepare("SELECT id, agent_id, started_at, status, model, input, output, prompt_tokens, completion_tokens FROM runs ORDER BY started_at DESC LIMIT 200").map_err(|e| e.to_string())?;
+  let rows = stmt.query_map([], |row| {
+    Ok(serde_json::json!({
+      "id": row.get::<_, String>(0)?,
+      "agentId": row.get::<_, String>(1)?,
+      "startedAt": row.get::<_, String>(2)?,
+      "status": row.get::<_, String>(3)?,
+      "model": row.get::<_, String>(4)?,
+      "input": row.get::<_, String>(5)?,
+      "output": row.get::<_, Option<String>>(6)?,
+      "promptTokens": row.get::<_, i64>(7)?,
+      "completionTokens": row.get::<_, i64>(8)?,
+    }))
+  }).map_err(|e| e.to_string())?;
+  let mut out = Vec::new();
+  for row in rows { out.push(row.map_err(|e| e.to_string())?); }
+  Ok(out)
+}
+
 // ---------------------------------------------------------------------------
 // Streaming chat
 // ---------------------------------------------------------------------------
 
+const ROLLING_WINDOW: usize = 12; // max messages (user+assistant) sent as context
+const MEMORY_SUMMARY_KEY: &str = "__summary__";
+
+fn load_memory(conn: &Connection, agent_id: &str) -> Vec<(String, String)> {
+  let stmt = conn.prepare("SELECT key, value FROM memory WHERE agent_id=?1 ORDER BY updated_at DESC LIMIT 20").ok();
+  let mut out = Vec::new();
+  if let Some(mut stmt) = stmt {
+    if let Ok(rows) = stmt.query_map(params![agent_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))) {
+      for r in rows { if let Ok(pair) = r { out.push(pair); } }
+    }
+  }
+  out
+}
+
+// Non-streaming single-shot completion used for summarization. Returns the text.
+async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &str) -> Result<String, String> {
+  let client = reqwest::Client::new();
+  if let Some(m) = model.strip_prefix("ollama:") {
+    let response = client.post("http://127.0.0.1:11434/api/generate")
+      .json(&serde_json::json!({ "model": m, "prompt": prompt, "stream": false }))
+      .send().await.map_err(|e| e.to_string())?;
+    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    Ok(json["response"].as_str().unwrap_or("").to_string())
+  } else {
+    let conn = db(app)?;
+    let (url, api_model, key) = if model.starts_with("groq:") {
+      let k = stored_api_key(&conn, model).ok().flatten().ok_or("Groq requires an API key.")?;
+      ("https://api.groq.com/openai/v1/chat/completions".to_string(), model.trim_start_matches("groq:").to_string(), k)
+    } else {
+      let k = stored_api_key(&conn, model).ok().flatten().ok_or("OpenRouter requires an API key.")?;
+      ("https://openrouter.ai/api/v1/chat/completions".to_string(), model.trim_start_matches("openrouter:").to_string(), k)
+    };
+    let response = client.post(&url)
+      .header("Authorization", format!("Bearer {key}"))
+      .json(&serde_json::json!({ "model": api_model, "messages": [{ "role": "user", "content": prompt }] }))
+      .send().await.map_err(|e| e.to_string())?;
+    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    Ok(json["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
+  }
+}
+
+// Compresses turns older than the window into a memory summary and stores any
+// notable facts. Called once when history first exceeds the window.
+async fn summarize_old_turns(app: &AppHandle, agent: &AgentRequest, history: &[serde_json::Value]) -> Result<(), String> {
+  let conn = db(app)?;
+  // Only summarize the turns older than the window.
+  if history.len() <= ROLLING_WINDOW { return Ok(()); }
+  let old: Vec<&serde_json::Value> = history.iter().take(history.len() - ROLLING_WINDOW).collect();
+  let transcript: String = old.iter().filter_map(|m| {
+    let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");
+    let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
+    if content.is_empty() { None } else { Some(format!("{role}: {content}\n")) }
+  }).collect();
+  if transcript.trim().is_empty() { return Ok(()); }
+
+  let prompt = format!(
+    "Summarize this conversation into a short memory summary (max 150 words) capturing decisions, requests, results, and anything important to remember. Also list 2-5 key facts as bullet points.\n\nConversation:\n{transcript}\n\nReply as:\nSUMMARY: <summary>\nFACTS:\n- fact1\n- fact2"
+  );
+  if let Ok(reply) = one_shot_completion(app, &agent.model, &prompt).await {
+    let (summary, facts) = match reply.split_once("FACTS:") {
+      Some((s, f)) => (s.trim().trim_start_matches("SUMMARY:").trim().to_string(), f.to_string()),
+      None => (reply.trim().to_string(), String::new()),
+    };
+    let ts = chrono::Utc::now().to_rfc3339();
+    let _ = conn.execute(
+      "INSERT INTO memory (agent_id, key, value, updated_at) VALUES (?1,?2,?3,?4)
+       ON CONFLICT(agent_id,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+      params![agent.id, MEMORY_SUMMARY_KEY, summary, ts],
+    );
+    for line in facts.lines() {
+      let fact = line.trim().trim_start_matches('-').trim();
+      if fact.is_empty() { continue; }
+      let key = format!("fact:{}", fact.chars().take(40).collect::<String>());
+      let _ = conn.execute(
+        "INSERT INTO memory (agent_id, key, value, updated_at) VALUES (?1,?2,?3,?4)
+         ON CONFLICT(agent_id,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        params![agent.id, key, fact, ts],
+      );
+    }
+  }
+  Ok(())
+}
+
+fn load_conversation(conn: &Connection, agent_id: &str) -> Vec<serde_json::Value> {
+  let stmt = conn.prepare("SELECT messages FROM agent_conversations WHERE agent_id=?1").ok();
+  if let Some(mut stmt) = stmt {
+    let rows = stmt.query_map(params![agent_id], |row| row.get::<_, String>(0)).ok();
+    if let Some(mut rows) = rows {
+      if let Some(Ok(s)) = rows.next() {
+        if let Ok(v) = serde_json::from_str::<Vec<serde_json::Value>>(&s) { return v; }
+      }
+    }
+  }
+  Vec::new()
+}
+
+fn save_conversation(conn: &Connection, agent_id: &str, messages: &[serde_json::Value]) -> Result<(), String> {
+  conn.execute(
+    "INSERT INTO agent_conversations (agent_id, messages) VALUES (?1,?2)
+     ON CONFLICT(agent_id) DO UPDATE SET messages=excluded.messages",
+    params![agent_id, serde_json::to_string(messages).map_err(|e| e.to_string())?],
+  ).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+#[tauri::command]
+fn get_conversation(app: AppHandle, agent_id: String) -> Result<Vec<serde_json::Value>, String> {
+  let conn = db(&app)?;
+  Ok(load_conversation(&conn, &agent_id))
+}
+
 // Streams a chat completion from the configured provider as token deltas.
 // Supports the Manager (is_manager agent) and regular agents. Ollama uses NDJSON
-// (stream:true); Groq/OpenRouter use SSE `data:` lines.
+// (stream:true); Groq/OpenRouter use SSE `data:` lines. Context is a rolling
+// window of the last ROLLING_WINDOW persisted messages.
 #[tauri::command]
 async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>) -> Result<(), String> {
   let conn = db(&app)?;
   let client = reqwest::Client::new();
-  let prompt = if is_manager {
+
+  // Rolling window: load history, append the new user turn. If the history has
+  // grown past the window, compress the older turns into memory (summary + facts).
+  let mut history = load_conversation(&conn, &agent.id);
+  history.push(serde_json::json!({ "role": "user", "content": input }));
+  if history.len() > ROLLING_WINDOW + 1 {
+    let _ = summarize_old_turns(&app, &agent, &history).await;
+  }
+
+  // Build memory context (summary + facts) for the system prompt.
+  let memory = load_memory(&conn, &agent.id);
+  let mut memory_blob = String::new();
+  for (k, v) in &memory {
+    if k == MEMORY_SUMMARY_KEY {
+      memory_blob.push_str(&format!("[Memory summary: {v}]\n"));
+    } else if let Some(fact) = k.strip_prefix("fact:") {
+      memory_blob.push_str(&format!("- {fact}: {v}\n"));
+    }
+  }
+
+  // Build the system prompt (workspace context for the Manager).
+  let system = if is_manager {
     let context = build_workspace_context(&conn)?;
-    format!("You are the workspace Manager.\n\n{context}\n\nUser message: {input}\n\nUse your tools to list agents, delegate tasks, check task status, or switch agents. Return a concise, helpful reply to the user.")
+    format!("You are the workspace Manager.\n\n{context}\n\n{memory_blob}\nUse your tools to list agents, delegate tasks, check task status, or switch agents. Return a concise, helpful reply to the user.")
   } else {
-    format!("You are {}. Objective: {}\n\nTask: {}\n\nReturn a helpful, direct answer.", agent.name, agent.objective, input)
+    format!("You are {}. Objective: {}\n\n{memory_blob}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
+
+  let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
+  let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({ "role": "system", "content": system })];
+  messages.extend(window);
+
   let model = agent.model.clone();
-  let messages = serde_json::json!([{ "role": "system", "content": prompt }]);
 
   let (url, auth, key) = if let Some(m) = model.strip_prefix("ollama:") {
     (format!("http://127.0.0.1:11434/api/chat"), None::<String>, m.to_string())
@@ -1721,10 +1880,14 @@ async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_mana
       }
     }
   }
-  // Persist the run like execute_agent does (tokens unknown when streaming; store 0).
+  // Persist the run (tokens unknown when streaming; store 0) and the conversation.
   let run_id = format!("{}-{}", agent.id, chrono::Utc::now().timestamp_millis());
   let started = chrono::Utc::now().to_rfc3339();
   let _ = conn.execute("INSERT INTO runs (id,agent_id,started_at,status,model,input,output,prompt_tokens,completion_tokens) VALUES (?1,?2,?3,'completed',?4,?5,?6,0,0)", params![run_id, agent.id, started, agent.model, input, delta]);
+  if !delta.is_empty() {
+    history.push(serde_json::json!({ "role": "assistant", "content": delta }));
+    let _ = save_conversation(&conn, &agent.id, &history);
+  }
   Ok(())
 }
 
@@ -1737,7 +1900,7 @@ fn main() {
       tauri::async_runtime::spawn(telegram_loop(handle));
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, stream_chat])
+    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, list_runs, stream_chat, get_conversation])
     .run(tauri::generate_context!())
     .expect("error while running Local Agent OS");
 }

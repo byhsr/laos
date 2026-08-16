@@ -36,7 +36,7 @@ export function RunsConsole({ runs, agents, onOpenAgent, onClear }: {
               <span className="ml-auto text-mid">{r.startedAt ? new Date(r.startedAt).toLocaleTimeString() : ''}</span>
             </div>
             <div className="my-1.5 text-[#d4d4d8]">$ {r.input}</div>
-            {r.events.map((ev, i) => (
+            {(r.events ?? []).map((ev, i) => (
               <div key={i} className="console-line flex items-baseline gap-2">
                 <span className="flex-none text-mid">{ev.time}</span>
                 <span className={`w-10 flex-none text-muted ${ev.type === 'tool' ? 'text-[#38bdf8]' : ev.type === 'thought' ? 'text-[#c4b5fd]' : 'text-[#22c55e]'}`}>{ev.type === 'tool' ? 'tool' : ev.type === 'thought' ? 'think' : 'out'}</span>

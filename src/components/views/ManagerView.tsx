@@ -19,12 +19,17 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   const currentAgentId = useManagerStore((s) => s.currentAgentId);
   const setCurrentAgent = useManagerStore((s) => s.setCurrentAgent);
   const send = useManagerStore((s) => s.send);
+  const loadHistory = useManagerStore((s) => s.loadHistory);
   const tasks = useTasksStore((s) => s.tasks);
   const loadTasks = useTasksStore((s) => s.loadTasks);
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
+  useEffect(() => {
+    const managerId = agents.find((a) => a.isManager)?.id ?? 'manager';
+    loadHistory(managerId);
+  }, [agents, loadHistory]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages]);
 
   const managerAgent = agents.find((a) => a.isManager) ?? {

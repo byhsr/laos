@@ -1,11 +1,24 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
-import type { Agent, Integration, ModelConfig, RunEvent, Task, Tool, Workflow, WorkflowRunResult } from './types';
+import type { Agent, Integration, ModelConfig, Run, RunEvent, Task, Tool, Workflow, WorkflowRunResult } from './types';
 
 // Streams a chat completion, calling onDelta with each token chunk.
 export async function streamChat(agent: Agent, input: string, isManager: boolean, onDelta: (d: string) => void): Promise<void> {
   const channel = new Channel<string>();
   channel.onmessage = (d) => onDelta(d);
   await invoke('stream_chat', { agent, input, isManager, onEvent: channel });
+}
+
+// Loads a persisted conversation (assistant+user turns) for an agent.
+export async function loadConversation(agentId: string): Promise<{ role: 'user' | 'assistant'; content: string }[]> {
+  try {
+    return await invoke<{ role: 'user' | 'assistant'; content: string }[]>('get_conversation', { agentId });
+  } catch {
+    return [];
+  }
+}
+
+export async function listRuns(): Promise<Run[]> {
+  try { return await invoke<Run[]>('list_runs'); } catch { return []; }
 }
 
 export async function executeAgent(agent: Agent, input: string, apiKey?: string): Promise<{ output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number }> {

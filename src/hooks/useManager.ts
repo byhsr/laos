@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { streamChat } from '../runtime';
+import { loadConversation, streamChat } from '../runtime';
+import { useRunsStore } from './useRuns';
 import type { Agent } from '../types';
 
 export type ChatEntry = { role: 'user' | 'assistant'; content: string; time: string };
@@ -10,6 +11,7 @@ type ManagerState = {
   messages: ChatEntry[]; // current view
   busy: boolean;
   setCurrentAgent: (agentId: string | null) => void;
+  loadHistory: (agentId: string) => Promise<void>;
   send: (message: string, managerAgent: Agent) => Promise<void>;
 };
 
@@ -22,6 +24,16 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
   setCurrentAgent: (agentId) => {
     const conv = get().conversations;
     set({ currentAgentId: agentId, conversations: conv, messages: agentId ? (conv[agentId] ?? []) : [] });
+  },
+
+  loadHistory: async (agentId) => {
+    const stored = await loadConversation(agentId);
+    if (stored.length === 0) return;
+    const entries: ChatEntry[] = stored.map((m) => ({ role: m.role, content: m.content, time: '' }));
+    set((s) => {
+      const conv = { ...s.conversations, [agentId]: entries };
+      return { conversations: conv, messages: s.currentAgentId === agentId ? entries : s.messages };
+    });
   },
 
   send: async (message, managerAgent) => {
@@ -44,6 +56,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
           return { conversations: { ...s.conversations, [agentId]: updated }, messages: updated };
         });
       });
+      useRunsStore.getState().loadRuns();
     } catch (e) {
       const msg = typeof e === 'string' ? e : (e instanceof Error ? e.message : 'Manager failed to respond.');
       set((s) => {
