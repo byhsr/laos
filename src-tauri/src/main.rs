@@ -563,7 +563,7 @@ fn parse_json_vec(s: &str) -> Vec<String> {
 #[tauri::command]
 fn list_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
   let conn = db(&app)?;
-  let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description FROM agents ORDER BY name").map_err(|e| e.to_string())?;
+  let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona FROM agents ORDER BY name").map_err(|e| e.to_string())?;
   let rows = stmt.query_map([], |row| {
     let tool_ids: String = row.get(4)?;
     let integrations: String = row.get(5)?;
@@ -573,7 +573,7 @@ fn list_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
       tool_ids: parse_json_vec(&tool_ids), integrations: parse_json_vec(&integrations),
       memory: row.get::<_, i64>(6)? != 0, permissions: parse_json_vec(&permissions),
       home_path: row.get(8)?, color: row.get(9)?, x: row.get(10)?, y: row.get(11)?,
-      is_manager: row.get::<_, i64>(12)? != 0, description: row.get(13)?,
+      is_manager: row.get::<_, i64>(12)? != 0, description: row.get(13)?, persona: row.get(14)?,
     })
   }).map_err(|e| e.to_string())?;
   let mut out = Vec::new();
@@ -585,15 +585,15 @@ fn list_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
 fn save_agent(app: AppHandle, agent: AgentRecord) -> Result<(), String> {
   let conn = db(&app)?;
   conn.execute(
-    "INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
-     ON CONFLICT(id) DO UPDATE SET name=excluded.name, objective=excluded.objective, model=excluded.model, tool_ids=excluded.tool_ids, integrations=excluded.integrations, memory=excluded.memory, permissions=excluded.permissions, home_path=excluded.home_path, color=excluded.color, x=excluded.x, y=excluded.y, is_manager=excluded.is_manager, description=excluded.description",
+    "INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, objective=excluded.objective, model=excluded.model, tool_ids=excluded.tool_ids, integrations=excluded.integrations, memory=excluded.memory, permissions=excluded.permissions, home_path=excluded.home_path, color=excluded.color, x=excluded.x, y=excluded.y, is_manager=excluded.is_manager, description=excluded.description, persona=excluded.persona",
     params![agent.id, agent.name, agent.objective, agent.model,
       serde_json::to_string(&agent.tool_ids).unwrap_or_else(|_| "[]".into()),
       serde_json::to_string(&agent.integrations).unwrap_or_else(|_| "[]".into()),
       if agent.memory { 1 } else { 0 },
       serde_json::to_string(&agent.permissions).unwrap_or_else(|_| "[]".into()),
       agent.home_path, agent.color, agent.x, agent.y,
-      if agent.is_manager { 1 } else { 0 }, agent.description],
+      if agent.is_manager { 1 } else { 0 }, agent.description, agent.persona],
   ).map_err(|e| e.to_string())?;
   Ok(())
 }
@@ -1414,6 +1414,7 @@ manager_tool!(ManagerUpdateAgent, "update_agent", "Update fields on an existing 
 manager_tool!(ManagerDeleteAgent, "delete_agent", "Delete an agent. Params: agentId (string).", serde_json::json!({ "agentId": { "type": "string" } }), serde_json::json!(["agentId"]));
 manager_tool!(ManagerCreateWorkflow, "create_workflow", "Create a new workflow. Params: name (string), nodes (string, optional JSON), edges (string, optional JSON).", serde_json::json!({ "name": { "type": "string" }, "nodes": { "type": "string" }, "edges": { "type": "string" } }), serde_json::json!(["name"]));
 manager_tool!(ManagerListWorkflows, "list_workflows", "List all workflows and their names/ids.", serde_json::json!({}), serde_json::json!([]));
+manager_tool!(ManagerSearchWorkflows, "search_workflows", "Search workflows by partial name match. Params: query (string). Returns matching workflows with their names and ids — use this to find a workflow when you only remember part of its name.", serde_json::json!({ "query": { "type": "string" } }), serde_json::json!(["query"]));
 manager_tool!(ManagerUpdateWorkflow, "update_workflow", "Update a workflow's nodes/edges. Params: workflowId (string), nodes (string JSON), edges (string JSON).", serde_json::json!({ "workflowId": { "type": "string" }, "nodes": { "type": "string" }, "edges": { "type": "string" } }), serde_json::json!(["workflowId"]));
 manager_tool!(ManagerDeleteWorkflow, "delete_workflow", "Delete a workflow. Params: workflowId (string).", serde_json::json!({ "workflowId": { "type": "string" } }), serde_json::json!(["workflowId"]));
 manager_tool!(ManagerRunWorkflow, "run_workflow", "Run a workflow with input. Params: workflowId (string), input (string).", serde_json::json!({ "workflowId": { "type": "string" }, "input": { "type": "string" } }), serde_json::json!(["workflowId", "input"]));
@@ -1438,6 +1439,7 @@ fn manager_tools() -> Vec<Box<dyn AgentTool>> {
     Box::new(ManagerDeleteAgent),
     Box::new(ManagerCreateWorkflow),
     Box::new(ManagerListWorkflows),
+    Box::new(ManagerSearchWorkflows),
     Box::new(ManagerUpdateWorkflow),
     Box::new(ManagerDeleteWorkflow),
     Box::new(ManagerRunWorkflow),
@@ -1641,7 +1643,7 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
               id: id.clone(), name: name.clone(), objective, model,
               tool_ids: arr("toolIds"), integrations: arr("integrations"), memory: true,
               permissions: arr("permissions").into_iter().filter(|p| p == "network" || p == "files").collect(),
-              home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(),
+              home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(), persona: "gremlin".into(),
             };
             save_agent(app.clone(), agent)?;
             Ok(format!("Created agent '{name}' (id: {id})."))
@@ -1650,7 +1652,7 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
             let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
             if agent_id.is_empty() { return Err("update_agent requires agentId.".into()); }
             let existing = {
-              let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
+              let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
               let mut rows = stmt.query_map(params![agent_id], |row| {
                 let tool_ids: String = row.get(4)?;
                 let integrations: String = row.get(5)?;
@@ -1660,7 +1662,7 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
                   tool_ids: parse_json_vec(&tool_ids), integrations: parse_json_vec(&integrations),
                   memory: row.get::<_, i64>(6)? != 0, permissions: parse_json_vec(&permissions),
                   home_path: row.get(8)?, color: row.get(9)?, x: row.get(10)?, y: row.get(11)?,
-                  is_manager: row.get::<_, i64>(12)? != 0, description: row.get(13)?,
+                  is_manager: row.get::<_, i64>(12)? != 0, description: row.get(13)?, persona: row.get(14)?,
                 })
               }).map_err(|e| e.to_string())?;
               rows.next().transpose().map_err(|e| e.to_string())?
@@ -1697,6 +1699,18 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
               out
             };
             Ok(if wfs.is_empty() { "No workflows.".into() } else { wfs.join("\n") })
+          }
+          "search_workflows" => {
+            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let like = format!("%{}%", query);
+            let wfs = {
+              let mut stmt = conn.prepare("SELECT id, name, nodes, edges, updated_at FROM workflows WHERE name LIKE ?1 ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+              let rows = stmt.query_map(params![like], |row| Ok(format!("- {} (id: {})", row.get::<_, String>(1)?, row.get::<_, String>(0)?))).map_err(|e| e.to_string())?;
+              let mut out = Vec::new();
+              for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+              out
+            };
+            Ok(if wfs.is_empty() { format!("No workflows matching \"{}\".", query) } else { wfs.join("\n") })
           }
           "update_workflow" => {
             let wf_id = args.get("workflowId").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -1864,7 +1878,7 @@ async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &serde_json::V
         id: id.clone(), name: name.clone(), objective, model,
         tool_ids: arr("toolIds"), integrations: arr("integrations"), memory: true,
         permissions: arr("permissions").into_iter().filter(|p| p == "network" || p == "files").collect(),
-        home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(),
+        home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(), persona: "gremlin".into(),
       };
       save_agent(app.clone(), agent)?;
       Ok(format!("Created agent '{name}' (id: {id})."))
@@ -1880,6 +1894,15 @@ async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &serde_json::V
       let mut out = Vec::new();
       for r in rows { out.push(r.map_err(|e| e.to_string())?); }
       Ok(if out.is_empty() { "No workflows.".into() } else { out.join("\n") })
+    }
+    "search_workflows" => {
+      let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let like = format!("%{}%", query);
+      let mut stmt = conn.prepare("SELECT id, name FROM workflows WHERE name LIKE ?1 ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+      let rows = stmt.query_map(params![like], |row| Ok(format!("- {} (id: {})", row.get::<_, String>(1)?, row.get::<_, String>(0)?))).map_err(|e| e.to_string())?;
+      let mut out = Vec::new();
+      for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+      Ok(if out.is_empty() { format!("No workflows matching \"{}\".", query) } else { out.join("\n") })
     }
     "create_workflow" => {
       let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("Untitled workflow").to_string();

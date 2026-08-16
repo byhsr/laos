@@ -62,6 +62,7 @@ export default function App() {
   const [view, setView] = useState<View>('home');
   const [drawerForm, setDrawerForm] = useState<DrawerForm>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [workflowToOpen, setWorkflowToOpen] = useState<string | null>(null);
 
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
 
@@ -88,11 +89,13 @@ export default function App() {
       <div className="relative flex min-h-0 flex-1">
         <Sidebar view={view} setView={setView} collapsed={sidebarCollapsed} />
         <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-bg px-9 py-8">
-          {view === 'home' && <HomeView agents={agents} tools={tools} runs={runs} onOpen={openAgent} onCreate={addAgent} />}
+          {view === 'home' && <HomeView agents={agents} tools={tools} runs={runs} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} />}
           {view === 'agents' && <AgentsView agents={agents} tools={tools} onOpen={openAgent} onCreate={addAgent} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('Agent deleted', 'success'); }} />}
           {view === 'workflows' && (
             <CanvasView
               agents={agents} tools={tools} workflows={workflows}
+              initialWorkflowId={workflowToOpen}
+              onInitialWorkflowConsumed={() => setWorkflowToOpen(null)}
               onSaveWorkflow={saveWorkflow}
               onDeleteWorkflow={deleteWorkflow}
               onRunWorkflow={runWorkflow}

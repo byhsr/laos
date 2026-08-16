@@ -17,6 +17,7 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   let agents_cols = cols("agents")?;
   if !agents_cols.iter().any(|c| c == "is_manager") { conn.execute("ALTER TABLE agents ADD COLUMN is_manager INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
   if !agents_cols.iter().any(|c| c == "description") { conn.execute("ALTER TABLE agents ADD COLUMN description TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  if !agents_cols.iter().any(|c| c == "persona") { conn.execute("ALTER TABLE agents ADD COLUMN persona TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   let runs_cols = cols("runs")?;
   if !runs_cols.iter().any(|c| c == "prompt_tokens") { conn.execute("ALTER TABLE runs ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
   if !runs_cols.iter().any(|c| c == "completion_tokens") { conn.execute("ALTER TABLE runs ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }

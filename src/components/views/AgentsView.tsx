@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Bot, Plus, Trash2 } from 'lucide-react';
 import type { Agent, Tool } from '../../types';
+import { AgentAvatar } from '../ui/AgentAvatar';
 
 export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
   agents: Agent[]; tools: Tool[]; onOpen: (id: string) => void; onCreate: () => void; onDelete: (id: string) => void;
@@ -42,8 +43,10 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
               >
                 <Trash2 size={13} />
               </button>
-              <span className="mr-1.5 inline-block h-2 w-2 rounded-full" style={{ background: a.color }} />
-              <b className="mt-2.5 block text-[14px]">{a.name}</b>
+              <div className="flex items-center gap-2">
+                <AgentAvatar agent={a} size={40} />
+                <b className="block text-[14px]">{a.name}</b>
+              </div>
               <small className="mt-1.5 block min-h-[34px] text-[11px] leading-[1.5] text-muted">{a.objective || 'Not configured yet'}</small>
               <em className="mt-3.5 block font-mono text-[9px] text-muted not-italic">
                 {isReady(a) ? a.toolIds.map(toolName).join(' · ') || 'no tools' : '⚙ needs setup'}

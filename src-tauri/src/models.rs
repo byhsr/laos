@@ -31,6 +31,7 @@ pub struct AgentRecord {
   pub permissions: Vec<String>, pub home_path: String, pub color: String,
   #[serde(default)] pub x: f64, #[serde(default)] pub y: f64,
   #[serde(default)] pub is_manager: bool, #[serde(default)] pub description: String,
+  #[serde(default)] pub persona: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

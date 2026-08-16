@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { Bot, Check, GitBranch, Play, Plus, Repeat, Save, ShieldCheck, Trash2, Webhook, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Bot, Check, GitBranch, Play, Plus, Repeat, Save, ShieldCheck, Trash2, Webhook, Workflow as WorkflowIcon, X } from 'lucide-react';
 import type { Agent, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
 import { Dropdown } from '../ui/Dropdown';
 import { toast } from '../../hooks/useToast';
@@ -21,11 +21,19 @@ const TYPE_META: Record<WorkflowNodeType, { label: string; color: string; icon: 
 const NODE_W = 200;
 const NODE_H = 84;
 
-export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow }: {
+const fmtDate = (s?: string) => {
+  if (!s) return '';
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
+};
+
+export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow, initialWorkflowId, onInitialWorkflowConsumed }: {
   agents: Agent[]; tools: Tool[]; workflows: Workflow[];
   onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
   onDeleteWorkflow: (id: string) => Promise<void>;
   onRunWorkflow: (w: Workflow, input: string) => Promise<WorkflowRunResult>;
+  initialWorkflowId?: string | null;
+  onInitialWorkflowConsumed?: () => void;
 }) {
   const [current, setCurrent] = useState<Workflow | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -39,11 +47,50 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const [moving, setMoving] = useState<{ id: string; dx: number; dy: number } | null>(null);
   const [drawingEdge, setDrawingEdge] = useState<{ from: string; x: number; y: number } | null>(null);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [panning, setPanning] = useState<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const [search, setSearch] = useState('');
+  const [confirmTarget, setConfirmTarget] = useState<Workflow | null>(null);
+  const [typedName, setTypedName] = useState('');
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const update = (fn: (w: Workflow) => Workflow) => {
     setCurrent((prev) => prev ? fn(prev) : prev);
   };
+
+  useEffect(() => {
+    if (!initialWorkflowId) return;
+    if (initialWorkflowId === 'new') {
+      createNew();
+    } else {
+      const wf = workflows.find((w) => w.id === initialWorkflowId);
+      if (wf) openWorkflow(wf);
+    }
+    onInitialWorkflowConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialWorkflowId]);
+
+  const openWorkflow = (w: Workflow) => {
+    setCurrent(w); setRunResult(null); setRunError(null); setSelectedNodeId(null); setPan({ x: 0, y: 0 });
+  };
+
+  const createNew = () => {
+    setCurrent({ id: `wf-${Date.now()}`, name: 'Untitled workflow', nodes: [], edges: [], updatedAt: new Date().toISOString() });
+    setRunResult(null); setRunError(null); setSelectedNodeId(null); setPan({ x: 0, y: 0 });
+  };
+
+  const closeBuilder = () => {
+    setCurrent(null); setSelectedNodeId(null); setRunResult(null); setRunError(null); setDraft(null); setPan({ x: 0, y: 0 });
+  };
+
+  const deleteWorkflow = async (id: string) => {
+    await onDeleteWorkflow(id);
+    if (current?.id === id) closeBuilder();
+    toast('Workflow deleted', 'success');
+  };
+
+  const openConfirm = (w: Workflow) => { setConfirmTarget(w); setTypedName(''); };
+  const closeConfirm = () => { setConfirmTarget(null); setTypedName(''); };
 
   const addNode = (type: WorkflowNodeType, x: number, y: number) => {
     const meta = TYPE_META[type];
@@ -98,21 +145,31 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
     const y = e.clientY - rect.top;
     if (drag) setDragPos({ x, y });
     if (moving) {
-      moveNode(moving.id, Math.round(x - moving.dx), Math.round(y - moving.dy));
+      moveNode(moving.id, Math.round(x - moving.dx - pan.x), Math.round(y - moving.dy - pan.y));
     }
     if (drawingEdge) setDrawingEdge({ ...drawingEdge, x, y });
+    if (panning) {
+      setPan({ x: panning.origX + (e.clientX - panning.startX), y: panning.origY + (e.clientY - panning.startY) });
+    }
   };
 
   const onPointerUp = () => {
-    if (drag && dragPos) { addNode(drag.type, dragPos.x - NODE_W / 2, dragPos.y - 20); }
-    setDrag(null); setDragPos(null); setMoving(null); setDrawingEdge(null);
+    if (drag && dragPos) { addNode(drag.type, dragPos.x - NODE_W / 2 - pan.x, dragPos.y - 20 - pan.y); }
+    setDrag(null); setDragPos(null); setMoving(null); setDrawingEdge(null); setPanning(null);
+  };
+
+  const onCanvasPointerDown = (e: React.PointerEvent) => {
+    // Only pan when clicking on empty canvas (no node, no port). Buttons/inputs stop propagation.
+    if (drag || moving || drawingEdge) return;
+    if (e.target !== e.currentTarget && !(e.target as HTMLElement).classList.contains('canvas-empty')) return;
+    e.preventDefault();
+    setPanning({ startX: e.clientX, startY: e.clientY, origX: pan.x, origY: pan.y });
   };
 
   const startPaletteDrag = (type: WorkflowNodeType) => (e: React.PointerEvent) => {
     e.preventDefault();
     setDrag({ type });
     setDragPos(null);
-    // Track the latest pointer position; attach listeners to window so the drag works anywhere.
     let lastX = e.clientX, lastY = e.clientY;
     const onMove = (ev: PointerEvent) => {
       lastX = ev.clientX; lastY = ev.clientY;
@@ -154,12 +211,12 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
           const rect = canvasRef.current?.getBoundingClientRect();
           if (!rect) return;
           setSelectedNodeId(n.id);
-          const dx = e.clientX - rect.left - n.x, dy = e.clientY - rect.top - n.y;
+          const dx = e.clientX - rect.left - n.x - pan.x, dy = e.clientY - rect.top - n.y - pan.y;
           setMoving({ id: n.id, dx, dy });
           const onMove = (ev: PointerEvent) => {
             const r = canvasRef.current?.getBoundingClientRect();
             if (!r) return;
-            moveNode(n.id, Math.round(ev.clientX - r.left - dx), Math.round(ev.clientY - r.top - dy));
+            moveNode(n.id, Math.round(ev.clientX - r.left - dx - pan.x), Math.round(ev.clientY - r.top - dy - pan.y));
           };
           const onUp = () => {
             window.removeEventListener('pointermove', onMove);
@@ -178,7 +235,6 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
         <div className="mt-2 truncate text-[11px] text-muted">
           {isAgentNode ? (n.agentId ? agentName(n.agentId) : 'No agent assigned') : meta.label}
         </div>
-        {/* Output port */}
         <div
           className="absolute -right-[7px] top-1/2 z-[3] h-3.5 w-3.5 -translate-y-1/2 cursor-crosshair rounded-full border-2 border-line bg-panel2 hover:border-[var(--green)]"
           onPointerDown={(e) => {
@@ -192,7 +248,6 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
             const onUp = (ev: PointerEvent) => {
               window.removeEventListener('pointermove', onMove);
               window.removeEventListener('pointerup', onUp);
-              // Hit-test which node is under the release point.
               const rect = canvasRef.current?.getBoundingClientRect();
               if (!rect) { setDrawingEdge(null); return; }
               const px = ev.clientX - rect.left, py = ev.clientY - rect.top;
@@ -216,184 +271,249 @@ export function CanvasView({ agents, tools, workflows, onSaveWorkflow, onDeleteW
     );
   };
 
-  return (
-    <div className="flex h-full gap-4">
-      {/* Left rail: workflow list */}
-      <div className="w-[230px] shrink-0 overflow-y-auto rounded-[10px] border border-line bg-panel p-3.5">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="font-mono text-[10px] tracking-[1px] text-muted">WORKFLOWS</span>
-          <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-text" onClick={() => setCurrent({ id: `wf-${Date.now()}`, name: 'Untitled workflow', nodes: [], edges: [], updatedAt: new Date().toISOString() })}><Plus size={13} /></button>
-        </div>
-        {workflows.map((w) => (
-          <div key={w.id} className="mb-1.5 flex items-center gap-1.5">
-            <button
-              className={`flex-1 cursor-pointer rounded-[6px] border-0 px-2.5 py-2 text-left text-[12.5px] ${current?.id === w.id ? 'bg-panel2 text-text' : 'text-muted hover:bg-line'}`}
-              onClick={() => { setCurrent(w); setRunResult(null); setSelectedNodeId(null); }}
-            >
-              <WorkflowIcon size={11} className="mr-1.5 inline-block" />{w.name}
-            </button>
-            <button className="cursor-pointer border-0 bg-transparent p-1 text-muted hover:text-[#f87171]" onClick={async () => { await onDeleteWorkflow(w.id); toast('Workflow deleted', 'success'); }}><Trash2 size={11} /></button>
+  // ---------------- Builder screen ----------------
+  if (current) {
+    return (
+      <div className="flex h-full min-h-0 flex-col gap-3">
+        <header className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <button className="flex cursor-pointer items-center gap-1 rounded-[6px] border-0 bg-none px-1.5 py-1 font-mono text-[10px] uppercase tracking-[1px] text-muted hover:text-text" onClick={closeBuilder}><ArrowLeft size={12} />Workflows</button>
+            <input
+              value={current.name}
+              onChange={(e) => update((w) => ({ ...w, name: e.target.value }))}
+              className="w-48 rounded-md border border-line bg-panel2 px-2 py-1 text-[13px] text-text outline-none focus:border-mid"
+            />
           </div>
-        ))}
-        {workflows.length === 0 && <p className="px-2 text-[12px] leading-1.6 text-muted">No workflows yet. Click + to create one.</p>}
-      </div>
+          <div className="flex items-center gap-2">
+            <input
+              value={runInput}
+              onChange={(e) => setRunInput(e.target.value)}
+              placeholder="Workflow input…"
+              className="w-56 rounded-md border border-line bg-panel2 px-2.5 py-1.5 text-[12px] text-text outline-none placeholder:text-muted focus:border-mid"
+            />
+            <button className="secondary" onClick={save} disabled={saving}><Save size={13} />{saving ? 'Saving…' : 'Save'}</button>
+            <button className="primary" onClick={run} disabled={running}><Play size={13} />{running ? 'Running…' : 'Run'}</button>
+          </div>
+        </header>
 
-      {/* Main: builder */}
-      {current ? (
-        <div className="flex min-w-0 flex-1 flex-col gap-3">
-          <header className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span>
-              <input
-                value={current.name}
-                onChange={(e) => update((w) => ({ ...w, name: e.target.value }))}
-                className="w-48 rounded-md border border-line bg-panel2 px-2 py-1 text-[13px] text-text outline-none focus:border-mid"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                value={runInput}
-                onChange={(e) => setRunInput(e.target.value)}
-                placeholder="Workflow input…"
-                className="w-56 rounded-md border border-line bg-panel2 px-2.5 py-1.5 text-[12px] text-text outline-none placeholder:text-muted focus:border-mid"
-              />
-              <button className="secondary" onClick={save} disabled={saving}><Save size={13} />{saving ? 'Saving…' : 'Save'}</button>
-              <button className="primary" onClick={run} disabled={running}><Play size={13} />{running ? 'Running…' : 'Run'}</button>
-            </div>
-          </header>
-
-          <div className="flex min-h-0 flex-1 gap-3">
-            {/* Palette */}
-            <div className="w-[170px] shrink-0 overflow-y-auto rounded-[10px] border border-line bg-panel p-2.5">
-              <span className="mb-2.5 block font-mono text-[10px] tracking-[1px] text-muted">NODES</span>
-              {NODE_TYPES.map((nt) => (
-                <div
-                  key={nt.type}
-                  className="mb-1.5 cursor-grab rounded-[6px] border border-line bg-panel2 p-2.5 transition-colors hover:border-mid active:cursor-grabbing"
-                  onPointerDown={startPaletteDrag(nt.type)}
-                  title={nt.desc}
-                >
-                  <div className="flex items-center gap-1.5 text-[12px]" style={{ color: nt.color }}>
-                    {nt.icon}<b className="text-text">{nt.label}</b>
-                  </div>
-                  <p className="mt-1 text-[10.5px] leading-1.5 text-muted">{nt.desc}</p>
+        <div className="flex min-h-0 flex-1 gap-3">
+          <div className="w-[170px] shrink-0 overflow-y-auto rounded-[10px] border border-line bg-panel p-2.5">
+            <span className="mb-2.5 block font-mono text-[10px] tracking-[1px] text-muted">NODES</span>
+            {NODE_TYPES.map((nt) => (
+              <div
+                key={nt.type}
+                className="mb-1.5 cursor-grab rounded-[6px] border border-line bg-panel2 p-2.5 transition-colors hover:border-mid active:cursor-grabbing"
+                onPointerDown={startPaletteDrag(nt.type)}
+                title={nt.desc}
+              >
+                <div className="flex items-center gap-1.5 text-[12px]" style={{ color: nt.color }}>
+                  {nt.icon}<b className="text-text">{nt.label}</b>
                 </div>
-              ))}
-            </div>
+                <p className="mt-1 text-[10.5px] leading-1.5 text-muted">{nt.desc}</p>
+              </div>
+            ))}
+          </div>
 
-            {/* Canvas */}
-            <div
-              ref={canvasRef}
-              className="relative min-h-[550px] flex-1 overflow-hidden rounded-[12px] border border-line bg-[#0b0b0d]"
-              style={{ backgroundImage: 'radial-gradient(#2b2b30 1px, transparent 1px)', backgroundSize: '24px 24px' }}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerLeave={() => { setDragPos(null); setDrawingEdge(null); }}
-            >
-              <svg className="pointer-events-none absolute inset-0 z-0 h-full w-full">
-                {current.edges.map((e) => {
-                  const from = current.nodes.find((n) => n.id === e.from);
-                  const to = current.nodes.find((n) => n.id === e.to);
-                  if (!from || !to) return null;
-                  const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2;
-                  const x2 = to.x, y2 = to.y + NODE_H / 2;
-                  return <path key={e.id} className="fill-none stroke-dim stroke-[1.5]" d={`M ${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`} />;
-                })}
-                {drawingEdge && <path className="fill-none stroke-[var(--green)] stroke-[1.5] [stroke-dasharray:5_5]" d={`M ${drawingEdge.x} ${drawingEdge.y} C ${drawingEdge.x + 40} ${drawingEdge.y}, ${drawingEdge.x - 40} ${drawingEdge.y}, ${drawingEdge.x} ${drawingEdge.y}`} />}
-              </svg>
+          <div
+            ref={canvasRef}
+            className="relative min-h-[550px] flex-1 overflow-hidden rounded-[12px] border border-line bg-[#0b0b0d]"
+            style={{ backgroundImage: 'radial-gradient(#2b2b30 1px, transparent 1px)', backgroundSize: '24px 24px' }}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerLeave={() => { setDragPos(null); setDrawingEdge(null); }}
+          >
+            <svg className="pointer-events-none absolute inset-0 z-0 h-full w-full">
+              {current.edges.map((e) => {
+                const from = current.nodes.find((n) => n.id === e.from);
+                const to = current.nodes.find((n) => n.id === e.to);
+                if (!from || !to) return null;
+                const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2;
+                const x2 = to.x, y2 = to.y + NODE_H / 2;
+                return <path key={e.id} className="fill-none stroke-dim stroke-[1.5]" d={`M ${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`} />;
+              })}
+              {drawingEdge && <path className="fill-none stroke-[var(--green)] stroke-[1.5] [stroke-dasharray:5_5]" d={`M ${drawingEdge.x} ${drawingEdge.y} C ${drawingEdge.x + 40} ${drawingEdge.y}, ${drawingEdge.x - 40} ${drawingEdge.y}, ${drawingEdge.x} ${drawingEdge.y}`} />}
+            </svg>
 
-              {current.nodes.map(nodeEl)}
+            {current.nodes.map(nodeEl)}
 
-              {drag && dragPos && (
-                <div className="pointer-events-none absolute z-[5] w-[200px] rounded-[10px] border border-[var(--green)] border-dashed bg-panel/80 p-3 opacity-80" style={{ left: dragPos.x - NODE_W / 2, top: dragPos.y - 20 }}>
-                  <b className="text-[12px]">{TYPE_META[drag.type].label}</b>
+            {drag && dragPos && (
+              <div className="pointer-events-none absolute z-[5] w-[200px] rounded-[10px] border border-[var(--green)] border-dashed bg-panel/80 p-3 opacity-80" style={{ left: dragPos.x - NODE_W / 2, top: dragPos.y - 20 }}>
+                <b className="text-[12px]">{TYPE_META[drag.type].label}</b>
+              </div>
+            )}
+
+            {current.nodes.length === 0 && (
+              <div className="absolute inset-0 grid place-items-center">
+                <div className="text-center text-muted">
+                  <WorkflowIcon size={26} className="mx-auto mb-2 opacity-50" />
+                  <p className="text-[12px]">Drag nodes from the palette onto the canvas.</p>
+                  <p className="text-[11px]">Connect ports (dots on node edges) to chain agents.</p>
                 </div>
-              )}
+              </div>
+            )}
+          </div>
 
-              {current.nodes.length === 0 && (
-                <div className="absolute inset-0 grid place-items-center">
-                  <div className="text-center text-muted">
-                    <WorkflowIcon size={26} className="mx-auto mb-2 opacity-50" />
-                    <p className="text-[12px]">Drag nodes from the palette onto the canvas.</p>
-                    <p className="text-[11px]">Connect ports (dots on node edges) to chain agents.</p>
-                  </div>
+          <div className="w-[260px] shrink-0 overflow-y-auto rounded-[10px] border border-line bg-panel p-3.5">
+            {runResult ? (
+              <div>
+                <div className="mb-2.5 flex items-center justify-between">
+                  <span className="font-mono text-[10px] tracking-[1px] text-muted">RESULTS</span>
+                  <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-text" onClick={() => setRunResult(null)}><X size={12} /></button>
                 </div>
-              )}
-            </div>
-
-            {/* Inspector / results */}
-            <div className="w-[260px] shrink-0 overflow-y-auto rounded-[10px] border border-line bg-panel p-3.5">
-              {runResult ? (
+                <p className="mb-3 text-[12px] text-muted">{(runResult.totalPromptTokens + runResult.totalCompletionTokens).toLocaleString()} tokens</p>
+                <div className="grid gap-2.5">
+                  {runResult.steps.map((s, i) => (
+                    <div key={i} className="rounded-[6px] border border-line bg-panel2 p-2.5">
+                      <b className="text-[12px]">{i + 1}. {s.nodeLabel}</b>
+                      <p className="mt-1.5 max-h-24 overflow-y-auto text-[11px] leading-1.6 text-muted">{s.output}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 rounded-[6px] border border-[var(--green)] bg-panel2 p-2.5">
+                  <b className="text-[12px]">Final output</b>
+                  <p className="mt-1.5 max-h-40 overflow-y-auto text-[11px] leading-1.6 text-muted">{runResult.finalOutput}</p>
+                </div>
+              </div>
+            ) : runError ? (
+              <div>
+                <span className="font-mono text-[10px] tracking-[1px] text-[#f87171]">ERROR</span>
+                <p className="mt-2 text-[12px] leading-1.6 text-[#f87171]">{runError}</p>
+              </div>
+            ) : selectedNodeId ? (() => {
+              const node = current.nodes.find((n) => n.id === selectedNodeId);
+              if (!node) return null;
+              const isAgentNode = node.type === 'agent' || node.type === 'subagent' || node.type === 'checker';
+              return (
                 <div>
                   <div className="mb-2.5 flex items-center justify-between">
-                    <span className="font-mono text-[10px] tracking-[1px] text-muted">RESULTS</span>
-                    <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-text" onClick={() => setRunResult(null)}><X size={12} /></button>
+                    <span className="font-mono text-[10px] tracking-[1px] text-muted">NODE</span>
+                    <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-[#f87171]" onClick={() => deleteNode(node.id)}><Trash2 size={12} /></button>
                   </div>
-                  <p className="mb-3 text-[12px] text-muted">{(runResult.totalPromptTokens + runResult.totalCompletionTokens).toLocaleString()} tokens</p>
-                  <div className="grid gap-2.5">
-                    {runResult.steps.map((s, i) => (
-                      <div key={i} className="rounded-[6px] border border-line bg-panel2 p-2.5">
-                        <b className="text-[12px]">{i + 1}. {s.nodeLabel}</b>
-                        <p className="mt-1.5 max-h-24 overflow-y-auto text-[11px] leading-1.6 text-muted">{s.output}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-3 rounded-[6px] border border-[var(--green)] bg-panel2 p-2.5">
-                    <b className="text-[12px]">Final output</b>
-                    <p className="mt-1.5 max-h-40 overflow-y-auto text-[11px] leading-1.6 text-muted">{runResult.finalOutput}</p>
-                  </div>
+                  <label className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">LABEL</label>
+                  <input value={node.label} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, label: e.target.value } : n)) }))} className="w-full rounded-md border border-line bg-panel2 px-2.5 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
+                  {isAgentNode && (
+                    <>
+                      <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">AGENT</label>
+                      <Dropdown
+                        value={node.agentId ?? ''}
+                        options={agents.map((a) => ({ value: a.id, label: a.name }))}
+                        onChange={(v) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, agentId: v } : n)) }))}
+                        placeholder="Select agent…"
+                      />
+                    </>
+                  )}
+                  {node.type === 'loop' && (
+                    <>
+                      <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">MAX ITERATIONS</label>
+                      <input type="number" min={1} value={String(node.config?.maxIterations ?? 3)} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, maxIterations: Number(e.target.value) } } : n)) }))} className="w-full rounded-md border border-line bg-panel2 px-2.5 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
+                    </>
+                  )}
+                  <p className="mt-4 text-[11px] leading-1.6 text-muted">{TYPE_META[node.type].label} node. Drag its port to connect output to another node.</p>
                 </div>
-              ) : runError ? (
-                <div>
-                  <span className="font-mono text-[10px] tracking-[1px] text-[#f87171]">ERROR</span>
-                  <p className="mt-2 text-[12px] leading-1.6 text-[#f87171]">{runError}</p>
-                </div>
-              ) : selectedNodeId ? (() => {
-                const node = current.nodes.find((n) => n.id === selectedNodeId);
-                if (!node) return null;
-                const isAgentNode = node.type === 'agent' || node.type === 'subagent' || node.type === 'checker';
-                return (
-                  <div>
-                    <div className="mb-2.5 flex items-center justify-between">
-                      <span className="font-mono text-[10px] tracking-[1px] text-muted">NODE</span>
-                      <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-[#f87171]" onClick={() => deleteNode(node.id)}><Trash2 size={12} /></button>
-                    </div>
-                    <label className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">LABEL</label>
-                    <input value={node.label} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, label: e.target.value } : n)) }))} className="w-full rounded-md border border-line bg-panel2 px-2.5 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
-                    {isAgentNode && (
-                      <>
-                        <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">AGENT</label>
-                        <Dropdown
-                          value={node.agentId ?? ''}
-                          options={agents.map((a) => ({ value: a.id, label: a.name }))}
-                          onChange={(v) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, agentId: v } : n)) }))}
-                          placeholder="Select agent…"
-                        />
-                      </>
-                    )}
-                    {node.type === 'loop' && (
-                      <>
-                        <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">MAX ITERATIONS</label>
-                        <input type="number" min={1} value={String(node.config?.maxIterations ?? 3)} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, maxIterations: Number(e.target.value) } } : n)) }))} className="w-full rounded-md border border-line bg-panel2 px-2.5 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
-                      </>
-                    )}
-                    <p className="mt-4 text-[11px] leading-1.6 text-muted">{TYPE_META[node.type].label} node. Drag its port to connect output to another node.</p>
-                  </div>
-                );
-              })() : (
-                <div className="text-center text-muted">
-                  <p className="text-[12px] leading-1.6">Select a node to edit its config, or drag from a node's port to create a connection.</p>
-                </div>
-              )}
-            </div>
+              );
+            })() : (
+              <div className="text-center text-muted">
+                <p className="text-[12px] leading-1.6">Select a node to edit its config, or drag from a node's port to create a connection.</p>
+              </div>
+            )}
           </div>
         </div>
-      ) : (
-        <div className="grid flex-1 place-items-center rounded-[12px] border border-dashed border-soft">
-          <div className="text-center text-muted">
-            <WorkflowIcon size={30} className="mx-auto mb-2 opacity-50" />
-            <h3 className="mb-1 text-text">Workflow Builder</h3>
-            <p className="text-[12px]">Create or select a workflow to start building.</p>
+      </div>
+    );
+  }
+
+  // ---------------- Workflow list screen ----------------
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="flex flex-wrap items-center justify-between gap-2" style={{ marginBottom: 24 }}>
+        <div>
+          <span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span>
+          <h1 style={{ margin: 0, fontSize: 24 }}>Workflows</h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search workflows…"
+            className="w-52 rounded-md border border-line bg-panel2 px-2.5 py-1.5 text-[12px] text-text outline-none placeholder:text-muted focus:border-mid"
+          />
+          <button className="primary" onClick={createNew}><Plus size={13} />New workflow</button>
+        </div>
+      </header>
+
+      {(() => {
+        const q = search.trim().toLowerCase();
+        const filtered = q ? workflows.filter((w) => w.name.toLowerCase().includes(q)) : workflows;
+        if (workflows.length === 0) {
+          return (
+            <div className="grid flex-1 place-items-center rounded-[12px] border border-dashed border-soft">
+              <div className="text-center text-muted">
+                <WorkflowIcon size={30} className="mx-auto mb-2 opacity-50" />
+                <h3 className="mb-1 text-text">No workflows yet</h3>
+                <p className="text-[12px]">Create your first workflow to chain agents and tools.</p>
+              </div>
+            </div>
+          );
+        }
+        if (filtered.length === 0) {
+          return (
+            <div className="grid flex-1 place-items-center rounded-[12px] border border-dashed border-soft">
+              <div className="text-center text-muted">
+                <p className="text-[12px]">No workflows match "{search}".</p>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className="grid max-w-[1100px] grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {filtered.map((w) => (
+              <div key={w.id} className="group flex flex-col rounded-[10px] border border-line bg-panel p-[18px]">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-panel2 text-muted"><WorkflowIcon size={15} /></span>
+                    <div className="min-w-0">
+                      <b className="block truncate text-[13px]">{w.name}</b>
+                      <span className="mt-0.5 block text-[11px] text-muted">{w.nodes.length} nodes · {w.edges.length} connections</span>
+                    </div>
+                  </div>
+                  <button className="cursor-pointer border-0 bg-transparent p-1 text-muted opacity-0 transition-opacity hover:text-[#f87171] group-hover:opacity-100" onClick={() => openConfirm(w)} title="Delete workflow"><Trash2 size={13} /></button>
+                </div>
+                <span className="mt-2 block font-mono text-[9px] text-muted">updated {fmtDate(w.updatedAt)}</span>
+                <div className="mt-4 flex justify-end">
+                  <button className="secondary px-3 py-1.5 text-[11px]" onClick={() => openWorkflow(w)}>Open builder</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
+      {confirmTarget && (
+        <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60" onClick={closeConfirm}>
+          <div className="w-[380px] max-w-[92vw] rounded-[12px] border border-line bg-panel p-5 shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-1 flex items-center gap-2">
+              <Trash2 size={15} className="text-[#f87171]" />
+              <b className="text-[14px]">Delete "{confirmTarget.name}"?</b>
+            </div>
+            <p className="mb-4 text-[12px] leading-1.6 text-muted">This permanently removes the workflow and its connections. Type the workflow's name to confirm.</p>
+            <input
+              value={typedName}
+              onChange={(e) => setTypedName(e.target.value)}
+              placeholder={confirmTarget.name}
+              className="mb-4 w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[13px] text-text outline-none focus:border-mid"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button className="secondary" onClick={closeConfirm}>Cancel</button>
+              <button
+                className="primary"
+                style={{ background: '#e11d48', color: '#fff' }}
+                disabled={typedName.trim() !== confirmTarget.name}
+                onClick={() => { deleteWorkflow(confirmTarget.id); closeConfirm(); }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

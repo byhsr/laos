@@ -3,6 +3,7 @@ import { Check, ChevronRight, Lock, Play, Send } from 'lucide-react';
 import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run, Tool } from '../types';
 import { Dropdown } from './ui/Dropdown';
 import { MultiDropdown } from './ui/MultiDropdown';
+import { AgentAvatar, PERSONAS } from './ui/AgentAvatar';
 import { toast } from '../hooks/useToast';
 import { listChatSessions, getChatSession, createChatSession, deleteChatSession, streamChat } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
@@ -154,6 +155,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
             );
           })}
           <span className="agent-dot ml-1 inline-block h-2 w-2 rounded-full" style={{ background: agent.color }} />
+          <AgentAvatar agent={agent} size={20} animate={false} />
         </div>
       </header>
 
@@ -327,6 +329,18 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
               options={models.map((m) => ({ value: m.id, label: m.label }))}
               onChange={(v) => setDraft({ ...draft, model: v })}
             />
+
+            <label className="mt-3.5 block text-[11px] font-semibold text-muted">PERSONA</label>
+            <Dropdown
+              value={draft.persona ?? 'gremlin'}
+              options={PERSONAS.map((p) => ({ value: p.id, label: p.label }))}
+              onChange={(v) => setDraft({ ...draft, persona: v })}
+              placeholder="Select persona…"
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <AgentAvatar agent={{ ...draft, persona: draft.persona ?? 'gremlin' }} size={28} />
+              <span className="text-[11px] text-muted">Animated Lottie gremlin avatar</span>
+            </div>
 
             <label className="mt-3.5 block text-[11px] font-semibold text-muted">TOOLS</label>
             <MultiDropdown
