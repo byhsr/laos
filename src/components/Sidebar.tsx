@@ -3,7 +3,7 @@ import type { View } from '../types';
 
 const NAV_ITEMS: { key: View; label: string; icon: React.ReactNode }[] = [
   { key: 'home', label: 'Home', icon: <Home size={15} /> },
-  { key: 'manager', label: 'Manager', icon: <UserCog size={15} /> },
+  { key: 'manager', label: 'Laos', icon: <UserCog size={15} /> },
   { key: 'agents', label: 'Agents', icon: <Bot size={15} /> },
   { key: 'workflows', label: 'Workflows', icon: <Workflow size={15} /> },
   { key: 'tasks', label: 'Tasks', icon: <ListChecks size={15} /> },

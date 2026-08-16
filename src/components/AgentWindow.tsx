@@ -1,14 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronRight, Lock, Play } from 'lucide-react';
+import { Check, ChevronRight, Lock, Play, Send } from 'lucide-react';
 import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run, Tool } from '../types';
 import { Dropdown } from './ui/Dropdown';
 import { MultiDropdown } from './ui/MultiDropdown';
 import { toast } from '../hooks/useToast';
 import { listChatSessions, getChatSession, createChatSession, deleteChatSession, streamChat } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
+import { useManagerStore, type ChatEntry } from '../hooks/useManager';
+import { useShallow } from 'zustand/react/shallow';
 import { StreamIndicator } from './ui/StreamIndicator';
 
 const isComplete = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent' && !!a.model.trim() && !!a.objective.trim();
+
+// Safe date formatting — DB timestamps can be empty/malformed, and new Date('')
+// throws, which would blank the whole screen.
+const fmtDate = (s?: string | null) => {
+  if (!s) return '';
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? '' : d.toLocaleString();
+};
 
 export function AgentWindow({ agent, tools, models, integrations, runs, onBack, onSave, onDelete, onRun }: {
   agent: Agent; tools: Tool[]; models: ModelConfig[]; integrations: Integration[]; runs: Run[];
@@ -16,7 +26,10 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
 }) {
   const complete = isComplete(agent);
   const [tab, setTab] = useState<'chat' | 'runs' | 'info' | 'config' | 'history'>(complete ? 'chat' : 'config');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Chat messages live in the store so they survive navigating away and back.
+  // useShallow prevents an infinite re-render loop when the conversation is
+  // missing (the `?? []` would create a new reference every selector call).
+  const messages = useManagerStore(useShallow((s) => s.conversations[agent.id] ?? []));
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [sessions, setSessions] = useState<{ id: string; title: string; createdAt: string; updatedAt: string }[]>([]);
   const [viewingSession, setViewingSession] = useState<string | null>(null);
@@ -27,6 +40,20 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
   const enabledTools = tools.filter((t) => t.enabled);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const setMessages = (fn: (prev: ChatEntry[]) => ChatEntry[]) => {
+    useManagerStore.setState((s) => {
+      const updated = fn(s.conversations[agent.id] ?? []);
+      return { conversations: { ...s.conversations, [agent.id]: updated } };
+    });
+  };
+
+  // Load any persisted conversation for this agent on mount.
+  useEffect(() => {
+    useManagerStore.getState().loadHistory(agent.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.id]);
 
   const switchTab = (t: 'chat' | 'runs' | 'info' | 'config' | 'history') => {
     if ((t === 'chat' || t === 'runs') && !complete) { setTab('config'); return; }
@@ -41,16 +68,27 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
   }, [tab, agent.id]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    // Always scroll the newest message into view.
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [messages]);
+
+  // Auto-grow the input up to a max height as the user types.
+  const onInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    e.target.style.height = 'auto';
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+  };
 
   const send = async (text: string) => {
     if (!text.trim() || running) return;
     setRunning(true); setError(undefined);
-    const userMsg: ChatMessage = { role: 'user', content: text, time: new Date().toLocaleTimeString() };
-    const assistantMsg: ChatMessage = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
+    const userMsg: ChatEntry = { role: 'user', content: text, time: new Date().toLocaleTimeString() };
+    const assistantMsg: ChatEntry = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInput('');
+    // Reset the auto-grown height after clearing.
+    if (inputRef.current) inputRef.current.style.height = 'auto';
     const agentToRun = agent;
     let buffer = '';
     try {
@@ -79,32 +117,28 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
   const statusColor = (s: string) => s === 'running' ? 'text-[#facc15]' : s === 'completed' ? 'text-[#22c55e]' : 'text-[#f87171]';
 
   return (
-    <div className="boxy">
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
-        <div>
-          <div className="mb-2 flex items-center gap-1.5">
-            <button className="cursor-pointer border-0 bg-none p-0 font-mono text-[10px] uppercase tracking-[1px] text-muted hover:text-text" onClick={onBack}>Agents</button>
-            <ChevronRight size={12} className="text-mid" />
-            <span className="font-mono text-[10px] uppercase tracking-[1px] text-text">{agent.name}</span>
-          </div>
-          <h1 style={{ margin: 0, fontSize: 24 }}>{agent.name}</h1>
+    <div className="boxy flex h-full min-h-0 flex-col overflow-hidden">
+      <header className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <button className="cursor-pointer border-0 bg-none p-0 font-mono text-[10px] uppercase tracking-[1px] text-muted hover:text-text" onClick={onBack}>Agents</button>
+          <ChevronRight size={12} className="text-mid" />
+          <span className="font-mono text-[10px] uppercase tracking-[1px] text-text">{agent.name}</span>
         </div>
-        <span className="agent-dot inline-block h-2 w-2 rounded-full" style={{ background: agent.color }} />
+        <div className="flex items-center gap-1">
+          {(['chat', 'runs', 'info', 'config', 'history'] as const).map((t) => {
+            const locked = !complete && (t === 'chat' || t === 'runs');
+            return (
+              <button key={t} className={`flex cursor-pointer items-center gap-1 rounded-[6px] border-0 bg-none px-2.5 py-1.5 text-[11px] capitalize ${tab === t ? 'bg-panel2 text-text' : 'text-muted hover:text-text'}`} onClick={() => switchTab(t)}>
+                {t}{locked && <Lock size={9} className="opacity-70" />}
+              </button>
+            );
+          })}
+          <span className="agent-dot ml-1 inline-block h-2 w-2 rounded-full" style={{ background: agent.color }} />
+        </div>
       </header>
 
-      <div className="flex gap-2 border-b border-line px-3">
-        {(['chat', 'runs', 'info', 'config', 'history'] as const).map((t) => {
-          const locked = !complete && (t === 'chat' || t === 'runs');
-          return (
-            <button key={t} className={`flex cursor-pointer items-center gap-1 border-0 bg-none px-[5px] py-2.5 text-[11px] capitalize ${tab === t ? 'border-b-2 border-[var(--green)] text-text' : 'text-muted'}`} onClick={() => switchTab(t)}>
-              {t}{locked && <Lock size={9} className="opacity-70" />}
-            </button>
-          );
-        })}
-      </div>
-
       {(tab === 'chat' || tab === 'runs') && !complete && (
-        <div className="mt-4 flex h-[calc(100vh-320px)] min-h-[320px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line bg-panel text-center">
+        <div className="mt-4 flex h-[calc(100vh-190px)] min-h-[420px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line bg-panel text-center">
           <Lock size={20} className="text-muted" />
           <h3 style={{ margin: 0, fontSize: 14 }}>Finish setting up {agent.name}</h3>
           <p className="text-muted" style={{ margin: 0, maxWidth: 340, fontSize: 12, lineHeight: 1.6 }}>Add a name, pick a model, and write an objective to unlock Chat and Runs.</p>
@@ -113,47 +147,49 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
       )}
 
       {tab === 'chat' && (
-        <div className="chat mt-4 flex h-[calc(100vh-320px)] min-h-[320px] flex-col overflow-hidden rounded-lg border border-line bg-panel">
-          <div className="chat-log flex-1 scrollbar-thin scrollbar-color-mid overflow-y-auto p-[18px]">
-            {messages.length === 0 && (
-              <div className="chat-empty m-auto max-w-[360px] text-center text-[13px] leading-[1.6] text-muted">
-                <p>Say hello to {agent.name}. Send a task — the agent will use its tools ({agent.toolIds.map(toolName).join(', ') || 'none'}) to get things done.</p>
-              </div>
-            )}
-            {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : m.role === 'tool' ? 'justify-center' : 'justify-start'}`}>
-                <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13.5px] leading-[1.6] whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : m.role === 'assistant' ? 'rounded-tl-[3px] border border-line bg-panel2' : 'border-0 bg-transparent p-1 font-mono text-[11px] tracking-[0.3px] text-muted'}`}>
-                  {m.role === 'tool' && <span className="opacity-90">⚙ {m.content}{m.detail ? ` — ${m.detail}` : ''}</span>}
-                  {(m.role === 'user' || m.role === 'assistant') && (
+        <div className="relative flex h-[calc(100vh-120px)] min-h-[460px] flex-col">
+          {/* Chat history box — full height, input overlays on top of it */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
+            <div className="chat-log flex-1 scrollbar-thin scrollbar-color-mid overflow-y-auto px-4 pt-4 pb-24" ref={scrollRef}>
+              {messages.length === 0 && (
+                <div className="chat-empty m-auto max-w-[360px] text-center text-[13px] leading-[1.6] text-muted">
+                  <p>Say hello to {agent.name}. Send a task — the agent will use its tools ({agent.toolIds.map(toolName).join(', ') || 'none'}) to get things done.</p>
+                </div>
+              )}
+              {messages.map((m, i) => (
+                <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} last:mb-0`}>
+                  <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13.5px] leading-[1.6] whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
                     <span>
                       {m.content}
                       {running && i === messages.length - 1 && m.role === 'assistant' && (
                         m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming />
                       )}
                     </span>
-                  )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-          <div className="chat-input-row flex items-end gap-2.5 border-t border-line p-3">
+          {error && <p className="absolute bottom-[68px] left-4 text-[11px] text-[#f87171]" style={{ margin: 0 }}>{error}</p>}
+          {/* Input overlays the chat, floating at the bottom */}
+          <div className="absolute right-0 bottom-0 left-0 flex items-end gap-2.5 rounded-lg bg-gradient-to-t from-[var(--bg)] via-[var(--bg)]/80 to-transparent p-3 pt-6">
             <textarea
-              rows={2} placeholder={`Message ${agent.name}…`}
+              ref={inputRef}
+              rows={1} placeholder={`Message ${agent.name}…`}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={onInputChange}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
-              style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 8, padding: '10px 12px', color: 'var(--text)', resize: 'none' }}
+              style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 10, padding: '12px 14px', color: 'var(--text)', resize: 'none', minHeight: 44, maxHeight: 160, boxShadow: '0 8px 24px #000a' }}
             />
-            <button className="primary" disabled={running || !input.trim()} onClick={() => send(input)}>
-              <Play size={13} />{running ? 'Working…' : 'Send'}
+            <button className="primary" disabled={running || !input.trim()} onClick={() => send(input)} title="Send">
+              <Send size={14} />
             </button>
           </div>
-          {error && <p style={{ fontSize: 11, color: '#f87171', margin: '8px 0 0' }}>{error}</p>}
         </div>
       )}
 
       {tab === 'runs' && (
-        <div className="runs-console mt-4 max-h-[calc(100vh-280px)] overflow-y-auto rounded-lg border border-line bg-[#0a0a0c] p-3.5 font-mono text-[12px] leading-[1.6]">
+        <div className="runs-console mt-4 h-[calc(100vh-190px)] min-h-[420px] overflow-y-auto rounded-lg border border-line bg-[#0a0a0c] p-3.5 font-mono text-[12px] leading-[1.6]">
           {runs.filter((r) => r.agentId === agent.id).length === 0 && (
             <div className="console-empty p-2.5 text-center text-[12px] text-muted"><p>No runs yet for {agent.name}. Send a message in Chat and every step shows up here.</p></div>
           )}
@@ -163,7 +199,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
                 <span className={`text-muted ${statusColor(r.status)}`}>{r.status === 'running' ? '▸' : r.status === 'completed' ? '✓' : '✕'}</span>
                 <span className="text-muted">{r.model}</span>
                 {(r.promptTokens || r.completionTokens) ? <span className="text-mid">{((r.promptTokens ?? 0) + (r.completionTokens ?? 0)).toLocaleString()} tok</span> : null}
-                <span className="ml-auto text-mid">{r.startedAt ? new Date(r.startedAt).toLocaleTimeString() : ''}</span>
+                <span className="ml-auto text-mid">{fmtDate(r.startedAt)}</span>
               </div>
               <div className="my-1.5 text-[#d4d4d8]">$ {r.input}</div>
               {(r.events ?? []).map((ev, i) => (
@@ -226,7 +262,7 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
                   {sessions.map((s) => (
                     <button key={s.id} className="flex cursor-pointer items-center justify-between rounded-[6px] border border-line bg-panel2 px-3 py-2 text-left hover:border-mid" onClick={async () => { setViewingSession(s.id); const msgs = await getChatSession(s.id); setHistory(msgs.map((m, i) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: `#${i + 1}` }))); }}>
                       <span className="text-[12.5px] text-text">{s.title}</span>
-                      <span className="font-mono text-[10px] text-muted">{new Date(s.updatedAt).toLocaleString()}</span>
+                      <span className="font-mono text-[10px] text-muted">{fmtDate(s.updatedAt)}</span>
                     </button>
                   ))}
                 </div>
@@ -237,8 +273,8 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
       )}
 
       {tab === 'config' && (
-        <div className="config-grid mt-4 grid items-stretch gap-[18px]" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
-          <div className="config-main flex flex-col rounded-lg border border-line bg-panel p-[18px]">
+        <div className="config-grid mt-4 grid h-[calc(100vh-210px)] min-h-[420px] items-stretch gap-[18px]" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
+          <div className="config-main flex min-h-0 flex-col rounded-lg border border-line bg-panel p-[18px]">
             <label className="block flex-none text-[11px] font-semibold text-muted">OBJECTIVE / PROMPT</label>
             <textarea
               value={draft.objective}

@@ -57,7 +57,7 @@ export function TasksView({ agents }: { agents: Agent[] }) {
             <div className="flex items-center gap-2.5">
               <span className={`font-mono text-[10px] ${STATUS_COLOR[t.status]}`}>{t.status}</span>
               <b className="text-[12.5px]">{agents.find((a) => a.id === t.assignedAgent)?.name ?? t.assignedAgent}</b>
-              <span className="ml-auto text-[11px] text-mid">{new Date(t.createdAt).toLocaleString()}</span>
+              <span className="ml-auto text-[11px] text-mid">{(() => { const d = new Date(t.createdAt); return isNaN(d.getTime()) ? '' : d.toLocaleString(); })()}</span>
               {(t.status === 'pending' || t.status === 'running') && (
                 <button className="secondary" onClick={() => cancelTask(t.id)}><Trash2 size={12} />Cancel</button>
               )}

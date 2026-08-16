@@ -33,7 +33,7 @@ export function RunsConsole({ runs, agents, onOpenAgent, onClear }: {
               <button className="cursor-pointer border-0 bg-none p-0 font-mono text-[11px] text-text hover:underline" onClick={() => onOpenAgent(r.agentId)}>{agentName(r.agentId)}</button>
               <span className="text-muted">{r.model}</span>
               {(r.promptTokens || r.completionTokens) ? <span className="text-mid">{((r.promptTokens ?? 0) + (r.completionTokens ?? 0)).toLocaleString()} tok</span> : null}
-              <span className="ml-auto text-mid">{r.startedAt ? new Date(r.startedAt).toLocaleTimeString() : ''}</span>
+              <span className="ml-auto text-mid">{r.startedAt ? (() => { const d = new Date(r.startedAt); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString(); })() : ''}</span>
             </div>
             <div className="my-1.5 text-[#d4d4d8]">$ {r.input}</div>
             {(r.events ?? []).map((ev, i) => (

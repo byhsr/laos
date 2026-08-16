@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Bot, CornerDownLeft, MessageSquare, Send, Settings2, Trash2 } from 'lucide-react';
 import type { Agent, Integration, ModelConfig, Task } from '../../types';
-import { useManagerStore } from '../../hooks/useManager';
+import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
 import { useTasksStore } from '../../hooks/useTasks';
 import { useAgentsStore } from '../../hooks/useAgents';
 import { StreamIndicator } from '../ui/StreamIndicator';
@@ -32,6 +32,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   const loadTasks = useTasksStore((s) => s.loadTasks);
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [mgrDraft, setMgrDraft] = useState<Agent | null>(null);
   const [sessions, setSessions] = useState<{ id: string; title: string; createdAt: string; updatedAt: string }[]>([]);
@@ -49,7 +50,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   const saveConfig = async () => {
     if (!mgrDraft) return;
     await persistAgent(mgrDraft);
-    toast('Manager config saved', 'success');
+    toast('Laos config saved', 'success');
     setConfigOpen(false);
   };
 
@@ -58,7 +59,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
     const managerId = agents.find((a) => a.isManager)?.id ?? 'manager';
     loadHistory(managerId);
     listChatSessions(managerId).then(setSessions).catch(() => {});
-  }, [agents, loadHistory, sessionId]);
+  }, [agents, loadHistory, sessionId, messages.length]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages]);
 
   const managerAgent = agents.find((a) => a.isManager) ?? {
@@ -80,7 +81,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
       return tasks.map((t) => `- **${t.status}** → ${agents.find((a) => a.id === t.assignedAgent)?.name ?? t.assignedAgent}: ${t.input}`).join('\n');
     }
     if (cmd === '/help') {
-      return 'Available commands:\n- /agents — list agents\n- /tasks — list tasks\n- /switch &lt;agent&gt; — switch conversation to an agent\n- /help — this message\n\nEverything else goes to the Manager.';
+      return 'Available commands:\n- /agents — list agents\n- /tasks — list tasks\n- /switch &lt;agent&gt; — switch conversation to an agent\n- /help — this message\n\nEverything else goes to Laos.';
     }
     if (cmd === '/switch') {
       const name = arg(/^\/switch\s+(.+)$/i);
@@ -100,10 +101,18 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
     });
   };
 
+  // Auto-grow the input up to a max height as the user types.
+  const onInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    e.target.style.height = 'auto';
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+  };
+
   const submit = async () => {
     if (!input.trim() || busy) return;
     const text = input.trim();
     setInput('');
+    if (inputRef.current) inputRef.current.style.height = 'auto';
     // Deterministic slash commands — resolved locally, no LLM involved.
     const cmd = text.toLowerCase().split(/\s+/)[0];
     const reply = runCommand(cmd, text);
@@ -120,52 +129,57 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   return (
     <div className="flex h-full gap-4">
       {/* Chat */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-line bg-panel">
-        <div className="flex h-[52px] flex-none items-center justify-between border-b border-line px-4">
-          <div className="flex items-center gap-2">
-            <Bot size={15} className="text-[var(--green)]" />
-            <b className="text-[13px]">Manager</b>
-            <span className="font-mono text-[10px] text-muted">{currentAgentId ? `→ ${agents.find((a) => a.id === currentAgentId)?.name ?? currentAgentId}` : 'orchestrator'}</span>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <Bot size={14} className="text-[var(--green)]" />
+            <span className="font-mono text-[10px] uppercase tracking-[1px] text-text">Laos</span>
+            <span className="font-mono text-[10px] text-muted">{currentAgentId ? `→ ${agents.find((a) => a.id === currentAgentId)?.name ?? currentAgentId}` : ''}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <button className="secondary" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; const m = agents.find((a) => a.id === id)?.model ?? models.find((x) => x.enabled)?.id ?? ''; newSession(id, m); }}>New chat</button>
-            <button className="secondary" onClick={openConfig}><Settings2 size={12} />Config</button>
-            <button className="secondary" onClick={() => setCurrentAgent(null)}>Reset to Manager</button>
-            <button className="secondary" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; reset(id); }} title="Clear the Manager's memory and conversation">Reset memory</button>
+          <div className="flex items-center gap-1">
+            <button className="rounded-[6px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; const m = agents.find((a) => a.id === id)?.model ?? models.find((x) => x.enabled)?.id ?? ''; newSession(id, m); }}>New chat</button>
+            <button className="rounded-[6px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={openConfig}>Config</button>
+            <button className="rounded-[6px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; reset(id); }} title="Clear Laos's memory">Reset memory</button>
           </div>
-        </div>
+        </header>
 
-        <div ref={scrollRef} className="chat-log flex-1 overflow-y-auto p-4">
-          {messages.length === 0 && (
-            <div className="m-auto max-w-[380px] text-center text-[13px] leading-1.6 text-muted">
-              <p>Ask the Manager anything about your workspace — what agents exist, what they can do, or to delegate a task.</p>
-              <p className="mt-2 font-mono text-[11px]">Try: "What agents do I have?" or "Ask the research agent to find competitors."</p>
+        <div className="relative mt-3 flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
+            <div ref={scrollRef} className="chat-log flex-1 scrollbar-thin scrollbar-color-mid overflow-y-auto px-4 pt-4 pb-24">
+              {messages.length === 0 && (
+                <div className="m-auto max-w-[380px] text-center text-[13px] leading-1.6 text-muted">
+                  <p>Ask Laos anything about your workspace — what agents exist, what they can do, or to delegate a task.</p>
+                  <p className="mt-2 font-mono text-[11px]">Try: "What agents do I have?" or "Ask the research agent to find competitors."</p>
+                </div>
+              )}
+              {messages.map((m, i) => (
+                <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} last:mb-0`}>
+                  <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13px] leading-1.6 whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
+                    {m.content}
+                    {busy && i === messages.length - 1 && m.role === 'assistant' && (
+                      m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming />
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
-          )}
-          {messages.map((m, i) => (
-            <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13px] leading-1.6 whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
-                {m.content}
-                {busy && i === messages.length - 1 && m.role === 'assistant' && (
-                  m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming />
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+          </div>
 
-        <ConfirmDialog />
+          <ConfirmDialog />
 
-        <div className="flex flex-none items-end gap-2.5 border-t border-line p-3">
-          <textarea
-            rows={2}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
-            placeholder="Message the Manager…  (/agents, /tasks, /switch, /help)"
-            className="flex-1 resize-none rounded-lg border border-line bg-panel2 px-3 py-2.5 text-[13px] text-text outline-none placeholder:text-muted focus:border-mid"
-          />
-          <button className="primary" onClick={submit} disabled={busy || !input.trim()}><Send size={13} /></button>
+          {/* Input overlays the chat, floating at the bottom */}
+          <div className="absolute right-0 bottom-0 left-0 flex items-end gap-2.5 rounded-lg bg-gradient-to-t from-[var(--bg)] via-[var(--bg)]/80 to-transparent p-3 pt-6">
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={onInputChange}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
+              placeholder="Message Laos…  (/agents, /tasks, /switch, /help)"
+              style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 10, padding: '12px 14px', color: 'var(--text)', resize: 'none', minHeight: 44, maxHeight: 160, boxShadow: '0 8px 24px #000a', outline: 'none' }}
+            />
+            <button className="primary" onClick={submit} disabled={busy || !input.trim()} title="Send"><Send size={14} /></button>
+          </div>
         </div>
       </div>
 
@@ -222,7 +236,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
                 setViewMsgs(msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: '' })));
               }}>
                 <span className="block truncate text-[11px] text-text">{s.id === sessionId ? '● Current chat' : s.title}</span>
-                <span className="block font-mono text-[9px] text-muted">{new Date(s.updatedAt).toLocaleString()}</span>
+                <span className="block font-mono text-[9px] text-muted">{s.updatedAt ? (() => { const d = new Date(s.updatedAt); return isNaN(d.getTime()) ? '' : d.toLocaleString(); })() : ''}</span>
               </button>
               <button className="cursor-pointer border-0 bg-transparent p-1 text-muted hover:text-[#f87171]" onClick={async () => { await deleteChatSession(s.id); listChatSessions(agents.find((a) => a.isManager)?.id ?? 'manager').then(setSessions); }}><Trash2 size={11} /></button>
             </div>
@@ -241,7 +255,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
 
       {configOpen && mgrDraft && (
         <Drawer
-          title="Manager config"
+          title="Laos config"
           onClose={() => setConfigOpen(false)}
           initialWidth={Math.round(window.innerWidth / 2)}
           resizable
@@ -261,10 +275,10 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
               value={mgrDraft.objective}
               onChange={(e) => setMgrDraft({ ...mgrDraft, objective: e.target.value })}
               rows={5}
-              placeholder="Describe the Manager's role…"
+              placeholder="Describe Laos's role…"
               className="mt-1.5 w-full resize-y rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] leading-1.6 text-text outline-none focus:border-mid"
             />
-            <p className="mt-1.5 text-[11px] leading-1.5 text-muted">The system prompt is generated dynamically from your workspace and the Manager's tools. This objective is a seed/fallback description.</p>
+            <p className="mt-1.5 text-[11px] leading-1.5 text-muted">The system prompt is generated dynamically from your workspace and Laos's tools. This objective is a seed/fallback description.</p>
 
             <label className="mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">PERMISSIONS</label>
             <div className="mt-1.5 flex flex-wrap gap-3">
@@ -282,10 +296,28 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
 
             <label className="mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">MEMORY</label>
             <div className="mt-1.5 flex items-center gap-2">
-              <button className="secondary" onClick={() => { const id = mgrDraft.id; reset(id); toast('Manager memory cleared', 'success'); }}>Reset memory</button>
+              <button className="secondary" onClick={() => { const id = mgrDraft.id; reset(id); toast('Laos memory cleared', 'success'); }}>Reset memory</button>
             </div>
           </div>
         </Drawer>
+      )}
+
+      {viewingSession && (
+        <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60" onClick={() => setViewingSession(null)}>
+          <div className="flex max-h-[70vh] w-[520px] max-w-[92vw] flex-col rounded-[12px] border border-line bg-panel shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex h-[48px] flex-none items-center justify-between border-b border-line px-4">
+              <b className="text-[13px]">Chat history</b>
+              <button className="secondary" onClick={() => setViewingSession(null)}>Close</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {viewMsgs.length === 0 ? <p className="text-center text-[12px] text-muted">No messages.</p> : viewMsgs.map((m, i) => (
+                <div key={i} className={`mb-2 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[80%] rounded-[10px] px-3 py-2 text-[12.5px] leading-1.6 whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>{m.content}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

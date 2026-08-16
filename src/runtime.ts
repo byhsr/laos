@@ -41,6 +41,10 @@ export async function deleteChatSession(sessionId: string): Promise<void> {
   await invoke('delete_chat_session', { sessionId });
 }
 
+export async function renameChatSession(sessionId: string, title: string): Promise<void> {
+  await invoke('rename_chat_session', { sessionId, title });
+}
+
 // Summarizes and closes a session, folding it into the agent's day context.
 export async function closeSession(sessionId: string, agentId: string, model: string): Promise<void> {
   try { await invoke('close_session', { sessionId, agentId, model }); } catch { /* best-effort */ }

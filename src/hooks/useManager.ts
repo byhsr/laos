@@ -1,10 +1,16 @@
 import { create } from 'zustand';
-import { clearAgentMemory, closeSession, createChatSession, loadConversation, streamChat } from '../runtime';
+import { clearAgentMemory, closeSession, createChatSession, loadConversation, renameChatSession, streamChat } from '../runtime';
 import { useConfirmStore } from './useConfirm';
 import { useRunsStore } from './useRuns';
 import type { Agent } from '../types';
 
 export type ChatEntry = { role: 'user' | 'assistant'; content: string; time: string };
+
+// Derives a short, readable title from the first user message.
+const titleFrom = (msg: string) => {
+  const clean = msg.replace(/\s+/g, ' ').trim();
+  return clean.length > 40 ? `${clean.slice(0, 40)}…` : (clean || 'Chat');
+};
 
 type ManagerState = {
   currentAgentId: string | null;
@@ -58,10 +64,17 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
   },
 
   send: async (message, managerAgent) => {
-    // Lazily create a session on the first message so every chat is recorded.
+    // Lazily create a session on the first message so every chat is recorded,
+    // titled by the first user message.
     if (!get().sessionId) {
-      const sess = await createChatSession(managerAgent.id, 'Chat');
+      const sess = await createChatSession(managerAgent.id, titleFrom(message));
       set({ sessionId: sess.id });
+    } else {
+      // If this is the first real message in a default-titled session, name it.
+      const conv = get().conversations[managerAgent.id] ?? [];
+      if (conv.filter((m) => m.role === 'user').length === 0) {
+        await renameChatSession(get().sessionId!, titleFrom(message));
+      }
     }
     set({ busy: true });
     const userEntry: ChatEntry = { role: 'user', content: message, time: new Date().toLocaleTimeString() };

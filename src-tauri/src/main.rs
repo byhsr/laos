@@ -465,7 +465,7 @@ fn ensure_manager(conn: &Connection) -> Result<(), String> {
     let model = manager_default_model(conn);
     let model = if model.is_empty() { "".into() } else { model };
     conn.execute(
-      "INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, is_manager, description) VALUES ('manager','Manager','You are the workspace Manager. Orchestrate agents, control the workspace, and coordinate work.',?1,'[]','[]',1,'[\"network\"]','agents/manager','#22c55e',1,'')",
+      "INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, is_manager, description) VALUES ('manager','Laos','You are Laos, the workspace orchestrator. Control the workspace and coordinate work.',?1,'[]','[]',1,'[\"network\"]','agents/manager','#22c55e',1,'')",
       params![model],
     ).map_err(|e| e.to_string())?;
   }
@@ -1519,7 +1519,7 @@ async fn manager_turn(app: &AppHandle, message: &str) -> Result<String, String> 
       if model.is_empty() {
         return Err("No model configured. Add an enabled model in the Models tab first.".into());
       }
-      let m = AgentRequest { id: "manager".into(), name: "Manager".into(), objective: "You are the workspace Manager. Orchestrate agents, control the workspace, and coordinate work.".into(), model: model.clone(), tool_ids: vec![], integrations: vec![], home_path: "agents/manager".into(), permissions: vec!["network".into()] };
+      let m = AgentRequest { id: "manager".into(), name: "Laos".into(), objective: "You are Laos, the workspace orchestrator. Control the workspace and coordinate work.".into(), model: model.clone(), tool_ids: vec![], integrations: vec![], home_path: "agents/manager".into(), permissions: vec!["network".into()] };
       conn.execute("INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, is_manager) VALUES (?1,?2,?3,?4,'[]','[]',1,?5,?6,'#22c55e',1)", params![m.id, m.name, m.objective, m.model, serde_json::to_string(&m.permissions).unwrap_or_else(|_| "[]".into()), m.home_path]).map_err(|e| e.to_string())?;
       m
     }
@@ -2273,6 +2273,13 @@ fn delete_chat_session(app: AppHandle, session_id: String) -> Result<(), String>
   Ok(())
 }
 
+#[tauri::command]
+fn rename_chat_session(app: AppHandle, session_id: String, title: String) -> Result<(), String> {
+  let conn = db(&app)?;
+  conn.execute("UPDATE chat_sessions SET title=?1 WHERE id=?2", params![title, session_id]).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 // Appends a message to a session (creates the session if missing).
 fn append_session_message(conn: &Connection, session_id: &str, agent_id: &str, role: &str, content: &str) -> Result<(), String> {
   let now = chrono::Utc::now().to_rfc3339();
@@ -2537,7 +2544,7 @@ fn main() {
       tauri::async_runtime::spawn(telegram_loop(handle));
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, list_runs, stream_chat, get_conversation, clear_agent_memory, confirm_manager_tool, list_chat_sessions, get_chat_session, create_chat_session, delete_chat_session])
+    .invoke_handler(tauri::generate_handler![initialize_storage, list_model_configs, save_model_config, delete_model_config, list_tools, save_tool, delete_tool, list_agents, save_agent, delete_agent, list_workflows, save_workflow, delete_workflow, list_integrations, save_integration_config, test_integration, start_oauth, connect_oauth, complete_oauth, execute_agent, execute_workflow, manager_message, list_all_tasks, get_task, run_task, cancel_task, list_runs, stream_chat, get_conversation, clear_agent_memory, confirm_manager_tool, list_chat_sessions, get_chat_session, create_chat_session, delete_chat_session, rename_chat_session, close_session])
     .run(tauri::generate_context!())
     .expect("error while running Local Agent OS");
 }

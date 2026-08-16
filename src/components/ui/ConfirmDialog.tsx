@@ -29,7 +29,7 @@ export function ConfirmDialog() {
     <div className="mb-2 rounded-[10px] border border-[#facc15]/40 bg-panel p-3.5 shadow-[0_8px_30px_#0008]">
       <div className="mb-2 flex items-center gap-2">
         <ShieldAlert size={15} className="text-[#facc15]" />
-        <b className="text-[13px]">The Manager wants to {title}</b>
+        <b className="text-[13px]">Laos wants to {title}</b>
       </div>
       <div className="mb-3 grid gap-2">
         {entries.length === 0 && <p className="text-[12px] text-muted">No parameters.</p>}
