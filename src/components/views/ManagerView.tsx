@@ -59,26 +59,50 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
     integrations: [], memory: true, permissions: ['network'], homePath: 'agents/manager', color: '#22c55e', x: 0, y: 0, isManager: true,
   };
 
+  // Deterministic command handler — these never reach the LLM.
+  const runCommand = (cmd: string, text: string): string | null => {
+    const arg = (re: RegExp) => { const m = text.match(re); return m ? m[1].trim() : null; };
+
+    if (cmd === '/agents') {
+      const list = agents.filter((a) => !a.isManager);
+      if (list.length === 0) return 'No agents yet. Create one with "create an agent…".';
+      return list.map((a) => `- **${a.name}** (${a.model})\n  ${a.objective || 'no objective'}`).join('\n');
+    }
+    if (cmd === '/tasks') {
+      if (tasks.length === 0) return 'No tasks yet.';
+      return tasks.map((t) => `- **${t.status}** → ${agents.find((a) => a.id === t.assignedAgent)?.name ?? t.assignedAgent}: ${t.input}`).join('\n');
+    }
+    if (cmd === '/help') {
+      return 'Available commands:\n- /agents — list agents\n- /tasks — list tasks\n- /switch &lt;agent&gt; — switch conversation to an agent\n- /help — this message\n\nEverything else goes to the Manager.';
+    }
+    if (cmd === '/switch') {
+      const name = arg(/^\/switch\s+(.+)$/i);
+      if (!name) return 'Usage: /switch &lt;agent name&gt;';
+      const agent = agents.find((a) => !a.isManager && a.name.toLowerCase().includes(name.toLowerCase()));
+      if (!agent) return `No agent named "${name}". Try /agents to list them.`;
+      setCurrentAgent(agent.id);
+      return `Switched to **${agent.name}**.`;
+    }
+    return null;
+  };
+
+  const echo = (agentId: string, reply: string) => {
+    useManagerStore.setState((s) => {
+      const conv = { ...s.conversations, [agentId]: [...(s.conversations[agentId] ?? []), { role: 'assistant' as const, content: reply, time: new Date().toLocaleTimeString() }] };
+      return { conversations: conv, messages: conv[agentId] };
+    });
+  };
+
   const submit = async () => {
     if (!input.trim() || busy) return;
     const text = input.trim();
     setInput('');
-    // /switch <agent> handled client-side for instant switching.
-    const m = text.match(/^\/switch\s+(.+)$/i);
-    if (m) {
-      const name = m[1].trim().toLowerCase();
-      const agent = agents.find((a) => a.name.toLowerCase().includes(name));
-      if (agent) {
-        setCurrentAgent(agent.id);
-        const reply = `Switched to **${agent.name}**.`;
-        // Echo as assistant message into that conversation.
-        useManagerStore.setState((s) => {
-          const conv = { ...s.conversations, [agent.id]: [...(s.conversations[agent.id] ?? []), { role: 'assistant' as const, content: reply, time: new Date().toLocaleTimeString() }] };
-          return { conversations: conv, messages: conv[agent.id] };
-        });
-      } else {
-        await send(text, managerAgent);
-      }
+    // Deterministic slash commands — resolved locally, no LLM involved.
+    const cmd = text.toLowerCase().split(/\s+/)[0];
+    const reply = runCommand(cmd, text);
+    if (reply !== null) {
+      const agentId = useManagerStore.getState().currentAgentId ?? managerAgent.id;
+      echo(agentId, reply);
       return;
     }
     await send(text, managerAgent);
@@ -130,7 +154,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
-            placeholder="Message the Manager…  (/switch &lt;agent&gt;)"
+            placeholder="Message the Manager…  (/agents, /tasks, /switch, /help)"
             className="flex-1 resize-none rounded-lg border border-line bg-panel2 px-3 py-2.5 text-[13px] text-text outline-none placeholder:text-muted focus:border-mid"
           />
           <button className="primary" onClick={submit} disabled={busy || !input.trim()}><Send size={13} /></button>
@@ -184,6 +208,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[10px]">/switch &lt;agent&gt;</span>
           <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[10px]">/agents</span>
           <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[10px]">/tasks</span>
+          <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[10px]">/help</span>
           <CornerDownLeft size={12} className="mt-1 opacity-50" />
         </div>
       </div>
