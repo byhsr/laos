@@ -4,6 +4,7 @@ import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run
 import { Dropdown } from './ui/Dropdown';
 import { MultiDropdown } from './ui/MultiDropdown';
 import { AgentAvatar, PersonaPicker } from './ui/AgentAvatar';
+import { Markdown } from './ui/Markdown';
 import { toast } from '../hooks/useToast';
 import { listChatSessions, getChatSession, createChatSession, deleteChatSession, streamChat } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
@@ -189,13 +190,13 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
               )}
               {messages.map((m, i) => (
                 <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} last:mb-0`}>
-                  <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13.5px] leading-[1.6] whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
-                    <span>
-                      {m.content}
-                      {running && i === messages.length - 1 && m.role === 'assistant' && (
-                        m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming />
-                      )}
-                    </span>
+                  <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13.5px] leading-[1.6] break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
+                    {m.role === 'user' ? m.content : (
+                      <Markdown>{m.content}</Markdown>
+                    )}
+                    {running && i === messages.length - 1 && m.role === 'assistant' && (
+                      m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming />
+                    )}
                   </div>
                 </div>
               ))}
@@ -284,9 +285,9 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
               <div className="grid gap-2">
                 {history.length === 0 ? <p className="text-center text-[12px] text-muted">No messages in this chat.</p> : history.map((m, i) => (
                   <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[78%] rounded-[10px] px-3 py-2 text-[12.5px] leading-1.6 whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
+                    <div className={`max-w-[78%] rounded-[10px] px-3 py-2 text-[12.5px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
                       <span className="mb-0.5 block font-mono text-[9px] text-muted">{m.role === 'user' ? 'you' : agent.name}</span>
-                      {m.content}
+                      {m.role === 'user' ? m.content : <Markdown>{m.content}</Markdown>}
                     </div>
                   </div>
                 ))}

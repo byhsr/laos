@@ -6,6 +6,7 @@ import { useTasksStore } from '../../hooks/useTasks';
 import { useAgentsStore } from '../../hooks/useAgents';
 import { useShallow } from 'zustand/react/shallow';
 import { StreamIndicator } from '../ui/StreamIndicator';
+import { Markdown } from '../ui/Markdown';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Drawer } from '../ui/Drawer';
 import { Dropdown } from '../ui/Dropdown';
@@ -167,8 +168,8 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
               )}
               {messages.map((m, i) => (
                 <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} last:mb-0`}>
-                  <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13px] leading-1.6 whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
-                    {m.content}
+                  <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
+                    {m.role === 'user' ? m.content : <Markdown>{m.content}</Markdown>}
                     {busy && i === messages.length - 1 && m.role === 'assistant' && (
                       m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming />
                     )}
@@ -349,7 +350,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             <div className="flex-1 overflow-y-auto p-4">
               {viewMsgs.length === 0 ? <p className="text-center text-[12px] text-muted">No messages.</p> : viewMsgs.map((m, i) => (
                 <div key={i} className={`mb-2 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] rounded-[10px] px-3 py-2 text-[12.5px] leading-1.6 whitespace-pre-wrap break-words ${m.role === 'user' ? 'rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>{m.content}</div>
+                  <div className={`max-w-[80%] rounded-[10px] px-3 py-2 text-[12.5px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>{m.role === 'user' ? m.content : <Markdown>{m.content}</Markdown>}</div>
                 </div>
               ))}
             </div>
