@@ -13,7 +13,7 @@ export function SkillsView({ skills, onAdd, onEdit, onDelete, embedded = false }
       <header className="mb-6 flex items-end justify-between gap-4">
         {!embedded && (
           <div className="min-w-0">
-            <span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span>
+            <span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span>
             <h1 className="m-0 text-[24px]">Skills</h1>
             <p className="mt-1 text-[12px] leading-[1.6] text-muted">Reusable instruction packs. Attach them to an agent and they are injected into its prompt on every run and chat turn.</p>
           </div>
@@ -21,14 +21,14 @@ export function SkillsView({ skills, onAdd, onEdit, onDelete, embedded = false }
         <button className="primary ml-auto shrink-0" onClick={onAdd}><Check size={13} />Add skill</button>
       </header>
 
-      <div className="grid max-w-[900px] gap-2.5">
+      <div className="grid max-w-[900px] gap-3">
         {skills.map((s) => (
-          <div key={s.id} className="flex items-center gap-[15px] rounded-[9px] border border-line bg-panel p-[18px]">
+          <div key={s.id} className="flex items-center gap-[15px] rounded-[16px] border border-line bg-panel p-[22px]">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-panel2 text-muted"><Sparkles size={18} /></span>
             <div className="min-w-0 flex-1">
               <b className="text-[13px]">{s.name}</b>
               <span className="block truncate text-[11px] text-muted">{s.description || 'No description'}</span>
-              <span className="mt-1 block font-mono text-[10px] text-muted">{wordCount(s)}</span>
+              <span className="mt-1 block font-mono text-[11px] text-muted">{wordCount(s)}</span>
             </div>
             <div className="flex shrink-0 gap-1.5">
               <button className="secondary" onClick={() => onEdit(s)}>Edit</button>
@@ -64,8 +64,8 @@ export function SkillFormDrawer({ editing, isNew, onClose, onSave }: {
     }
   };
 
-  const inputCls = 'w-full rounded-[6px] border border-line bg-panel2 px-3 py-2.5 text-text';
-  const labelCls = 'mt-4 mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase';
+  const inputCls = 'w-full rounded-[10px] border border-line bg-panel2 px-3 py-2.5 text-text';
+  const labelCls = 'mt-4 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase';
 
   return (
     <Drawer
@@ -75,7 +75,7 @@ export function SkillFormDrawer({ editing, isNew, onClose, onSave }: {
       resizable
       headerAction={<button className="primary" disabled={saving} onClick={save}><Check size={13} />{saving ? 'Saving…' : 'Save'}</button>}
     >
-      <div className="flex h-[calc(100vh-170px)] min-h-[420px] flex-col rounded-[10px] border border-line bg-panel p-[22px]">
+      <div className="flex h-[calc(100vh-170px)] min-h-[420px] flex-col rounded-[16px] border border-line bg-panel p-[22px]">
         <p className="m-0 mb-3.5 text-[12px] leading-[1.6] text-muted">
           A skill is instructions the model follows. Every agent you attach it to gets this text in its system prompt.
         </p>

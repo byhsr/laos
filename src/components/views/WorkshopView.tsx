@@ -18,7 +18,7 @@ const TABS: { key: WorkshopTab; label: string }[] = [
 ];
 
 const tabBtn = (active: boolean) =>
-  `flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${active ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`;
+  `flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${active ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`;
 
 export function WorkshopView({
   skills, tools, integrations, runs, agents,
@@ -38,7 +38,7 @@ export function WorkshopView({
       <header className="mb-5 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <Boxes size={14} className="text-[var(--green)]" />
-          <span className="font-mono text-[10px] uppercase tracking-[1px] text-text">Workshop</span>
+          <span className="font-mono text-[11px] uppercase tracking-[1px] text-text">Workshop</span>
         </div>
         <div className="flex items-center gap-1">
           {TABS.map((t) => (

@@ -31,9 +31,9 @@ export function Drawer({ title, onClose, children, initialWidth, resizable, head
 
   return (
     <>
-      <div className="absolute inset-0 z-20 bg-black/50" onClick={onClose} />
+      <div className="absolute inset-0 z-20 animate-[overlay-in_180ms_ease-out] bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
       <div
-        className={`absolute top-0 right-0 bottom-0 z-[21] flex max-w-[95%] animate-[drawer-in_180ms_ease-out] flex-col border-l border-line bg-panel shadow-[-18px_0_40px_#0008] ${resizable ? '' : 'w-[min(520px,92vw)]'}`}
+        className={`glass-strong absolute top-0 right-0 bottom-0 z-[21] flex max-w-[95%] animate-[drawer-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col rounded-l-3xl border-l border-hairline shadow-float ${resizable ? '' : 'w-[min(520px,92vw)]'}`}
         role="dialog"
         aria-label={title}
         style={style}
@@ -45,14 +45,14 @@ export function Drawer({ title, onClose, children, initialWidth, resizable, head
             title="Drag to resize"
           />
         )}
-        <div className="flex h-[60px] flex-none items-center justify-between gap-3 border-b border-line px-[22px]">
+        <div className="flex h-[64px] flex-none items-center justify-between gap-3 border-b border-hairline px-6">
           <b style={{ fontSize: 15 }} className="truncate">{title}</b>
           <div className="flex shrink-0 items-center gap-2">
             {headerAction}
             <button className="secondary" onClick={onClose}><X size={13} />Close</button>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-[22px]">{children}</div>
+        <div className="flex-1 overflow-y-auto p-6">{children}</div>
       </div>
     </>
   );

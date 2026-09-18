@@ -151,22 +151,22 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <Bot size={14} className="text-[var(--green)]" />
-          <span className="font-mono text-[10px] uppercase tracking-[1px] text-text">Laos</span>
-          <span className="font-mono text-[10px] text-muted">{currentAgentId ? `→ ${agents.find((a) => a.id === currentAgentId)?.name ?? currentAgentId}` : ''}</span>
+          <span className="font-mono text-[11px] uppercase tracking-[1px] text-text">Laos</span>
+          <span className="font-mono text-[11px] text-muted">{currentAgentId ? `→ ${agents.find((a) => a.id === currentAgentId)?.name ?? currentAgentId}` : ''}</span>
         </div>
         <div className="flex items-center gap-1">
-          <button className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'chat' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('chat')}>Chat</button>
-          <button className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'info' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('info')}>
+          <button className={`flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'chat' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('chat')}>Chat</button>
+          <button className={`flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'info' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('info')}>
             Info
             <span className="group relative inline-flex">
               <Info size={11} className="text-mid" />
-              <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 hidden -translate-x-1/2 whitespace-nowrap rounded-[5px] border border-line bg-panel2 px-2 py-1 text-[10px] font-normal text-text shadow-[0_8px_20px_#000a] group-hover:block">Agents, integrations, active tasks, chats &amp; commands</span>
+              <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 hidden -translate-x-1/2 whitespace-nowrap rounded-[8px] border border-line bg-panel2 px-2 py-1 text-[11px] font-normal text-text shadow-[0_8px_20px_#000a] group-hover:block">Agents, integrations, active tasks, chats &amp; commands</span>
             </span>
           </button>
-          <button className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'telegram' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('telegram')}>Telegram</button>
-          <button className="rounded-[6px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; const m = agents.find((a) => a.id === id)?.model ?? models.find((x) => x.enabled)?.id ?? ''; newSession(id, m); }}>New chat</button>
-          <button className="rounded-[6px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={openConfig}>Config</button>
-          <button className="rounded-[6px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; reset(id); }} title="Clear Laos's memory">Reset memory</button>
+          <button className={`flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'telegram' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('telegram')}>Telegram</button>
+          <button className="rounded-[10px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; const m = agents.find((a) => a.id === id)?.model ?? models.find((x) => x.enabled)?.id ?? ''; newSession(id, m); }}>New chat</button>
+          <button className="rounded-[10px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={openConfig}>Config</button>
+          <button className="rounded-[10px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; reset(id); }} title="Clear Laos's memory">Reset memory</button>
         </div>
       </header>
 
@@ -182,7 +182,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
               )}
               {messages.map((m, i) => (
                 <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} last:mb-0`}>
-                  <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
+                  <div className={`max-w-[78%] rounded-[16px] px-3.5 py-2.5 text-[13px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[8px] bg-line text-text' : 'rounded-tl-[8px] border border-line bg-panel2'}`}>
                     {m.role === 'user' ? m.content : <Markdown>{m.content}</Markdown>}
                     {busy && i === messages.length - 1 && m.role === 'assistant' && (
                       m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming />
@@ -194,7 +194,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           </div>
 
           {/* Input overlays the chat, floating at the bottom */}
-          <div className="absolute right-0 bottom-0 left-0 flex items-end gap-2.5 rounded-lg bg-gradient-to-t from-[var(--bg)] via-[var(--bg)]/80 to-transparent p-3 pt-6">
+          <div className="absolute right-0 bottom-0 left-0 flex items-end gap-3 rounded-b-[16px] bg-gradient-to-t from-[var(--panel)] via-[var(--panel)]/85 to-transparent p-3 pt-6">
             <div className="absolute right-3 bottom-[calc(100%+8px)] left-3 z-[30]">
               <ConfirmDialog />
             </div>
@@ -205,7 +205,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
               onChange={onInputChange}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
               placeholder="Message Laos…  (/agents, /tasks, /switch, /help)"
-              style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 10, padding: '12px 14px', color: 'var(--text)', resize: 'none', minHeight: 44, maxHeight: 160, boxShadow: '0 8px 24px #000a', outline: 'none' }}
+              style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--color-hairline)', borderRadius: 16, padding: '12px 16px', color: 'var(--text)', resize: 'none', minHeight: 44, maxHeight: 160, boxShadow: 'var(--shadow-soft)', outline: 'none' }}
             />
             <button className="primary" onClick={submit} disabled={busy || !input.trim()} title="Send"><Send size={14} /></button>
           </div>
@@ -215,18 +215,18 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
       {tab === 'info' && (
         <div className="grid max-h-[calc(100vh-220px)] grid-cols-1 gap-4 overflow-y-auto md:grid-cols-2 xl:grid-cols-3">
           {/* Agents */}
-          <div className="rounded-[10px] border border-line bg-panel p-3.5">
-            <span className="mb-2 block font-mono text-[10px] tracking-[1px] text-muted">AGENTS</span>
+          <div className="rounded-[16px] border border-line bg-panel p-3.5">
+            <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">AGENTS</span>
             <div className="grid gap-1">
               {agents.filter((a) => !a.isManager).map((a) => (
                 <button
                   key={a.id}
-                  className={`cursor-pointer rounded-[6px] border-0 px-2.5 py-2 text-left text-[12px] ${currentAgentId === a.id ? 'bg-panel2 text-text' : 'text-muted hover:bg-line'}`}
+                  className={`cursor-pointer rounded-[10px] border-0 px-2.5 py-2 text-left text-[12px] ${currentAgentId === a.id ? 'bg-panel2 text-text' : 'text-muted hover:bg-line'}`}
                   onClick={() => setCurrentAgent(a.id)}
                 >
                   <span className="mr-1.5 inline-block h-2 w-2 rounded-full" style={{ background: a.color }} />
                   {a.name}
-                  <span className="block font-mono text-[9px] text-muted">{a.integrations.join(', ') || 'no integrations'}</span>
+                  <span className="block font-mono text-[10px] text-muted">{a.integrations.join(', ') || 'no integrations'}</span>
                 </button>
               ))}
               {agents.filter((a) => !a.isManager).length === 0 && <p className="px-2 text-[11px] text-muted">No agents yet.</p>}
@@ -234,11 +234,11 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           </div>
 
           {/* Integrations */}
-          <div className="rounded-[10px] border border-line bg-panel p-3.5">
-            <span className="mb-2 block font-mono text-[10px] tracking-[1px] text-muted">INTEGRATIONS</span>
+          <div className="rounded-[16px] border border-line bg-panel p-3.5">
+            <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">INTEGRATIONS</span>
             <div className="grid gap-1">
               {integrations.map((i) => (
-                <div key={i.id} className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[11px]">
+                <div key={i.id} className="flex items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-[11px]">
                   <i className={`inline-block h-1.5 w-1.5 rounded-full ${i.connected ? 'bg-[var(--green)]' : 'bg-[#f79009]'}`} />
                   <span className="text-muted">{i.name}</span>
                 </div>
@@ -247,15 +247,15 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           </div>
 
           {/* Active tasks */}
-          <div className="rounded-[10px] border border-line bg-panel p-3.5">
-            <span className="mb-2 block font-mono text-[10px] tracking-[1px] text-muted">ACTIVE TASKS</span>
+          <div className="rounded-[16px] border border-line bg-panel p-3.5">
+            <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">ACTIVE TASKS</span>
             <div className="grid gap-1.5">
               {activeTasks.length === 0 && <p className="px-2 text-[11px] text-muted">No active tasks.</p>}
               {activeTasks.map((t: Task) => (
-                <div key={t.id} className="rounded-[6px] border border-line bg-panel2 p-2">
+                <div key={t.id} className="rounded-[10px] border border-line bg-panel2 p-2">
                   <div className="flex items-center justify-between">
                     <b className="text-[11px]">{agents.find((a) => a.id === t.assignedAgent)?.name ?? t.assignedAgent}</b>
-                    <span className={`font-mono text-[9px] ${STATUS_COLOR[t.status]}`}>{t.status}</span>
+                    <span className={`font-mono text-[10px] ${STATUS_COLOR[t.status]}`}>{t.status}</span>
                   </div>
                   <p className="mt-1 line-clamp-2 text-[10.5px] leading-1.5 text-muted">{t.input}</p>
                 </div>
@@ -264,19 +264,19 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           </div>
 
           {/* Chats */}
-          <div className="rounded-[10px] border border-line bg-panel p-3.5">
-            <span className="mb-2 block font-mono text-[10px] tracking-[1px] text-muted">CHATS</span>
+          <div className="rounded-[16px] border border-line bg-panel p-3.5">
+            <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">CHATS</span>
             <div className="grid gap-1.5">
               {sessions.length === 0 && <p className="px-2 text-[11px] text-muted">No chats yet. Send a message to start one.</p>}
               {sessions.map((s) => (
-                <div key={s.id} className={`flex items-center gap-1 rounded-[6px] border px-2 py-1.5 ${s.id === sessionId ? 'border-[var(--green)] bg-panel2' : 'border-line bg-panel2/50'}`}>
+                <div key={s.id} className={`flex items-center gap-1 rounded-[10px] border px-2 py-1.5 ${s.id === sessionId ? 'border-[var(--green)] bg-panel2' : 'border-line bg-panel2/50'}`}>
                   <button className="flex-1 cursor-pointer overflow-hidden text-left" onClick={async () => {
                     setViewingSession(s.id);
                     const msgs = await getChatSession(s.id);
                     setViewMsgs(msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: '' })));
                   }}>
                     <span className="block truncate text-[11px] text-text">{s.id === sessionId ? '● Current chat' : s.title}</span>
-                    <span className="block font-mono text-[9px] text-muted">{s.updatedAt ? (() => { const d = new Date(s.updatedAt); return isNaN(d.getTime()) ? '' : d.toLocaleString(); })() : ''}</span>
+                    <span className="block font-mono text-[10px] text-muted">{s.updatedAt ? (() => { const d = new Date(s.updatedAt); return isNaN(d.getTime()) ? '' : d.toLocaleString(); })() : ''}</span>
                   </button>
                   <button className="cursor-pointer border-0 bg-transparent p-1 text-muted hover:text-[#f87171]" onClick={async () => { await deleteChatSession(s.id); listChatSessions(agents.find((a) => a.isManager)?.id ?? 'manager').then(setSessions); }}><Trash2 size={11} /></button>
                 </div>
@@ -285,13 +285,13 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           </div>
 
           {/* Commands */}
-          <div className="rounded-[10px] border border-line bg-panel p-3.5">
-            <span className="mb-2 block font-mono text-[10px] tracking-[1px] text-muted">COMMANDS</span>
+          <div className="rounded-[16px] border border-line bg-panel p-3.5">
+            <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">COMMANDS</span>
             <div className="grid gap-1 text-[11px] text-muted">
-              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[10px]">/switch &lt;agent&gt;</span>
-              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[10px]">/agents</span>
-              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[10px]">/tasks</span>
-              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[10px]">/help</span>
+              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[11px]">/switch &lt;agent&gt;</span>
+              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[11px]">/agents</span>
+              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[11px]">/tasks</span>
+              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[11px]">/help</span>
               <CornerDownLeft size={12} className="mt-1 opacity-50" />
             </div>
           </div>
@@ -301,19 +301,19 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
       {tab === 'telegram' && (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="mb-2 flex items-center justify-between">
-            <span className="font-mono text-[10px] tracking-[1px] text-muted">TELEGRAM ACTIVITY</span>
+            <span className="font-mono text-[11px] tracking-[1px] text-muted">TELEGRAM ACTIVITY</span>
             <button className="secondary" onClick={loadTelegramLogs}><RefreshCw size={12} />Refresh</button>
           </div>
-          <div className="runs-console flex-1 overflow-y-auto rounded-lg border border-line bg-[#0a0a0c] p-3.5 font-mono text-[12px] leading-[1.6]">
+          <div className="runs-console flex-1 overflow-y-auto rounded-lg border border-line bg-inset p-3.5 font-mono text-[12px] leading-[1.6]">
             {telegramLogs.length === 0 ? (
               <div className="console-empty p-2.5 text-center text-[12px] text-muted">
                 <p>No Telegram activity yet. Send a message to your bot — inbound messages, processing, and replies show up here live.</p>
               </div>
             ) : telegramLogs.map((l, i) => (
               <div key={i} className="border-b border-[#1c1c1f] py-2 last:border-0">
-                <div className="flex items-center gap-2.5 text-[11px]">
+                <div className="flex items-center gap-3 text-[11px]">
                   <span className={l.direction === 'in' ? 'text-[#38bdf8]' : 'text-[#22c55e]'}>{l.direction === 'in' ? '▸ IN' : '◂ OUT'}</span>
-                  <span className={`font-mono text-[10px] ${l.status === 'error' ? 'text-[#f87171]' : l.status === 'sent' ? 'text-[#22c55e]' : 'text-[#facc15]'}`}>{l.status}</span>
+                  <span className={`font-mono text-[11px] ${l.status === 'error' ? 'text-[#f87171]' : l.status === 'sent' ? 'text-[#22c55e]' : 'text-[#facc15]'}`}>{l.status}</span>
                   <span className="ml-auto text-mid">{l.createdAt ? (() => { const d = new Date(l.createdAt); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString(); })() : ''}</span>
                 </div>
                 <div className="mt-1 text-[#d4d4d8]">in: {l.text}</div>
@@ -333,8 +333,8 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           resizable
           headerAction={<button className="primary" onClick={saveConfig}>Save</button>}
         >
-          <div className="w-full rounded-[10px] border border-line bg-panel p-[22px]">
-            <label className="block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">MODEL</label>
+          <div className="w-full rounded-[16px] border border-line bg-panel p-[22px]">
+            <label className="block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">MODEL</label>
             <Dropdown
               value={mgrDraft.model}
               options={models.map((m) => ({ value: m.id, label: m.label }))}
@@ -342,14 +342,14 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             />
             {models.length === 0 && <p className="mt-2 text-[12px] text-muted">No models configured. Add one in the Models tab.</p>}
 
-            <label className="mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">PERSONA</label>
+            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">PERSONA</label>
             <PersonaPicker value={mgrDraft.persona ?? 'ai-orb'} onChange={(v) => setMgrDraft({ ...mgrDraft, persona: v })} />
             <div className="mt-2 flex items-center gap-2">
               <AgentAvatar agent={{ ...mgrDraft, persona: mgrDraft.persona ?? 'ai-orb' }} size={28} />
               <span className="text-[11px] text-muted">Animated Lottie gremlin avatar</span>
             </div>
 
-            <label className="mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">OBJECTIVE / PROMPT</label>
+            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">OBJECTIVE / PROMPT</label>
             <textarea
               value={mgrDraft.objective}
               onChange={(e) => setMgrDraft({ ...mgrDraft, objective: e.target.value })}
@@ -359,7 +359,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             />
             <p className="mt-1.5 text-[11px] leading-relaxed text-muted">The system prompt is generated dynamically from your workspace and Laos's tools. This objective is a seed/fallback description.</p>
 
-            <label className="mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">PERMISSIONS</label>
+            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">PERMISSIONS</label>
             <div className="mt-1.5 flex flex-wrap gap-3">
               {(['network', 'files', 'host_fs'] as const).map((p) => (
                 <label key={p} className="flex items-center gap-1.5 text-[12px]">
@@ -373,7 +373,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
               ))}
             </div>
 
-            <label className="mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">MEMORY</label>
+            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">MEMORY</label>
             <div className="mt-1.5 flex items-center gap-2">
               <button className="secondary" onClick={() => { const id = mgrDraft.id; reset(id); toast('Laos memory cleared', 'success'); }}>Reset memory</button>
             </div>
@@ -383,7 +383,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
 
       {viewingSession && (
         <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60" onClick={() => setViewingSession(null)}>
-          <div className="flex max-h-[70vh] w-[520px] max-w-[92vw] flex-col rounded-[12px] border border-line bg-panel shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
+          <div className="flex max-h-[70vh] w-[520px] max-w-[92vw] flex-col rounded-[16px] border border-line bg-panel shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
             <div className="flex h-[48px] flex-none items-center justify-between border-b border-line px-4">
               <b className="text-[13px]">Chat history</b>
               <button className="secondary" onClick={() => setViewingSession(null)}>Close</button>
@@ -391,7 +391,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             <div className="flex-1 overflow-y-auto p-4">
               {viewMsgs.length === 0 ? <p className="text-center text-[12px] text-muted">No messages.</p> : viewMsgs.map((m, i) => (
                 <div key={i} className={`mb-2 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] rounded-[10px] px-3 py-2 text-[12.5px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>{m.role === 'user' ? m.content : <Markdown>{m.content}</Markdown>}</div>
+                  <div className={`max-w-[80%] rounded-[16px] px-3 py-2 text-[12.5px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[8px] bg-line text-text' : 'rounded-tl-[8px] border border-line bg-panel2'}`}>{m.role === 'user' ? m.content : <Markdown>{m.content}</Markdown>}</div>
                 </div>
               ))}
             </div>

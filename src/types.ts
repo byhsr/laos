@@ -30,7 +30,7 @@ export type WorkflowRunStep = { nodeId: string; nodeLabel: string; output: strin
 export type WorkflowRunResult = { steps: WorkflowRunStep[]; finalOutput: string; totalPromptTokens: number; totalCompletionTokens: number };
 export type Task = { id: string; requester: string; assignedAgent: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; input: string; context: string; result?: string | null; createdAt: string; completedAt?: string | null };
 
-export type View = 'home' | 'graph' | 'agents' | 'workflows' | 'manager' | 'tasks' | 'agent' | 'workshop' | 'settings';
+export type View = 'home' | 'agents' | 'workflows' | 'manager' | 'tasks' | 'agent' | 'workshop' | 'settings';
 
 export type DrawerForm =
   | { kind: 'tool'; editing: Tool; isNew: boolean }

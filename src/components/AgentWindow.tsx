@@ -151,15 +151,15 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     <div className="boxy flex h-full min-h-0 flex-col overflow-hidden">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
-          <button className="cursor-pointer border-0 bg-none p-0 font-mono text-[10px] uppercase tracking-[1px] text-muted hover:text-text" onClick={onBack}>Agents</button>
+          <button className="cursor-pointer border-0 bg-none p-0 font-mono text-[11px] uppercase tracking-[1px] text-muted hover:text-text" onClick={onBack}>Agents</button>
           <ChevronRight size={12} className="text-mid" />
-          <span className="font-mono text-[10px] uppercase tracking-[1px] text-text">{agent.name}</span>
+          <span className="font-mono text-[11px] uppercase tracking-[1px] text-text">{agent.name}</span>
         </div>
         <div className="flex items-center gap-1">
           {(['chat', 'runs', 'info', 'config', 'history'] as const).map((t) => {
             const locked = !complete && (t === 'chat' || t === 'runs');
             return (
-              <button key={t} className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === t ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => switchTab(t)}>
+              <button key={t} className={`flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === t ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => switchTab(t)}>
                 {t}{locked && <Lock size={9} className="opacity-70" />}
               </button>
             );
@@ -190,7 +190,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               )}
               {messages.map((m, i) => (
                 <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} last:mb-0`}>
-                  <div className={`max-w-[78%] rounded-[10px] px-3.5 py-2.5 text-[13.5px] leading-[1.6] break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
+                  <div className={`max-w-[78%] rounded-[16px] px-3.5 py-2.5 text-[13.5px] leading-[1.6] break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[8px] bg-line text-text' : 'rounded-tl-[8px] border border-line bg-panel2'}`}>
                     {m.role === 'user' ? m.content : (
                       <Markdown>{m.content}</Markdown>
                     )}
@@ -204,14 +204,14 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
           </div>
           {error && <p className="absolute bottom-[68px] left-4 text-[11px] text-[#f87171]" style={{ margin: 0 }}>{error}</p>}
           {/* Input overlays the chat, floating at the bottom */}
-          <div className="absolute right-0 bottom-0 left-0 flex items-end gap-2.5 rounded-lg bg-gradient-to-t from-[var(--bg)] via-[var(--bg)]/80 to-transparent p-3 pt-6">
+          <div className="absolute right-0 bottom-0 left-0 flex items-end gap-3 rounded-b-[16px] bg-gradient-to-t from-[var(--panel)] via-[var(--panel)]/85 to-transparent p-3 pt-6">
             <textarea
               ref={inputRef}
               rows={1} placeholder={`Message ${agent.name}…`}
               value={input}
               onChange={onInputChange}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
-              style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 10, padding: '12px 14px', color: 'var(--text)', resize: 'none', minHeight: 44, maxHeight: 160, boxShadow: '0 8px 24px #000a' }}
+              style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--color-hairline)', borderRadius: 16, padding: '12px 16px', color: 'var(--text)', resize: 'none', minHeight: 44, maxHeight: 160, boxShadow: 'var(--shadow-soft)' }}
             />
             <button className="primary" disabled={running || !input.trim()} onClick={() => send(input)} title="Send">
               <Send size={14} />
@@ -221,7 +221,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       )}
 
       {tab === 'runs' && (
-        <div className="runs-console mt-4 h-[calc(100vh-190px)] min-h-[420px] overflow-y-auto rounded-lg border border-line bg-[#0a0a0c] p-3.5 font-mono text-[12px] leading-[1.6]">
+        <div className="runs-console mt-4 h-[calc(100vh-190px)] min-h-[420px] overflow-y-auto rounded-lg border border-line bg-inset p-3.5 font-mono text-[12px] leading-[1.6]">
           {runs.filter((r) => r.agentId === agent.id).length === 0 && (
             <div className="console-empty p-2.5 text-center text-[12px] text-muted"><p>No runs yet for {agent.name}. Send a message in Chat and every step shows up here.</p></div>
           )}
@@ -230,14 +230,14 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             const totalTokens = (r.promptTokens ?? 0) + (r.completionTokens ?? 0);
             return (
               <div key={r.id} className="border-b border-[#1c1c1f] last:border-0">
-                <button className="flex w-full cursor-pointer items-center gap-2.5 border-0 bg-transparent px-1 py-2.5 text-left" onClick={() => toggleRun(r.id)}>
+                <button className="flex w-full cursor-pointer items-center gap-3 border-0 bg-transparent px-1 py-2.5 text-left" onClick={() => toggleRun(r.id)}>
                   <ChevronRight size={11} className={`shrink-0 text-mid transition-transform duration-150 ${isOpen ? 'rotate-90' : ''}`} />
                   <span className={`shrink-0 text-muted ${statusColor(r.status)}`}>{r.status === 'running' ? '▸' : r.status === 'completed' ? '✓' : '✕'}</span>
                   <span className="shrink-0 text-mid">{fmtDate(r.startedAt)}</span>
                   <span className="shrink-0 text-muted">{r.model}</span>
                   <span className="shrink-0 text-mid">{runDuration(r)}</span>
                   {totalTokens > 0 && <span className="shrink-0 text-mid">{totalTokens.toLocaleString()} tok</span>}
-                  <span className={`ml-auto shrink-0 text-[10px] ${statusColor(r.status)}`}>{r.status}</span>
+                  <span className={`ml-auto shrink-0 text-[11px] ${statusColor(r.status)}`}>{r.status}</span>
                 </button>
                 {isOpen && (
                   <div className="px-1 pb-3">
@@ -249,7 +249,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                         <span className={`text-[#a1a1aa] ${ev.type === 'tool' ? 'text-[#7dd3fc]' : ev.type === 'thought' ? 'text-[#c4b5fd]' : ''}`}>{ev.title}{ev.detail ? ` — ${ev.detail}` : ''}</span>
                       </div>
                     ))}
-                    {r.output && <pre className="mt-1.5 ml-12 whitespace-pre-wrap rounded-[6px] border border-[#1c1c1f] bg-[#111113] p-2 text-[11px] text-[#e4e4e7]">{r.output}</pre>}
+                    {r.output && <pre className="mt-1.5 ml-12 whitespace-pre-wrap rounded-[10px] border border-[#1c1c1f] bg-[#111113] p-2 text-[11px] text-[#e4e4e7]">{r.output}</pre>}
                     {r.status === 'failed' && <div className="console-line flex items-baseline gap-2"><span className="flex-none text-mid" /><span className="w-10 flex-none text-[#22c55e]">err</span><span className="text-[#a1a1aa]">Run failed — see agent chat for details.</span></div>}
                   </div>
                 )}
@@ -260,17 +260,17 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       )}
 
       {tab === 'info' && (
-        <div className="home-content mt-4 rounded-lg border border-line bg-panel p-[18px]">
+        <div className="home-content mt-4 rounded-lg border border-line bg-panel p-[22px]">
           <div className="mb-2.5 mt-5 flex justify-between text-[11px] font-bold first:mt-0"><span>TOOLS</span></div>
-          <div className="flex flex-wrap gap-[5px]">{agent.toolIds.map((t) => <span key={t} className="rounded bg-panel2 px-[7px] py-[5px] text-[10px]">{toolName(t)}</span>)}</div>
+          <div className="flex flex-wrap gap-[5px]">{agent.toolIds.map((t) => <span key={t} className="rounded bg-panel2 px-[7px] py-[5px] text-[11px]">{toolName(t)}</span>)}</div>
           <div className="mb-2.5 mt-5 flex justify-between text-[11px] font-bold"><span>INTEGRATIONS</span></div>
-          <div className="flex flex-wrap gap-[5px]">{agent.integrations.map((t) => <span key={t} className="rounded bg-panel2 px-[7px] py-[5px] text-[10px]">{t}</span>)}</div>
+          <div className="flex flex-wrap gap-[5px]">{agent.integrations.map((t) => <span key={t} className="rounded bg-panel2 px-[7px] py-[5px] text-[11px]">{t}</span>)}</div>
           <div className="mb-2.5 mt-5 flex justify-between text-[11px] font-bold"><span>PERMISSIONS</span></div>
-          <div className="mt-2 flex items-center gap-2.5 rounded-[6px] bg-panel2 p-2.5 text-[10px]"><span>{agent.permissions.join(', ') || 'none'}</span></div>
+          <div className="mt-2 flex items-center gap-3 rounded-[10px] bg-panel2 p-2.5 text-[11px]"><span>{agent.permissions.join(', ') || 'none'}</span></div>
           <div className="mb-2.5 mt-5 flex justify-between text-[11px] font-bold"><span>HOME</span></div>
-          <div className="flex items-center gap-2.5 rounded-[6px] bg-panel2 p-2.5 text-[10px]"><span>{agent.homePath}</span></div>
+          <div className="flex items-center gap-3 rounded-[10px] bg-panel2 p-2.5 text-[11px]"><span>{agent.homePath}</span></div>
           <div className="mb-2.5 mt-5 flex justify-between text-[11px] font-bold"><span>MODEL</span></div>
-          <div className="flex items-center gap-2.5 rounded-[6px] bg-panel2 p-2.5 text-[10px]"><span>{agent.model}</span></div>
+          <div className="flex items-center gap-3 rounded-[10px] bg-panel2 p-2.5 text-[11px]"><span>{agent.model}</span></div>
         </div>
       )}
 
@@ -285,8 +285,8 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               <div className="grid gap-2">
                 {history.length === 0 ? <p className="text-center text-[12px] text-muted">No messages in this chat.</p> : history.map((m, i) => (
                   <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[78%] rounded-[10px] px-3 py-2 text-[12.5px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[3px] bg-line text-text' : 'rounded-tl-[3px] border border-line bg-panel2'}`}>
-                      <span className="mb-0.5 block font-mono text-[9px] text-muted">{m.role === 'user' ? 'you' : agent.name}</span>
+                    <div className={`max-w-[78%] rounded-[16px] px-3 py-2 text-[12.5px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[8px] bg-line text-text' : 'rounded-tl-[8px] border border-line bg-panel2'}`}>
+                      <span className="mb-0.5 block font-mono text-[10px] text-muted">{m.role === 'user' ? 'you' : agent.name}</span>
                       {m.role === 'user' ? m.content : <Markdown>{m.content}</Markdown>}
                     </div>
                   </div>
@@ -296,7 +296,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
           ) : (
             <div>
               <div className="mb-3 flex items-center justify-between">
-                <span className="font-mono text-[10px] tracking-[1px] text-muted">PAST CHATS</span>
+                <span className="font-mono text-[11px] tracking-[1px] text-muted">PAST CHATS</span>
                 <button className="primary" onClick={async () => {
                   const sess = await createChatSession(agent.id, 'Chat');
                   useManagerStore.setState({ sessionId: sess.id });
@@ -311,9 +311,9 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               ) : (
                 <div className="grid gap-1.5">
                   {sessions.map((s) => (
-                    <button key={s.id} className="flex cursor-pointer items-center justify-between rounded-[6px] border border-line bg-panel2 px-3 py-2 text-left hover:border-mid" onClick={async () => { setViewingSession(s.id); const msgs = await getChatSession(s.id); setHistory(msgs.map((m, i) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: `#${i + 1}` }))); }}>
+                    <button key={s.id} className="flex cursor-pointer items-center justify-between rounded-[10px] border border-line bg-panel2 px-3 py-2 text-left hover:border-mid" onClick={async () => { setViewingSession(s.id); const msgs = await getChatSession(s.id); setHistory(msgs.map((m, i) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: `#${i + 1}` }))); }}>
                       <span className="text-[12.5px] text-text">{s.title}</span>
-                      <span className="font-mono text-[10px] text-muted">{fmtDate(s.updatedAt)}</span>
+                      <span className="font-mono text-[11px] text-muted">{fmtDate(s.updatedAt)}</span>
                     </button>
                   ))}
                 </div>
@@ -324,8 +324,8 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       )}
 
       {tab === 'config' && (
-        <div className="config-grid mt-4 grid h-[calc(100vh-210px)] min-h-[420px] items-stretch gap-[18px]" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
-          <div className="config-main flex min-h-0 flex-col rounded-lg border border-line bg-panel p-[18px]">
+        <div className="config-grid mt-4 grid h-[calc(100vh-210px)] min-h-[420px] items-stretch gap-[22px]" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
+          <div className="config-main flex min-h-0 flex-col rounded-lg border border-line bg-panel p-[22px]">
             <label className="block flex-none text-[11px] font-semibold text-muted">OBJECTIVE / PROMPT</label>
             <textarea
               value={draft.objective}
@@ -336,7 +336,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             <p className="config-hint mt-3 flex-none text-[12px] leading-[1.55] text-muted">This becomes the agent's system prompt. It runs on every task, so be specific about role, tone, and output format.</p>
           </div>
 
-          <div className="config-side self-start rounded-lg border border-line bg-panel p-[18px]">
+          <div className="config-side self-start rounded-lg border border-line bg-panel p-[22px]">
             <label className="block text-[11px] font-semibold text-muted">NAME</label>
             <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} style={{ width: '100%', background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: '9px 12px', color: 'var(--text)' }} />
 
@@ -378,7 +378,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                 <label key={i.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
                   <input type="checkbox" checked={draft.integrations.includes(i.id)} onChange={() => setDraft({ ...draft, integrations: draft.integrations.includes(i.id) ? draft.integrations.filter((x) => x !== i.id) : [...draft.integrations, i.id] })} />
                   {i.name}
-                  <span className="font-mono text-[9px] text-muted">({i.actions.length} actions)</span>
+                  <span className="font-mono text-[10px] text-muted">({i.actions.length} actions)</span>
                 </label>
               ))}
               {integrations.filter((i) => i.connected).length === 0 && <p style={{ fontSize: 11, color: 'var(--muted)', margin: 0 }}>No connected integrations. Connect them in the Integrations tab.</p>}

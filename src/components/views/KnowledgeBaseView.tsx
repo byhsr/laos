@@ -72,7 +72,7 @@ export function KnowledgeBaseView({ embedded = false }: { embedded?: boolean }) 
       <header className="mb-6 flex items-end justify-between">
         {!embedded && (
           <div>
-            <span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span>
+            <span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span>
             <h1 style={{ margin: 0, fontSize: 24 }}>Knowledge Base</h1>
           </div>
         )}
@@ -95,7 +95,7 @@ export function KnowledgeBaseView({ embedded = false }: { embedded?: boolean }) 
       {loading ? (
         <p className="text-[12px] text-muted">Loading…</p>
       ) : filtered.length === 0 ? (
-        <div className="grid min-h-[280px] place-items-center rounded-[12px] border border-dashed border-soft">
+        <div className="grid min-h-[280px] place-items-center rounded-[16px] border border-dashed border-soft">
           <div className="text-center text-muted">
             <BookOpen size={28} className="mx-auto mb-2 opacity-50" />
             <p className="text-[12px]">No docs yet. Create one — or ask Laos to save company wiki, ICP notes, and decisions here.</p>
@@ -104,7 +104,7 @@ export function KnowledgeBaseView({ embedded = false }: { embedded?: boolean }) 
       ) : (
         <div className="grid max-w-[1100px] grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((d) => (
-            <div key={d.id} className="group flex cursor-pointer flex-col rounded-[10px] border border-line bg-panel p-4 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-dotted hover:border-mid hover:shadow-[0_8px_24px_#0005]" onClick={() => openDoc(d)}>
+            <div key={d.id} className="group flex cursor-pointer flex-col rounded-[16px] border border-line bg-panel p-4 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-dotted hover:border-mid hover:shadow-lift" onClick={() => openDoc(d)}>
               <div className="flex items-start justify-between gap-2">
                 <b className="block truncate text-[13px]">{d.title || 'Untitled'}</b>
                 <button className="cursor-pointer border-0 bg-transparent p-0 text-muted opacity-0 transition-opacity hover:text-[#f87171] group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); remove(d); }} title="Delete doc"><Trash2 size={13} /></button>
@@ -112,10 +112,10 @@ export function KnowledgeBaseView({ embedded = false }: { embedded?: boolean }) 
               <p className="mt-2 line-clamp-3 min-h-[45px] text-[11px] leading-[1.5] whitespace-pre-wrap text-muted">{d.content || 'Empty doc'}</p>
               {d.tags.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1">
-                  {d.tags.map((t) => <span key={t} className="rounded bg-panel2 px-1.5 py-0.5 font-mono text-[9px] text-muted">{t}</span>)}
+                  {d.tags.map((t) => <span key={t} className="rounded bg-panel2 px-1.5 py-0.5 font-mono text-[10px] text-muted">{t}</span>)}
                 </div>
               )}
-              <span className="mt-3 block font-mono text-[9px] text-muted">updated {fmtDate(d.updatedAt)}</span>
+              <span className="mt-3 block font-mono text-[10px] text-muted">updated {fmtDate(d.updatedAt)}</span>
             </div>
           ))}
         </div>
@@ -123,19 +123,19 @@ export function KnowledgeBaseView({ embedded = false }: { embedded?: boolean }) 
 
       {editing && (
         <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60" onClick={() => setEditing(null)}>
-          <div className="flex max-h-[85vh] w-[680px] max-w-[94vw] flex-col rounded-[12px] border border-line bg-panel shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
+          <div className="flex max-h-[85vh] w-[680px] max-w-[94vw] flex-col rounded-[16px] border border-line bg-panel shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
             <div className="flex h-[52px] flex-none items-center justify-between border-b border-line px-4">
               <b className="text-[13px]">{draft.title ? `Edit: ${draft.title}` : 'New document'}</b>
               <button className="secondary" onClick={() => setEditing(null)}><X size={13} />Close</button>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
-              <label className="mb-1 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">TITLE</label>
+              <label className="mb-1 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">TITLE</label>
               <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="e.g. ICP — Ideal Customer Profile" className="w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[13px] text-text outline-none focus:border-mid" />
 
-              <label className="mt-4 mb-1 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">CONTENT</label>
+              <label className="mt-4 mb-1 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">CONTENT</label>
               <textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} rows={14} placeholder="Markdown supported. Anything agents and you should know…" className="w-full resize-y rounded-md border border-line bg-panel2 px-3 py-2 font-mono text-[12px] leading-[1.7] text-text outline-none focus:border-mid" />
 
-              <label className="mt-4 mb-1 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">TAGS</label>
+              <label className="mt-4 mb-1 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">TAGS</label>
               <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="icp, wiki, decisions (comma separated)" className="w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
             </div>
             <div className="flex h-[56px] flex-none items-center justify-end gap-2 border-t border-line px-4">

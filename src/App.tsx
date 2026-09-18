@@ -22,7 +22,6 @@ import { ManagerView } from './components/views/ManagerView';
 import { TasksView } from './components/views/TasksView';
 import { WorkshopView } from './components/views/WorkshopView';
 import { SkillFormDrawer } from './components/views/SkillsView';
-import { GraphView } from './components/views/GraphView';
 import { Toaster } from './components/ui/Toaster';
 import { toast } from './hooks/useToast';
 import { Plus } from 'lucide-react';
@@ -91,13 +90,13 @@ export default function App() {
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden">
+      <div className="ambient-layer" aria-hidden />
       <Topbar collapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed((c) => !c)} />
-      <div className="relative flex min-h-0 flex-1">
+      <div className="relative z-10 flex min-h-0 flex-1">
         <Sidebar view={view} setView={setView} collapsed={sidebarCollapsed} />
-        <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-bg px-9 py-8">
+        <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-10 py-9">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
-          <div className={view === 'home' ? '' : 'hidden'}><HomeView agents={agents} tools={tools} runs={runs} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} /></div>
-          <div className={view === 'graph' ? '' : 'hidden'}><GraphView agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows} onOpenAgent={openAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} /></div>
+          <div className={view === 'home' ? '' : 'hidden'}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} runs={runs} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} /></div>
           <div className={view === 'agents' ? '' : 'hidden'}><AgentsView agents={agents} tools={tools} onOpen={openAgent} onCreate={addAgent} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('Agent deleted', 'success'); }} /></div>
           <div className={view === 'workflows' ? '' : 'hidden'}>
             <CanvasView

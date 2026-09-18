@@ -10,10 +10,10 @@ export function ModelsView({ models, onAdd, onEdit, onDelete, embedded = false }
   return (
     <>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
-        {!embedded && <div><span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Models</h1></div>}
+        {!embedded && <div><span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Models</h1></div>}
         <button className="primary ml-auto" onClick={onAdd}><Check size={13} />Add model</button>
       </header>
-      <div className="model-config max-w-[760px] rounded-[10px] border border-line bg-panel p-[22px]">
+      <div className="model-config max-w-[760px] rounded-[16px] border border-line bg-panel p-[22px]">
         {models.map((m) => (
           <div key={m.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--line)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -22,7 +22,7 @@ export function ModelsView({ models, onAdd, onEdit, onDelete, embedded = false }
                 <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)' }}>{m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.apiKey ? ' · key set' : ''}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className="mr-[7px] text-[10px] text-muted"><i className={`mr-1.5 inline-block h-[7px] w-[7px] rounded-full ${m.enabled ? 'bg-[var(--green)]' : 'bg-[#f79009]'}`} />{m.enabled ? 'enabled' : 'disabled'}</span>
+                <span className="mr-[7px] text-[11px] text-muted"><i className={`mr-1.5 inline-block h-[7px] w-[7px] rounded-full ${m.enabled ? 'bg-[var(--green)]' : 'bg-[#f79009]'}`} />{m.enabled ? 'enabled' : 'disabled'}</span>
                 <button className="secondary" onClick={() => onEdit(m)}>Edit</button>
                 <button className="secondary" onClick={() => onDelete(m.id)}>Delete</button>
               </div>
@@ -55,8 +55,8 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
     }
   };
 
-  const inputCls = 'w-full rounded-[6px] border border-line bg-panel2 px-3 py-2.5 text-text';
-  const labelCls = 'mt-4 mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase';
+  const inputCls = 'w-full rounded-[10px] border border-line bg-panel2 px-3 py-2.5 text-text';
+  const labelCls = 'mt-4 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase';
 
   return (
     <Drawer
@@ -66,7 +66,7 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
       resizable
       headerAction={<button className="primary" disabled={saving} onClick={save}><Check size={13} />{saving ? 'Saving…' : 'Save'}</button>}
     >
-      <div className="w-full rounded-[10px] border border-line bg-panel p-[22px]">
+      <div className="w-full rounded-[16px] border border-line bg-panel p-[22px]">
         <p className="text-[12px] leading-[1.6] text-muted" style={{ margin: '0 0 14px' }}>API keys are stored locally in the app's SQLite database — they never leave your machine.</p>
 
         <label className={labelCls}>PROVIDER</label>

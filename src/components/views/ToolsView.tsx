@@ -17,23 +17,23 @@ export function ToolsView({ tools, integrations, onAdd, onEdit, onDelete, embedd
   return (
     <>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
-        {!embedded && <div><span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Tools</h1></div>}
+        {!embedded && <div><span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Tools</h1></div>}
         <button className="primary ml-auto" onClick={onAdd}><Check size={13} />Add tool</button>
       </header>
-      <div className="grid max-w-[900px] gap-2.5">
+      <div className="grid max-w-[900px] gap-3">
         {tools.map((t) => {
           const integration = integrations.find((i) => i.id === t.integrationId);
           return (
-            <div key={t.id} className="flex items-center gap-[15px] rounded-[9px] border border-line bg-panel p-[18px]">
+            <div key={t.id} className="flex items-center gap-[15px] rounded-[16px] border border-line bg-panel p-[22px]">
               <span className="grid h-10 w-10 place-items-center rounded-lg bg-panel2 text-[20px] text-muted"><Wrench size={18} /></span>
               <div className="flex-1">
                 <b style={{ fontSize: 13 }}>{t.name}</b>
                 <span className="block text-[11px] text-muted">{t.kind.replace('_', ' ')} · {integration?.name ?? t.integrationId}{t.description ? ` · ${t.description}` : ''}</span>
                 {t.kind === 'api' && (
-                  <span className="mt-1 block font-mono text-[10px] text-muted">{t.config.method ?? 'GET'} {t.config.url ?? ''}</span>
+                  <span className="mt-1 block font-mono text-[11px] text-muted">{t.config.method ?? 'GET'} {t.config.url ?? ''}</span>
                 )}
               </div>
-              <span className="mr-[7px] text-[10px] text-muted"><i className={`mr-1.5 inline-block h-[7px] w-[7px] rounded-full ${t.enabled ? 'bg-[var(--green)]' : 'bg-[#f79009]'}`} />{t.enabled ? 'on' : 'off'}</span>
+              <span className="mr-[7px] text-[11px] text-muted"><i className={`mr-1.5 inline-block h-[7px] w-[7px] rounded-full ${t.enabled ? 'bg-[var(--green)]' : 'bg-[#f79009]'}`} />{t.enabled ? 'on' : 'off'}</span>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button className="secondary" onClick={() => onEdit(t)}>Edit</button>
                 <button className="secondary" onClick={() => onDelete(t.id)}>Delete</button>
@@ -78,8 +78,8 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
   const setParams = (params: ToolParam[]) => setCfg({ params });
   const setHeaders = (headers: { name: string; value: string }[]) => setCfg({ headers });
 
-  const inputCls = 'w-full rounded-[6px] border border-line bg-panel2 px-3 py-2.5 text-text';
-  const labelCls = 'mt-4 mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase';
+  const inputCls = 'w-full rounded-[10px] border border-line bg-panel2 px-3 py-2.5 text-text';
+  const labelCls = 'mt-4 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase';
 
   return (
     <Drawer
@@ -89,7 +89,7 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
       resizable
       headerAction={<button className="primary" disabled={saving} onClick={save}><Check size={13} />{saving ? 'Saving…' : 'Save'}</button>}
     >
-      <div className="w-full rounded-[10px] border border-line bg-panel p-[22px]">
+      <div className="w-full rounded-[16px] border border-line bg-panel p-[22px]">
         <p className="text-[12px] leading-[1.6] text-muted" style={{ margin: '0 0 14px' }}>
           {isApi
             ? 'Configure a REST endpoint. The LLM will see the params below as callable arguments, and you can reference them in the URL, headers, and body with {paramName}.'
@@ -159,7 +159,7 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
             <label className={labelCls}>PARAMETERS (what the agent can pass)</label>
             <div className="grid gap-2">
               {(form.config.params ?? []).map((p, i) => (
-                <div key={i} className="rounded-[6px] border border-line bg-panel2 p-2.5">
+                <div key={i} className="rounded-[10px] border border-line bg-panel2 p-2.5">
                   <div className="flex flex-wrap gap-1.5">
                     <input value={p.name} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], name: e.target.value }; setParams(ps); }} placeholder="paramName" className={`${inputCls} min-w-[120px] flex-1`} />
                     <select value={p.type} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], type: e.target.value }; setParams(ps); }} className={`${inputCls} w-28 shrink-0`}>

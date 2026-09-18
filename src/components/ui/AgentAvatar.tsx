@@ -105,7 +105,7 @@ export function PersonaPicker({ value, onChange }: {
   return (
     <div className="relative" ref={ref}>
       <button type="button" className="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-line bg-panel2 px-3 py-2.5 text-left text-[13px] text-text hover:border-mid" onClick={() => setOpen((o) => !o)}>
-        <span className="flex items-center gap-2.5">
+        <span className="flex items-center gap-3">
           <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-md bg-panel"><Lottie src={selected.data} loop autoplay style={{ width: 28, height: 28 }} /></span>
           {selected.label}
         </span>
@@ -121,7 +121,7 @@ export function PersonaPicker({ value, onChange }: {
               <button
                 key={p.id}
                 type="button"
-                className={`flex cursor-pointer flex-col items-center gap-1 rounded-[6px] border p-2 text-center transition-colors ${active ? 'border-mid bg-line' : 'border-transparent hover:bg-line'}`}
+                className={`flex cursor-pointer flex-col items-center gap-1 rounded-[10px] border p-2 text-center transition-colors ${active ? 'border-mid bg-line' : 'border-transparent hover:bg-line'}`}
                 onClick={() => { onChange(p.id); setOpen(false); }}
                 onMouseEnter={() => setHovered(p.id)}
                 onMouseLeave={() => setHovered((h) => (h === p.id ? null : h))}

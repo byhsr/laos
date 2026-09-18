@@ -79,7 +79,7 @@ function CheckerRules({ config, update }: {
   return (
     <div className="mt-4">
       <div className="mb-1.5 flex items-center justify-between">
-        <label className="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">RULES</label>
+        <label className="text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">RULES</label>
         <Dropdown
           value=""
           placeholder="+ Add rule…"
@@ -94,14 +94,14 @@ function CheckerRules({ config, update }: {
         {rules.map((rule, i) => {
           const def = RULE_TYPES.find((r) => r.type === rule.type);
           return (
-            <div key={i} className="rounded-[6px] border border-line bg-panel2 p-2">
+            <div key={i} className="rounded-[10px] border border-line bg-panel2 p-2">
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="text-[11px] font-semibold">{def?.label ?? rule.type}</span>
                 <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-[#f87171]" onClick={() => removeRule(i)}><X size={11} /></button>
               </div>
               {def?.fields.map((f) => (
                 <label key={f.key} className="mb-1.5 block last:mb-0">
-                  <span className="mb-0.5 block font-mono text-[9px] uppercase tracking-[0.08em] text-muted">{f.label}</span>
+                  <span className="mb-0.5 block font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{f.label}</span>
                   {f.key === 'mode' ? (
                     <Dropdown
                       value={String(rule.mode ?? 'mustMatch')}
@@ -137,7 +137,7 @@ function CheckerRules({ config, update }: {
         })}
       </div>
 
-      <label className="mb-1 mt-3 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">MODE</label>
+      <label className="mb-1 mt-3 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">MODE</label>
       <Dropdown
         value={String(config.mode ?? 'all')}
         options={[{ value: 'all', label: 'All rules must pass' }, { value: 'any', label: 'Any rule passes' }]}
@@ -414,7 +414,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
     return (
       <div
         key={n.id}
-        className={`absolute z-[2] w-[200px] cursor-grab rounded-[10px] border bg-panel p-3 text-left shadow-[0_12px_30px_#0007] transition-shadow hover:shadow-[0_18px_36px_#0009] ${selected ? 'border-[var(--green)]' : 'border-line'}`}
+        className={`absolute z-[2] w-[200px] cursor-grab rounded-[16px] border bg-panel p-3 text-left shadow-[0_12px_30px_#0007] transition-shadow hover:shadow-[0_18px_36px_#0009] ${selected ? 'border-[var(--green)]' : 'border-line'}`}
         style={{ left: n.x, top: n.y, borderTop: `2px solid ${meta.color}` }}
         onPointerDown={(e) => {
           e.stopPropagation();
@@ -495,7 +495,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
       <div className="flex h-full min-h-0 flex-col gap-3">
         <header className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
-            <button className="flex cursor-pointer items-center gap-1 rounded-[6px] border border-transparent bg-none px-1.5 py-1 font-mono text-[10px] uppercase tracking-[1px] text-muted hover:border-dotted hover:border-mid hover:text-text" onClick={closeBuilder}><ArrowLeft size={12} />Workflows</button>
+            <button className="flex cursor-pointer items-center gap-1 rounded-[10px] border border-transparent bg-none px-1.5 py-1 font-mono text-[11px] uppercase tracking-[1px] text-muted hover:border-dotted hover:border-mid hover:text-text" onClick={closeBuilder}><ArrowLeft size={12} />Workflows</button>
             <ChevronRight size={12} className="text-mid" />
             <input
               value={current.name}
@@ -516,12 +516,12 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
         </header>
 
         <div className="flex min-h-0 flex-1 gap-3">
-          <div className="w-[170px] shrink-0 overflow-y-auto rounded-[10px] border border-line bg-panel p-2.5">
-            <span className="mb-2.5 block font-mono text-[10px] tracking-[1px] text-muted">NODES</span>
+          <div className="w-[170px] shrink-0 overflow-y-auto rounded-[16px] border border-line bg-panel p-2.5">
+            <span className="mb-2.5 block font-mono text-[11px] tracking-[1px] text-muted">NODES</span>
             {NODE_TYPES.map((nt) => (
               <div
                 key={nt.type}
-                className="mb-1.5 cursor-grab rounded-[6px] border border-line bg-panel2 p-2.5 transition-colors hover:border-mid active:cursor-grabbing"
+                className="mb-1.5 cursor-grab rounded-[10px] border border-line bg-panel2 p-2.5 transition-colors hover:border-mid active:cursor-grabbing"
                 onPointerDown={startPaletteDrag(nt.type)}
                 title={nt.desc}
               >
@@ -535,7 +535,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
 
           <div
             ref={canvasRef}
-            className="relative min-h-[550px] flex-1 overflow-hidden rounded-[12px] border border-line bg-[#0b0b0d]"
+            className="relative min-h-[550px] flex-1 overflow-hidden rounded-[16px] border border-line bg-[#0b0b0d]"
             style={{ backgroundImage: 'radial-gradient(#2b2b30 1px, transparent 1px)', backgroundSize: '24px 24px' }}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
@@ -579,7 +579,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
               {drag && dragPos && (() => {
                 const w = screenToWorld(dragPos.x, dragPos.y);
                 return (
-                  <div className="pointer-events-none absolute z-[5] w-[200px] rounded-[10px] border border-[var(--green)] border-dashed bg-panel/80 p-3 opacity-80" style={{ left: w.x - NODE_W / 2, top: w.y - 20 }}>
+                  <div className="pointer-events-none absolute z-[5] w-[200px] rounded-[16px] border border-[var(--green)] border-dashed bg-panel/80 p-3 opacity-80" style={{ left: w.x - NODE_W / 2, top: w.y - 20 }}>
                     <b className="text-[12px]">{TYPE_META[drag.type].label}</b>
                   </div>
                 );
@@ -597,11 +597,11 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
             )}
 
             {/* Zoom controls */}
-            <div className="absolute bottom-3 left-3 z-[6] flex items-center gap-1 rounded-lg border border-line bg-panel p-1 shadow-[0_8px_24px_#0008]">
+            <div className="glass absolute bottom-3 left-3 z-[6] flex items-center gap-1 rounded-xl border border-hairline p-1 shadow-soft">
               <button className="grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted hover:bg-line hover:text-text" onClick={zoomOut} title="Zoom out">−</button>
-              <span className="w-10 text-center font-mono text-[10px] text-muted">{Math.round(zoom * 100)}%</span>
+              <span className="w-10 text-center font-mono text-[11px] text-muted">{Math.round(zoom * 100)}%</span>
               <button className="grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted hover:bg-line hover:text-text" onClick={zoomIn} title="Zoom in">+</button>
-              <button className="cursor-pointer rounded-md border-0 bg-transparent px-2 py-1 text-[10px] text-muted hover:bg-line hover:text-text" onClick={resetView} title="Reset view">Reset</button>
+              <button className="cursor-pointer rounded-md border-0 bg-transparent px-2 py-1 text-[11px] text-muted hover:bg-line hover:text-text" onClick={resetView} title="Reset view">Reset</button>
             </div>
           </div>
 
@@ -612,30 +612,30 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
               onPointerDown={startInspectorResize}
               title="Drag to resize"
             />
-            <div className="flex min-w-0 flex-1 flex-col overflow-y-auto rounded-[10px] border border-line bg-panel p-3.5">
+            <div className="flex min-w-0 flex-1 flex-col overflow-y-auto rounded-[16px] border border-line bg-panel p-3.5">
             {runResult ? (
               <div>
                 <div className="mb-2.5 flex items-center justify-between">
-                  <span className="font-mono text-[10px] tracking-[1px] text-muted">RESULTS</span>
+                  <span className="font-mono text-[11px] tracking-[1px] text-muted">RESULTS</span>
                   <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-text" onClick={() => setRunResult(null)}><X size={12} /></button>
                 </div>
                 <p className="mb-3 text-[12px] text-muted">{(runResult.totalPromptTokens + runResult.totalCompletionTokens).toLocaleString()} tokens</p>
-                <div className="grid gap-2.5">
+                <div className="grid gap-3">
                   {runResult.steps.map((s, i) => (
-                    <div key={i} className="rounded-[6px] border border-line bg-panel2 p-2.5">
+                    <div key={i} className="rounded-[10px] border border-line bg-panel2 p-2.5">
                       <b className="text-[12px]">{i + 1}. {s.nodeLabel}</b>
                       <p className="mt-1.5 max-h-24 overflow-y-auto text-[11px] leading-1.6 text-muted">{s.output}</p>
                     </div>
                   ))}
                 </div>
-                <div className="mt-3 rounded-[6px] border border-[var(--green)] bg-panel2 p-2.5">
+                <div className="mt-3 rounded-[10px] border border-[var(--green)] bg-panel2 p-2.5">
                   <b className="text-[12px]">Final output</b>
                   <p className="mt-1.5 max-h-40 overflow-y-auto text-[11px] leading-1.6 text-muted">{runResult.finalOutput}</p>
                 </div>
               </div>
             ) : runError ? (
               <div>
-                <span className="font-mono text-[10px] tracking-[1px] text-[#f87171]">ERROR</span>
+                <span className="font-mono text-[11px] tracking-[1px] text-[#f87171]">ERROR</span>
                 <p className="mt-2 text-[12px] leading-1.6 text-[#f87171]">{runError}</p>
               </div>
             ) : selectedNodeId ? (() => {
@@ -645,14 +645,14 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
               return (
                 <div>
                   <div className="mb-2.5 flex items-center justify-between">
-                    <span className="font-mono text-[10px] tracking-[1px] text-muted">NODE</span>
+                    <span className="font-mono text-[11px] tracking-[1px] text-muted">NODE</span>
                     <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-[#f87171]" onClick={() => deleteNode(node.id)}><Trash2 size={12} /></button>
                   </div>
-                  <label className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">LABEL</label>
+                  <label className="mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">LABEL</label>
                   <input value={node.label} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, label: e.target.value } : n)) }))} className="w-full rounded-md border border-line bg-panel2 px-2.5 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
                   {isAgentNode && (
                     <>
-                      <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">AGENT</label>
+                      <label className="mb-1.5 mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">AGENT</label>
                       <Dropdown
                         value={node.agentId ?? ''}
                         options={agents.map((a) => ({ value: a.id, label: a.name }))}
@@ -663,15 +663,15 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
                   )}
                   {node.type === 'loop' && (
                     <>
-                      <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">MAX ITERATIONS</label>
+                      <label className="mb-1.5 mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">MAX ITERATIONS</label>
                       <input type="number" min={1} value={String(node.config?.maxIterations ?? 3)} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, maxIterations: Number(e.target.value) } } : n)) }))} className="w-full rounded-md border border-line bg-panel2 px-2.5 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
                     </>
                   )}
                   {node.type === 'gate' && (
                     <>
-                      <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">CONDITION</label>
+                      <label className="mb-1.5 mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">CONDITION</label>
                       <input value={String(node.config?.condition ?? '')} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, condition: e.target.value } } : n)) }))} placeholder='e.g. $pass == false or contains("error")' className="w-full rounded-md border border-line bg-panel2 px-2.5 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
-                      <p className="mt-1.5 text-[11px] leading-1.6 text-muted">Evaluated against the previous node's output. Supports: <code className="font-mono text-[10px]">$pass</code>, <code className="font-mono text-[10px]">$len</code>, <code className="font-mono text-[10px]">contains("...")</code>, <code className="font-mono text-[10px]">==</code>, <code className="font-mono text-[10px]">&gt;</code>, <code className="font-mono text-[10px]">&lt;</code>, dotted paths like <code className="font-mono text-[10px]">$result.items.length</code>.</p>
+                      <p className="mt-1.5 text-[11px] leading-1.6 text-muted">Evaluated against the previous node's output. Supports: <code className="font-mono text-[11px]">$pass</code>, <code className="font-mono text-[11px]">$len</code>, <code className="font-mono text-[11px]">contains("...")</code>, <code className="font-mono text-[11px]">==</code>, <code className="font-mono text-[11px]">&gt;</code>, <code className="font-mono text-[11px]">&lt;</code>, dotted paths like <code className="font-mono text-[11px]">$result.items.length</code>.</p>
                     </>
                   )}
                   {node.type === 'checker' && (
@@ -682,13 +682,13 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
                   )}
                   {node.type === 'trigger' && (
                     <>
-                      <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">PROMPT TEMPLATE</label>
+                      <label className="mb-1.5 mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">PROMPT TEMPLATE</label>
                       <textarea value={String(node.config?.prompt ?? '')} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, prompt: e.target.value } } : n)) }))} placeholder="Optional template for the workflow input. Use {{input}} for the run input." rows={4} className="w-full resize-y rounded-md border border-line bg-panel2 px-2.5 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
                     </>
                   )}
                   {node.type === 'integration' && (
                     <>
-                      <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">INTEGRATION</label>
+                      <label className="mb-1.5 mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">INTEGRATION</label>
                       <Dropdown
                         value={String(node.config?.integrationId ?? '')}
                         options={integrations.map((i) => ({ value: i.id, label: `${i.name}${i.connected ? '' : ' (not connected)'}` }))}
@@ -699,7 +699,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
                         const integ = integrations.find((i) => i.id === node.config?.integrationId);
                         return (
                           <>
-                            <label className="mb-1.5 mt-4 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">ACTION</label>
+                            <label className="mb-1.5 mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">ACTION</label>
                             <Dropdown
                               value={String(node.config?.action ?? '')}
                               options={(integ?.actions ?? []).map((a) => ({ value: a.name, label: a.name }))}
@@ -732,7 +732,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex flex-wrap items-center justify-between gap-2" style={{ marginBottom: 24 }}>
         <div>
-          <span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span>
+          <span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span>
           <h1 style={{ margin: 0, fontSize: 24 }}>Workflows</h1>
         </div>
         <div className="flex items-center gap-2">
@@ -751,7 +751,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
         const filtered = q ? workflows.filter((w) => w.name.toLowerCase().includes(q)) : workflows;
         if (workflows.length === 0) {
           return (
-            <div className="grid flex-1 place-items-center rounded-[12px] border border-dashed border-soft">
+            <div className="grid flex-1 place-items-center rounded-[16px] border border-dashed border-soft">
               <div className="text-center text-muted">
                 <WorkflowIcon size={30} className="mx-auto mb-2 opacity-50" />
                 <h3 className="mb-1 text-text">No workflows yet</h3>
@@ -762,7 +762,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
         }
         if (filtered.length === 0) {
           return (
-            <div className="grid flex-1 place-items-center rounded-[12px] border border-dashed border-soft">
+            <div className="grid flex-1 place-items-center rounded-[16px] border border-dashed border-soft">
               <div className="text-center text-muted">
                 <p className="text-[12px]">No workflows match "{search}".</p>
               </div>
@@ -772,7 +772,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
         return (
           <div className="grid max-w-[1100px] grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {filtered.map((w) => (
-              <div key={w.id} className="group flex flex-col rounded-[10px] border border-line bg-panel p-[18px]">
+              <div key={w.id} className="group flex flex-col rounded-[16px] border border-line bg-panel p-[22px]">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-start gap-3">
                     <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-panel2 text-muted"><WorkflowIcon size={15} /></span>
@@ -783,7 +783,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
                   </div>
                   <button className="cursor-pointer border-0 bg-transparent p-1 text-muted opacity-0 transition-opacity hover:text-[#f87171] group-hover:opacity-100" onClick={() => openConfirm(w)} title="Delete workflow"><Trash2 size={13} /></button>
                 </div>
-                <span className="mt-2 block font-mono text-[9px] text-muted">updated {fmtDate(w.updatedAt)}</span>
+                <span className="mt-2 block font-mono text-[10px] text-muted">updated {fmtDate(w.updatedAt)}</span>
                 <div className="mt-4 flex justify-end">
                   <button className="secondary px-3 py-1.5 text-[11px]" onClick={() => openWorkflow(w)}>Open builder</button>
                 </div>
@@ -795,7 +795,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
 
       {confirmTarget && (
         <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60" onClick={closeConfirm}>
-          <div className="w-[380px] max-w-[92vw] rounded-[12px] border border-line bg-panel p-5 shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
+          <div className="w-[380px] max-w-[92vw] rounded-[16px] border border-line bg-panel p-5 shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
             <div className="mb-1 flex items-center gap-2">
               <Trash2 size={15} className="text-[#f87171]" />
               <b className="text-[14px]">Delete "{confirmTarget.name}"?</b>

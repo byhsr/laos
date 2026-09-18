@@ -53,21 +53,21 @@ export function RunsConsole({ runs, agents, onOpenAgent, onClear, embedded = fal
   return (
     <>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 16 }}>
-        {!embedded && <div><span className="font-mono text-[10px] tracking-[1px] text-muted">ACTIVITY</span><h1 style={{ margin: 0, fontSize: 24 }}>Runs</h1></div>}
+        {!embedded && <div><span className="font-mono text-[11px] tracking-[1px] text-muted">ACTIVITY</span><h1 style={{ margin: 0, fontSize: 24 }}>Runs</h1></div>}
         {tab === 'logs' && <button className="secondary ml-auto" onClick={onClear} disabled={runs.length === 0}>Clear log</button>}
       </header>
 
       {/* Tab bar */}
       <div className="mb-4 flex items-center gap-1">
-        <button className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'logs' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('logs')}>Logs</button>
-        <button className={`flex cursor-pointer items-center gap-1 rounded-[6px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'webhooks' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('webhooks')}>
+        <button className={`flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'logs' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('logs')}>Logs</button>
+        <button className={`flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'webhooks' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('webhooks')}>
           Webhooks
           {health?.receiverListening === false && <i className="inline-block h-1.5 w-1.5 rounded-full bg-[#f87171]" />}
         </button>
       </div>
 
       {tab === 'logs' && (
-      <div className="runs-console max-h-[calc(100vh-260px)] overflow-y-auto rounded-[10px] border border-line bg-[#0a0a0c] p-3.5 font-mono text-[12px] leading-[1.6]">
+      <div className="runs-console max-h-[calc(100vh-260px)] overflow-y-auto rounded-[16px] border border-line bg-inset p-3.5 font-mono text-[12px] leading-[1.6]">
         {runs.length === 0 && (
           <div className="console-empty p-2.5 text-center text-[12px] text-muted">
             <p>No runs yet. Open an agent and send a task — every step shows up here like a live command line.</p>
@@ -79,7 +79,7 @@ export function RunsConsole({ runs, agents, onOpenAgent, onClear, embedded = fal
           return (
             <div key={r.id} className="border-b border-[#1c1c1f] last:border-0">
               {/* Collapsed log row */}
-              <button className="flex w-full cursor-pointer items-center gap-2.5 border-0 bg-transparent px-1 py-2.5 text-left" onClick={() => toggle(r.id)}>
+              <button className="flex w-full cursor-pointer items-center gap-3 border-0 bg-transparent px-1 py-2.5 text-left" onClick={() => toggle(r.id)}>
                 <ChevronRight size={11} className={`shrink-0 text-mid transition-transform duration-150 ${isOpen ? 'rotate-90' : ''}`} />
                 <span className={`shrink-0 text-muted ${statusColor(r.status)}`}>{statusIcon(r.status)}</span>
                 <span className="shrink-0 text-mid">{fmtTime(r.startedAt)}</span>
@@ -87,7 +87,7 @@ export function RunsConsole({ runs, agents, onOpenAgent, onClear, embedded = fal
                 <span className="shrink-0 text-muted">{r.model}</span>
                 <span className="shrink-0 text-mid">{fmtDuration(r)}</span>
                 {totalTokens > 0 && <span className="shrink-0 text-mid">{totalTokens.toLocaleString()} tok</span>}
-                <span className={`ml-auto shrink-0 text-[10px] ${statusColor(r.status)}`}>{r.status}</span>
+                <span className={`ml-auto shrink-0 text-[11px] ${statusColor(r.status)}`}>{r.status}</span>
               </button>
 
               {/* Expanded details — hidden until the user clicks the row */}
@@ -101,7 +101,7 @@ export function RunsConsole({ runs, agents, onOpenAgent, onClear, embedded = fal
                       <span className={`text-[#a1a1aa] ${ev.type === 'tool' ? 'text-[#7dd3fc]' : ev.type === 'thought' ? 'text-[#c4b5fd]' : ''}`}>{ev.title}{ev.detail ? ` — ${ev.detail}` : ''}</span>
                     </div>
                   ))}
-                  {r.output && <pre className="mt-1.5 ml-12 whitespace-pre-wrap rounded-[6px] border border-[#1c1c1f] bg-[#111113] p-2 text-[11px] text-[#e4e4e7]">{r.output}</pre>}
+                  {r.output && <pre className="mt-1.5 ml-12 whitespace-pre-wrap rounded-[10px] border border-[#1c1c1f] bg-[#111113] p-2 text-[11px] text-[#e4e4e7]">{r.output}</pre>}
                   {r.status === 'failed' && <div className="console-line flex items-baseline gap-2"><span className="flex-none text-mid" /><span className="w-10 flex-none text-[#22c55e]">err</span><span className="text-[#a1a1aa]">Run failed — see agent chat for details.</span></div>}
                 </div>
               )}
@@ -115,39 +115,39 @@ export function RunsConsole({ runs, agents, onOpenAgent, onClear, embedded = fal
       <>
       <div className="mb-4">
         <div className="mb-3 flex items-center justify-between">
-          <span className="font-mono text-[10px] tracking-[1px] text-muted">WEBHOOKS</span>
+          <span className="font-mono text-[11px] tracking-[1px] text-muted">WEBHOOKS</span>
           <button className="secondary" onClick={loadWebhooks}><RefreshCw size={12} />Refresh</button>
         </div>
 
         {health?.urlMismatch && (
-          <div className="mb-4 rounded-[10px] border border-[#f87171]/50 bg-panel p-4">
+          <div className="mb-4 rounded-[16px] border border-[#f87171]/50 bg-panel p-4">
             <div className="flex items-center gap-2 text-[12px] font-semibold text-[#f87171]">
               <i className="inline-block h-2 w-2 rounded-full bg-[#f87171]" />
               Webhook points at a STALE tunnel URL
             </div>
             <p className="mt-1.5 text-[11px] leading-[1.6] text-muted">
-              Telegram is still sending to <code className="font-mono text-[10px]">{health.telegram?.url}</code> but your live tunnel is <code className="font-mono text-[10px]">{health.liveTunnel}</code>. Re-register the webhook so Telegram targets the current tunnel.
+              Telegram is still sending to <code className="font-mono text-[11px]">{health.telegram?.url}</code> but your live tunnel is <code className="font-mono text-[11px]">{health.liveTunnel}</code>. Re-register the webhook so Telegram targets the current tunnel.
             </p>
           </div>
         )}
 
         {health && (
           <div className="mb-4 grid max-w-[1100px] grid-cols-1 gap-3 md:grid-cols-3">
-            <div className={`rounded-[10px] border p-4 ${health.receiverListening ? 'border-[var(--green)]/50' : 'border-[#f87171]/50'}`}>
+            <div className={`rounded-[16px] border p-4 ${health.receiverListening ? 'border-[var(--green)]/50' : 'border-[#f87171]/50'}`}>
               <div className="flex items-center gap-2 text-[11px] font-semibold">
                 <i className={`inline-block h-2 w-2 rounded-full ${health.receiverListening ? 'bg-[var(--green)]' : 'bg-[#f87171]'}`} />
                 Webhook receiver (port 14789)
               </div>
               <p className="mt-1 text-[11px] text-muted">{health.receiverListening ? 'Listening — cloudflared can forward here.' : 'NOT listening — the local receiver failed to bind or is not running.'}</p>
             </div>
-            <div className={`rounded-[10px] border p-4 ${health.tunnelUrl ? 'border-[var(--green)]/50' : 'border-[#f87171]/50'}`}>
+            <div className={`rounded-[16px] border p-4 ${health.tunnelUrl ? 'border-[var(--green)]/50' : 'border-[#f87171]/50'}`}>
               <div className="flex items-center gap-2 text-[11px] font-semibold">
                 <i className={`inline-block h-2 w-2 rounded-full ${health.tunnelUrl ? 'bg-[var(--green)]' : 'bg-[#f87171]'}`} />
                 Tunnel
               </div>
               <p className="mt-1 truncate font-mono text-[10.5px] text-muted">{health.tunnelUrl ?? 'No tunnel running'}</p>
             </div>
-            <div className={`rounded-[10px] border p-4 ${health.webhookRegistered ? 'border-[var(--green)]/50' : 'border-[#facc15]/50'}`}>
+            <div className={`rounded-[16px] border p-4 ${health.webhookRegistered ? 'border-[var(--green)]/50' : 'border-[#facc15]/50'}`}>
               <div className="flex items-center gap-2 text-[11px] font-semibold">
                 <i className={`inline-block h-2 w-2 rounded-full ${health.webhookRegistered ? 'bg-[var(--green)]' : 'bg-[#facc15]'}`} />
                 Telegram webhook
@@ -163,16 +163,16 @@ export function RunsConsole({ runs, agents, onOpenAgent, onClear, embedded = fal
           </div>
         )}
 
-        <div className="runs-console max-h-[420px] overflow-y-auto rounded-[10px] border border-line bg-[#0a0a0c] p-3.5 font-mono text-[12px] leading-[1.6]">
+        <div className="runs-console max-h-[420px] overflow-y-auto rounded-[16px] border border-line bg-inset p-3.5 font-mono text-[12px] leading-[1.6]">
           {tLogs.length === 0 ? (
             <div className="console-empty p-2.5 text-center text-[12px] text-muted">
               <p>No Telegram activity yet. Messages routed via the webhook or polling show up here.</p>
             </div>
           ) : tLogs.map((l, i) => (
             <div key={i} className="border-b border-[#1c1c1f] py-2 last:border-0">
-              <div className="flex items-center gap-2.5 text-[11px]">
+              <div className="flex items-center gap-3 text-[11px]">
                 <span className={l.direction === 'in' ? 'text-[#38bdf8]' : l.direction === 'out' ? 'text-[#22c55e]' : 'text-[#facc15]'}>{l.direction === 'in' ? '▸ IN' : l.direction === 'out' ? '◂ OUT' : '■ SYS'}</span>
-                <span className={`font-mono text-[10px] ${l.status === 'error' ? 'text-[#f87171]' : l.status === 'sent' ? 'text-[#22c55e]' : 'text-[#facc15]'}`}>{l.status}</span>
+                <span className={`font-mono text-[11px] ${l.status === 'error' ? 'text-[#f87171]' : l.status === 'sent' ? 'text-[#22c55e]' : 'text-[#facc15]'}`}>{l.status}</span>
                 {l.chatId && <span className="text-mid">chat {l.chatId}</span>}
                 <span className="ml-auto text-mid">{l.createdAt ? (() => { const d = new Date(l.createdAt); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString(); })() : ''}</span>
               </div>

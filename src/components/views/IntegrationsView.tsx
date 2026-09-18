@@ -168,14 +168,14 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
     <>
       {!embedded && (
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
-          <div><span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Integrations</h1></div>
+          <div><span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Integrations</h1></div>
         </header>
       )}
       <div className="grid max-w-[1100px] grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {integrations.map((i) => {
           const isOAuth = OAUTH_PROVIDERS.includes(i.id);
           return (
-            <div key={i.id} className="rounded-[9px] border border-dashed border-line bg-panel p-[18px]">
+            <div key={i.id} className="rounded-[16px] border border-dashed border-line bg-panel p-[22px]">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex min-w-0 items-start gap-4">
                   <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-panel2 text-text">{LOGOS[i.id] ?? <Key size={18} className="text-muted" />}</span>
@@ -199,13 +199,13 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
               {i.connected && i.actions.length > 0 && (
                 <div className="mt-4 flex flex-wrap gap-1.5">
                   {i.actions.map((a) => (
-                    <span key={a.name} title={a.description} className="rounded bg-panel2 px-2 py-1 font-mono text-[10px] text-muted">{a.name}</span>
+                    <span key={a.name} title={a.description} className="rounded bg-panel2 px-2 py-1 font-mono text-[11px] text-muted">{a.name}</span>
                   ))}
                 </div>
               )}
 
               <div className="mt-4 flex items-center gap-2">
-                <span className="text-[9.5px] text-muted">
+                <span className="text-[10.5px] text-muted">
                   <i className={`mr-1.5 inline-block h-[6px] w-[6px] rounded-full ${i.connected ? 'bg-[var(--green)]' : 'bg-[#52525b]'}`} />
                   {i.connected ? 'Connected' : 'Not connected'}
                 </span>
@@ -227,12 +227,12 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
             </button>
           }
         >
-          <div className="w-full rounded-[10px] border border-line bg-panel p-[22px]">
+          <div className="w-full rounded-[16px] border border-line bg-panel p-[22px]">
             <p className="text-[12px] leading-[1.6] text-muted" style={{ margin: '0 0 14px' }}>
               Credentials are stored locally in the app's SQLite database — they never leave your machine.
             </p>
 
-            <label className="mt-0 mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">TOKEN / API KEY</label>
+            <label className="mt-0 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">TOKEN / API KEY</label>
             <input
               type="password"
               value={tokenDraft.token ?? tokenDraft.apiKey ?? ''}
@@ -243,9 +243,9 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
 
             {OAUTH_PROVIDERS.includes(active.id) && (
               <>
-                <label className="mt-4 mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">OAUTH CLIENT ID</label>
+                <label className="mt-4 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">OAUTH CLIENT ID</label>
                 <input value={tokenDraft.clientId ?? ''} onChange={(e) => setTokenDraft((d) => ({ ...d, clientId: e.target.value }))} placeholder="OAuth client ID" className="w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
-                <label className="mt-4 mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-muted uppercase">OAUTH CLIENT SECRET</label>
+                <label className="mt-4 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">OAUTH CLIENT SECRET</label>
                 <input type="password" value={tokenDraft.clientSecret ?? ''} onChange={(e) => setTokenDraft((d) => ({ ...d, clientSecret: e.target.value }))} placeholder="OAuth client secret" className="w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
                 <p className="mt-1.5 text-[11px] leading-[1.5] text-muted">Set client ID/secret, then click Connect to start the OAuth flow.</p>
               </>
@@ -259,13 +259,13 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
 
             {active.id === 'telegram' && (
               <>
-              <div className="mt-6 rounded-[10px] border border-line bg-panel2 p-[18px]">
+              <div className="mt-6 rounded-[16px] border border-line bg-panel2 p-[22px]">
                 <div className="mb-1.5 flex items-center justify-between">
-                  <span className="font-mono text-[10px] tracking-[1px] text-muted">REMOTE ACCESS</span>
+                  <span className="font-mono text-[11px] tracking-[1px] text-muted">REMOTE ACCESS</span>
                   <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-text" onClick={refreshTunnelStatus} title="Refresh status"><RefreshCw size={12} /></button>
                 </div>
                 <p className="mb-3 text-[12px] leading-[1.6] text-muted">
-                  Expose this local app to Telegram with a Cloudflare tunnel. One click starts the tunnel and registers the webhook — no domain needed, Cloudflare gives you a free <code className="font-mono text-[10px]">trycloudflare.com</code> URL.
+                  Expose this local app to Telegram with a Cloudflare tunnel. One click starts the tunnel and registers the webhook — no domain needed, Cloudflare gives you a free <code className="font-mono text-[11px]">trycloudflare.com</code> URL.
                 </p>
                 {tunnelUrl ? (
                   <>
@@ -306,14 +306,14 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
                     ))}
                   </div>
                 )}
-                <p className="mt-3 text-[11px] leading-[1.5] text-muted">Requires <code className="font-mono text-[10px]">cloudflared</code> (auto-downloaded if missing). While the tunnel is active, long-polling pauses.</p>
+                <p className="mt-3 text-[11px] leading-[1.5] text-muted">Requires <code className="font-mono text-[11px]">cloudflared</code> (auto-downloaded if missing). While the tunnel is active, long-polling pauses.</p>
               </div>
 
               {/* Own domain / named tunnel option */}
-              <div className="mt-4 rounded-[10px] border border-line bg-panel2 p-[18px]">
-                <span className="mb-1.5 block font-mono text-[10px] tracking-[1px] text-muted">USE YOUR OWN DOMAIN</span>
+              <div className="mt-4 rounded-[16px] border border-line bg-panel2 p-[22px]">
+                <span className="mb-1.5 block font-mono text-[11px] tracking-[1px] text-muted">USE YOUR OWN DOMAIN</span>
                 <p className="mb-3 text-[12px] leading-[1.6] text-muted">
-                  Have a Cloudflare account and a domain? Set up a named tunnel in Cloudflare (pointing at <code className="font-mono text-[10px]">http://127.0.0.1:14789</code>) and enter its public HTTPS URL below. Telegram will send to your domain instead of a random trycloudflare URL.
+                  Have a Cloudflare account and a domain? Set up a named tunnel in Cloudflare (pointing at <code className="font-mono text-[11px]">http://127.0.0.1:14789</code>) and enter its public HTTPS URL below. Telegram will send to your domain instead of a random trycloudflare URL.
                 </p>
                 <input
                   value={customUrl}

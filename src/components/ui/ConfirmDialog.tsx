@@ -26,7 +26,7 @@ export function ConfirmDialog() {
   const title = TOOL_LABELS[pending.tool] ?? pending.tool.replace(/_/g, ' ');
 
   return (
-    <div className="rounded-[10px] border border-[#facc15]/40 bg-panel p-3.5 shadow-[0_16px_40px_#000c]">
+    <div className="glass-strong animate-[dropdown-in_160ms_ease-out] rounded-2xl border border-[#facc15]/35 p-4 shadow-float">
       <div className="mb-2 flex items-center gap-2">
         <ShieldAlert size={15} className="text-[#facc15]" />
         <b className="text-[13px]">Laos wants to {title}</b>
@@ -35,7 +35,7 @@ export function ConfirmDialog() {
         {entries.length === 0 && <p className="text-[12px] text-muted">No parameters.</p>}
         {entries.map(([k, v]) => (
           <label key={k} className="block">
-            <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{k}</span>
+            <span className="mb-1 block font-mono text-[11px] uppercase tracking-[0.08em] text-muted">{k}</span>
             {Array.isArray(v) ? (
               <input
                 value={Array.isArray(v) ? v.join(', ') : String(v ?? '')}

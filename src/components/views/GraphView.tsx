@@ -31,9 +31,9 @@ const LABEL: Record<Kind, string> = {
   workflow: 'Workflows',
 };
 
-export function GraphView({ agents, skills, tools, integrations, workflows, onOpenAgent, onOpenWorkflow }: {
+export function GraphView({ agents, skills, tools, integrations, workflows, onOpenAgent, onOpenWorkflow, embedded = false }: {
   agents: Agent[]; skills: Skill[]; tools: Tool[]; integrations: Integration[]; workflows: Workflow[];
-  onOpenAgent: (id: string) => void; onOpenWorkflow: (id: string) => void;
+  onOpenAgent: (id: string) => void; onOpenWorkflow: (id: string) => void; embedded?: boolean;
 }) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
@@ -121,32 +121,34 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
     { kind: 'workflow' as Kind, n: workflows.length },
   ];
 
-  const zoomBtn = 'grid h-7 w-7 cursor-pointer place-items-center rounded-[6px] border border-line bg-panel2 text-muted transition-colors hover:text-text';
+  const zoomBtn = 'grid h-7 w-7 cursor-pointer place-items-center rounded-[10px] border border-line bg-panel2 text-muted transition-colors hover:text-text';
 
   return (
     <div className="flex h-[calc(100vh-120px)] min-h-[440px] flex-col">
       <header className="mb-4 flex items-end justify-between gap-4">
-        <div className="min-w-0">
-          <span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span>
-          <h1 className="m-0 text-[24px]">Graph</h1>
-          <p className="mt-1 text-[12px] leading-[1.6] text-muted">What is wired to what — skills, tools and integrations feeding agents, and the workflows those agents run in. Drag to pan, scroll to zoom, hover to trace.</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        {!embedded && (
+          <div className="min-w-0">
+            <span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span>
+            <h1 className="m-0 text-[24px]">Graph</h1>
+            <p className="mt-1 text-[12px] leading-[1.6] text-muted">What is wired to what — skills, tools and integrations feeding agents, and the workflows those agents run in. Drag to pan, scroll to zoom, hover to trace.</p>
+          </div>
+        )}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <button className={zoomBtn} title="Zoom out" onClick={() => setZoom((z) => Math.max(0.35, z * 0.9))}><ZoomOut size={13} /></button>
-          <span className="w-9 text-center font-mono text-[10px] text-muted">{Math.round(zoom * 100)}%</span>
+          <span className="w-9 text-center font-mono text-[11px] text-muted">{Math.round(zoom * 100)}%</span>
           <button className={zoomBtn} title="Zoom in" onClick={() => setZoom((z) => Math.min(2, z * 1.1))}><ZoomIn size={13} /></button>
           <button className={zoomBtn} title="Reset view" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}><Maximize2 size={13} /></button>
         </div>
       </header>
 
       {nodes.length === 0 ? (
-        <div className="grid flex-1 place-items-center rounded-[10px] border border-line bg-panel">
+        <div className="grid flex-1 place-items-center rounded-[16px] border border-line bg-panel">
           <p className="text-[12px] text-muted">Nothing to map yet. Add an agent, tool, skill or workflow.</p>
         </div>
       ) : (
         <div
           ref={canvasRef}
-          className="relative min-h-0 flex-1 cursor-grab overflow-hidden rounded-[10px] border border-line bg-panel active:cursor-grabbing"
+          className="relative min-h-0 flex-1 cursor-grab overflow-hidden rounded-[16px] border border-line bg-panel active:cursor-grabbing"
           onPointerDown={(e) => {
             if (e.button !== 0) return;
             dragRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
@@ -193,22 +195,22 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
                     if (n.kind === 'agent' || n.kind === 'manager') onOpenAgent(n.id.slice('agent:'.length));
                     if (n.kind === 'workflow') onOpenWorkflow(n.id.slice('wf:'.length));
                   }}
-                  className={`absolute z-[1] flex cursor-pointer items-center gap-2.5 rounded-[9px] border bg-panel px-3 text-left transition-all duration-150 ${dim ? 'opacity-25' : 'opacity-100'} ${hover === n.id ? 'border-mid' : 'border-line hover:border-mid'}`}
+                  className={`absolute z-[1] flex cursor-pointer items-center gap-3 rounded-[16px] border bg-panel px-3 text-left transition-all duration-150 ${dim ? 'opacity-25' : 'opacity-100'} ${hover === n.id ? 'border-mid' : 'border-line hover:border-mid'}`}
                   style={{ left: n.x, top: n.y, width: NODE_W, height: NODE_H }}
                 >
                   <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-panel2 text-muted">{ICON[n.kind]}</span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12px] text-text">{n.label}</span>
-                    <span className="block truncate font-mono text-[9.5px] text-muted">{n.sub}</span>
+                    <span className="block truncate font-mono text-[10.5px] text-muted">{n.sub}</span>
                   </span>
                 </button>
               );
             })}
           </div>
 
-          <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-3 rounded-[8px] border border-line bg-panel/90 px-3 py-2 backdrop-blur">
+          <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-3 rounded-[12px] border border-line bg-panel/90 px-3 py-2 backdrop-blur">
             {counts.filter((c) => c.n > 0).map((c) => (
-              <span key={c.kind} className="flex items-center gap-1.5 font-mono text-[9.5px] text-muted">
+              <span key={c.kind} className="flex items-center gap-1.5 font-mono text-[10.5px] text-muted">
                 <i className="grid h-4 w-4 place-items-center rounded bg-panel2">{ICON[c.kind]}</i>
                 {c.n} {LABEL[c.kind].toLowerCase()}
               </span>
