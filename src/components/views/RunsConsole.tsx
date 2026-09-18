@@ -23,8 +23,8 @@ const fmtDuration = (r: Run) => {
 const statusColor = (s: string) => s === 'running' ? 'text-[#facc15]' : s === 'completed' ? 'text-[#22c55e]' : 'text-[#f87171]';
 const statusIcon = (s: string) => s === 'running' ? '▸' : s === 'completed' ? '✓' : '✕';
 
-export function RunsConsole({ runs, agents, onOpenAgent, onClear }: {
-  runs: Run[]; agents: Agent[]; onOpenAgent: (id: string) => void; onClear: () => void;
+export function RunsConsole({ runs, agents, onOpenAgent, onClear, embedded = false }: {
+  runs: Run[]; agents: Agent[]; onOpenAgent: (id: string) => void; onClear: () => void; embedded?: boolean;
 }) {
   const agentName = (id: string) => agents.find((a) => a.id === id)?.name ?? id;
   const [tab, setTab] = useState<'logs' | 'webhooks'>('logs');
@@ -53,8 +53,8 @@ export function RunsConsole({ runs, agents, onOpenAgent, onClear }: {
   return (
     <>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 16 }}>
-        <div><span className="font-mono text-[10px] tracking-[1px] text-muted">ACTIVITY</span><h1 style={{ margin: 0, fontSize: 24 }}>Runs</h1></div>
-        {tab === 'logs' && <button className="secondary" onClick={onClear} disabled={runs.length === 0}>Clear log</button>}
+        {!embedded && <div><span className="font-mono text-[10px] tracking-[1px] text-muted">ACTIVITY</span><h1 style={{ margin: 0, fontSize: 24 }}>Runs</h1></div>}
+        {tab === 'logs' && <button className="secondary ml-auto" onClick={onClear} disabled={runs.length === 0}>Clear log</button>}
       </header>
 
       {/* Tab bar */}

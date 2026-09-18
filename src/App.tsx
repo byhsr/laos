@@ -15,7 +15,6 @@ import { AgentWindow } from './components/AgentWindow';
 import { HomeView } from './components/views/HomeView';
 import { AgentsView } from './components/views/AgentsView';
 import { CanvasView } from './components/views/CanvasView';
-import { RunsConsole } from './components/views/RunsConsole';
 import { ToolFormDrawer } from './components/views/ToolsView';
 import { ModelFormDrawer } from './components/views/ModelsView';
 import { SettingsView } from './components/views/SettingsView';
@@ -112,10 +111,10 @@ export default function App() {
           </div>
           <div className={view === 'manager' ? '' : 'hidden'}><ManagerView agents={agents} integrations={integrations} models={models} /></div>
           <div className={view === 'tasks' ? '' : 'hidden'}><TasksView agents={agents} /></div>
-          <div className={view === 'runs' ? '' : 'hidden'}><RunsConsole runs={runs} agents={agents} onOpenAgent={openAgent} onClear={clearRuns} /></div>
           <div className={view === 'workshop' ? '' : 'hidden'}>
             <WorkshopView
-              skills={skills} tools={tools} integrations={integrations}
+              skills={skills} tools={tools} integrations={integrations} runs={runs} agents={agents}
+              onOpenAgent={openAgent} onClearRuns={clearRuns}
               onAddSkill={() => setDrawerForm({ kind: 'skill', editing: emptySkill(), isNew: true })}
               onEditSkill={(s) => setDrawerForm({ kind: 'skill', editing: s, isNew: false })}
               onDeleteSkill={async (id) => { await deleteSkill(id); setAgents((prev) => prev.map((a) => ({ ...a, skillIds: a.skillIds.filter((s) => s !== id) }))); toast('Skill deleted', 'success'); }}

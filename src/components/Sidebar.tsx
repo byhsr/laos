@@ -1,4 +1,4 @@
-import { Activity, Blocks, Bot, Home, ListChecks, Network, Settings, UserCog, Workflow } from 'lucide-react';
+import { Blocks, Bot, Home, ListChecks, Network, Settings, UserCog, Workflow } from 'lucide-react';
 import type { View } from '../types';
 
 const NAV_ITEMS: { key: View; label: string; icon: React.ReactNode }[] = [
@@ -8,7 +8,6 @@ const NAV_ITEMS: { key: View; label: string; icon: React.ReactNode }[] = [
   { key: 'agents', label: 'Agents', icon: <Bot size={15} /> },
   { key: 'workflows', label: 'Workflows', icon: <Workflow size={15} /> },
   { key: 'tasks', label: 'Tasks', icon: <ListChecks size={15} /> },
-  { key: 'runs', label: 'Runs', icon: <Activity size={15} /> },
   { key: 'workshop', label: 'Workshop', icon: <Blocks size={15} /> },
 ];
 
