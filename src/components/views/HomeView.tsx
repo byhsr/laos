@@ -6,22 +6,21 @@ import { GraphView } from './GraphView';
 
 const SHOW = 4;
 
-type HomeTab = 'overview' | 'graph';
+export type HomeTab = 'overview' | 'graph';
 
 const tabBtn = (active: boolean) =>
   `flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${active ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`;
 
-export function HomeView({ agents, tools, skills, integrations, runs, workflows, onOpen, onCreate, onOpenWorkflow }: {
+export function HomeView({ agents, tools, skills, integrations, runs, workflows, onOpen, onCreate, onOpenWorkflow, tab, onTabChange }: {
   agents: Agent[]; tools: Tool[]; skills: Skill[]; integrations: Integration[]; runs: Run[]; workflows: Workflow[];
   onOpen: (id: string) => void; onCreate: () => void; onOpenWorkflow: (id: string) => void;
+  tab: HomeTab; onTabChange: (t: HomeTab) => void;
 }) {
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
-  const totalTokens = (runs ?? []).reduce((sum, r) => sum + (r.promptTokens ?? 0) + (r.completionTokens ?? 0), 0);
   const agentTokens = (id: string) => (runs ?? []).filter((r) => r.agentId === id).reduce((sum, r) => sum + (r.promptTokens ?? 0) + (r.completionTokens ?? 0), 0);
   const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
   const visibleAgents = agents.filter((a) => !a.isManager);
   const [hoveredAgentId, setHoveredAgentId] = useState<string | null>(null);
-  const [tab, setTab] = useState<HomeTab>('overview');
 
   return (
     <div className="flex h-full flex-col">
@@ -31,32 +30,14 @@ export function HomeView({ agents, tools, skills, integrations, runs, workflows,
           <span className="font-mono text-[11px] uppercase tracking-[1px] text-text">Home</span>
         </div>
         <div className="flex items-center gap-1">
-          <button className={tabBtn(tab === 'overview')} onClick={() => setTab('overview')}>Overview</button>
-          <button className={tabBtn(tab === 'graph')} onClick={() => setTab('graph')}>Graph</button>
+          <button className={tabBtn(tab === 'overview')} onClick={() => onTabChange('overview')}>Overview</button>
+          <button className={tabBtn(tab === 'graph')} onClick={() => onTabChange('graph')}>Graph</button>
           <button className="primary ml-1" onClick={onCreate}><Plus size={13} />New agent</button>
         </div>
       </header>
 
       {/* Overview stays mounted so Graph's pan/zoom survives tab switches. */}
-      <div className={tab === 'overview' ? '' : 'hidden'}>
-        <div className="mb-[22px] -mt-2 flex flex-wrap rounded-[16px] border border-line bg-panel">
-          <div className="min-w-[140px] border-r border-line px-[22px] py-4">
-            <span className="block font-mono text-[10px] tracking-[0.8px] text-muted">AGENTS</span>
-            <b className="mt-[3px] block text-[20px] tracking-[-0.7px]">{visibleAgents.length}</b>
-          </div>
-          <div className="min-w-[140px] border-r border-line px-[22px] py-4">
-            <span className="block font-mono text-[10px] tracking-[0.8px] text-muted">RUNS</span>
-            <b className="mt-[3px] block text-[20px] tracking-[-0.7px]">{runs?.length ?? 0}</b>
-          </div>
-          <div className="min-w-[140px] border-r border-line px-[22px] py-4">
-            <span className="block font-mono text-[10px] tracking-[0.8px] text-muted">TOKENS</span>
-            <b className="mt-[3px] block text-[20px] tracking-[-0.7px]">{fmt(totalTokens)}</b>
-          </div>
-          <div className="ml-auto flex min-w-auto items-center border-0 px-[22px] py-4 text-[11px] text-[#d4d4d8]">
-            <i className="mr-[7px] inline-block h-[7px] w-[7px] rounded-full bg-[var(--green)]" />Local
-          </div>
-        </div>
-
+      <div className={`min-h-0 flex-1 overflow-y-auto ${tab === 'overview' ? '' : 'hidden'}`}>
         <div className="mb-3 flex items-center justify-between">
           <span className="font-mono text-[11px] tracking-[1px] text-muted">Agents</span>
           <button className="cursor-pointer border-0 bg-none p-0 font-mono text-[11px] tracking-[1px] text-muted hover:text-text" onClick={onCreate}>+ New</button>
@@ -90,7 +71,7 @@ export function HomeView({ agents, tools, skills, integrations, runs, workflows,
         </div>
       </div>
 
-      <div className={tab === 'graph' ? '' : 'hidden'}>
+      <div className={`min-h-0 flex-1 ${tab === 'graph' ? '' : 'hidden'}`}>
         <GraphView embedded agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows} onOpenAgent={onOpen} onOpenWorkflow={onOpenWorkflow} />
       </div>
     </div>

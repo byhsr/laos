@@ -16,6 +16,8 @@
   --color-line: #232328;
 
   --color-green: #34d399;
+  --color-lime: #d7ff38;    /* vivid lime — the vitals chip fill */
+  --color-ink: #0b0d06;     /* text that sits on the lime fill */
   --color-accent: #e4e4e7;  /* brand accent — neutral by choice */
   --color-soft: #35353c;    /* subtle borders, scrollbar thumbs */
   --color-mid: #55555f;     /* hover borders, secondary text */

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Bot, Globe, Maximize2, Sparkles, UserCog, Workflow as WorkflowIcon, Wrench, ZoomIn, ZoomOut } from 'lucide-react';
 import type { Agent, Integration, Skill, Tool, Workflow } from '../../types';
@@ -8,6 +8,9 @@ const NODE_H = 54;
 const COL_GAP = 200;
 const ROW_GAP = 14;
 const PAD = 40;
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 2;
+const FIT_MARGIN = 72;
 
 type Kind = 'skill' | 'tool' | 'integration' | 'agent' | 'manager' | 'workflow';
 type GNode = { id: string; kind: Kind; label: string; sub: string; x: number; y: number };
@@ -31,6 +34,8 @@ const LABEL: Record<Kind, string> = {
   workflow: 'Workflows',
 };
 
+const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+
 export function GraphView({ agents, skills, tools, integrations, workflows, onOpenAgent, onOpenWorkflow, embedded = false }: {
   agents: Agent[]; skills: Skill[]; tools: Tool[]; integrations: Integration[]; workflows: Workflow[];
   onOpenAgent: (id: string) => void; onOpenWorkflow: (id: string) => void; embedded?: boolean;
@@ -41,6 +46,11 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [hover, setHover] = useState<string | null>(null);
 
+  // Mirrors so the imperative wheel handler never reads stale state.
+  const zoomRef = useRef(zoom); zoomRef.current = zoom;
+  const panRef = useRef(pan); panRef.current = pan;
+  const fittedFor = useRef('');
+
   const { nodes, edges, width, height } = useMemo(() => {
     const caps: GNode[] = [];
     skills.forEach((s) => caps.push({ id: `skill:${s.id}`, kind: 'skill', label: s.name, sub: 'instructions', x: PAD, y: PAD + caps.length * (NODE_H + ROW_GAP) }));
@@ -50,7 +60,7 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
     const col2 = PAD + NODE_W + COL_GAP;
     const agentNodes: GNode[] = agents.map((a, i) => ({
       id: `agent:${a.id}`, kind: a.isManager ? 'manager' : 'agent', label: a.name,
-      sub: a.isManager ? 'system agent' : `${a.toolIds.length} tools · ${(a.skillIds ?? []).length} skills`,
+      sub: a.isManager ? 'system agent' : `${(a.toolIds ?? []).length} tools · ${(a.skillIds ?? []).length} skills`,
       x: col2, y: PAD + i * (NODE_H + ROW_GAP),
     }));
 
@@ -64,8 +74,8 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
     const list: GEdge[] = [];
     agents.forEach((a) => {
       (a.skillIds ?? []).forEach((sid) => { if (known.has(`skill:${sid}`)) list.push({ id: `s:${sid}->${a.id}`, from: `skill:${sid}`, to: `agent:${a.id}` }); });
-      a.toolIds.forEach((tid) => { if (known.has(`tool:${tid}`)) list.push({ id: `t:${tid}->${a.id}`, from: `tool:${tid}`, to: `agent:${a.id}` }); });
-      a.integrations.forEach((iid) => { if (known.has(`int:${iid}`)) list.push({ id: `i:${iid}->${a.id}`, from: `int:${iid}`, to: `agent:${a.id}` }); });
+      (a.toolIds ?? []).forEach((tid) => { if (known.has(`tool:${tid}`)) list.push({ id: `t:${tid}->${a.id}`, from: `tool:${tid}`, to: `agent:${a.id}` }); });
+      (a.integrations ?? []).forEach((iid) => { if (known.has(`int:${iid}`)) list.push({ id: `i:${iid}->${a.id}`, from: `int:${iid}`, to: `agent:${a.id}` }); });
     });
     workflows.forEach((w) => w.nodes.forEach((n) => {
       if (n.agentId && known.has(`agent:${n.agentId}`)) list.push({ id: `w:${w.id}:${n.id}`, from: `agent:${n.agentId}`, to: `wf:${w.id}` });
@@ -88,17 +98,62 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
     return set;
   }, [hover, edges]);
 
+  // Scale the whole graph down until it fits the viewport, then centre it.
+  const fit = useCallback(() => {
+    const el = canvasRef.current;
+    if (!el || !el.clientWidth || !el.clientHeight) return;
+    const z = clampZoom(Math.min(1, (el.clientWidth - FIT_MARGIN) / width, (el.clientHeight - FIT_MARGIN) / height));
+    setZoom(z);
+    setPan({ x: (el.clientWidth - width * z) / 2, y: (el.clientHeight - height * z) / 2 });
+  }, [width, height]);
+
+  // The canvas mounts hidden (0×0) and only gains a size once its tab is shown,
+  // so observe it rather than fitting on mount. Refit only when content changes.
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const key = `${width}x${height}`;
+    const ro = new ResizeObserver(() => {
+      if (!el.clientWidth || !el.clientHeight) return;
+      if (fittedFor.current === key) return;
+      fittedFor.current = key;
+      fit();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fit, width, height]);
+
   // Wheel zoom needs a non-passive listener or the browser eats the event.
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      setZoom((z) => Math.min(2, Math.max(0.35, z * (e.deltaY < 0 ? 1.1 : 0.9))));
+      const z = zoomRef.current;
+      const next = clampZoom(z * (e.deltaY < 0 ? 1.1 : 0.9));
+      const r = el.getBoundingClientRect();
+      const mx = e.clientX - r.left;
+      const my = e.clientY - r.top;
+      const p = panRef.current;
+      setZoom(next);
+      setPan({ x: mx - (mx - p.x) * (next / z), y: my - (my - p.y) * (next / z) });
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [nodes.length]);
+
+  // Zoom toward the centre of the viewport for the button controls.
+  const zoomBy = (factor: number) => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const z = zoomRef.current;
+    const next = clampZoom(z * factor);
+    const cx = el.clientWidth / 2;
+    const cy = el.clientHeight / 2;
+    const p = panRef.current;
+    setZoom(next);
+    setPan({ x: cx - (cx - p.x) * (next / z), y: cy - (cy - p.y) * (next / z) });
+  };
 
   const path = (from: GNode, to: GNode) => {
     const x1 = from.x + NODE_W;
@@ -121,29 +176,26 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
     { kind: 'workflow' as Kind, n: workflows.length },
   ];
 
-  const zoomBtn = 'grid h-7 w-7 cursor-pointer place-items-center rounded-[10px] border border-line bg-panel2 text-muted transition-colors hover:text-text';
+  const zoomBtn = 'grid h-6 w-6 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted transition-colors hover:bg-white/5 hover:text-text';
 
   return (
-    <div className="flex h-[calc(100vh-120px)] min-h-[440px] flex-col">
-      <header className="mb-4 flex items-end justify-between gap-4">
-        {!embedded && (
+    <div className="flex h-full min-h-[420px] flex-col">
+      {!embedded && (
+        <header className="mb-4 flex items-end justify-between gap-4">
           <div className="min-w-0">
             <span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span>
             <h1 className="m-0 text-[24px]">Graph</h1>
             <p className="mt-1 text-[12px] leading-[1.6] text-muted">What is wired to what — skills, tools and integrations feeding agents, and the workflows those agents run in. Drag to pan, scroll to zoom, hover to trace.</p>
           </div>
-        )}
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          <button className={zoomBtn} title="Zoom out" onClick={() => setZoom((z) => Math.max(0.35, z * 0.9))}><ZoomOut size={13} /></button>
-          <span className="w-9 text-center font-mono text-[11px] text-muted">{Math.round(zoom * 100)}%</span>
-          <button className={zoomBtn} title="Zoom in" onClick={() => setZoom((z) => Math.min(2, z * 1.1))}><ZoomIn size={13} /></button>
-          <button className={zoomBtn} title="Reset view" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}><Maximize2 size={13} /></button>
-        </div>
-      </header>
+        </header>
+      )}
 
       {nodes.length === 0 ? (
-        <div className="grid flex-1 place-items-center rounded-[16px] border border-line bg-panel">
-          <p className="text-[12px] text-muted">Nothing to map yet. Add an agent, tool, skill or workflow.</p>
+        <div className="grid flex-1 place-items-center rounded-[16px] border border-dashed border-soft p-8 text-center">
+          <div>
+            <p className="text-[13px] text-text">Nothing to map yet</p>
+            <p className="mx-auto mt-1 max-w-[340px] text-[12px] leading-[1.6] text-muted">Add an agent, tool, skill or workflow and it shows up here, wired to whatever it uses.</p>
+          </div>
         </div>
       ) : (
         <div
@@ -151,6 +203,9 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
           className="relative min-h-0 flex-1 cursor-grab overflow-hidden rounded-[16px] border border-line bg-panel active:cursor-grabbing"
           onPointerDown={(e) => {
             if (e.button !== 0) return;
+            // Nodes handle their own presses — starting a pan here would capture
+            // the pointer and swallow the node's click.
+            if ((e.target as HTMLElement).closest('[data-node]')) return;
             dragRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
             e.currentTarget.setPointerCapture(e.pointerId);
           }}
@@ -189,6 +244,7 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
                 <button
                   key={n.id}
                   type="button"
+                  data-node
                   onMouseEnter={() => setHover(n.id)}
                   onMouseLeave={() => setHover(null)}
                   onClick={() => {
@@ -208,7 +264,18 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
             })}
           </div>
 
-          <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-3 rounded-[12px] border border-line bg-panel/90 px-3 py-2 backdrop-blur">
+          {/* Zoom controls float over the canvas so the surface stays uncluttered */}
+          <div
+            className="glass absolute top-3 right-3 z-[6] flex items-center gap-0.5 rounded-lg border border-hairline p-1"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <button className={zoomBtn} title="Zoom out" onClick={() => zoomBy(0.9)}><ZoomOut size={13} /></button>
+            <span className="w-10 text-center font-mono text-[11px] text-muted">{Math.round(zoom * 100)}%</span>
+            <button className={zoomBtn} title="Zoom in" onClick={() => zoomBy(1.1)}><ZoomIn size={13} /></button>
+            <button className={zoomBtn} title="Fit to view" onClick={fit}><Maximize2 size={13} /></button>
+          </div>
+
+          <div className="glass pointer-events-none absolute bottom-3 left-3 z-[6] flex flex-wrap items-center gap-3 rounded-lg border border-hairline px-3 py-1.5">
             {counts.filter((c) => c.n > 0).map((c) => (
               <span key={c.kind} className="flex items-center gap-1.5 font-mono text-[10.5px] text-muted">
                 <i className="grid h-4 w-4 place-items-center rounded bg-panel2">{ICON[c.kind]}</i>

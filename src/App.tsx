@@ -12,7 +12,7 @@ import { useIntegrationsStore } from './hooks/useIntegrations';
 import { Topbar } from './components/Topbar';
 import { Sidebar } from './components/Sidebar';
 import { AgentWindow } from './components/AgentWindow';
-import { HomeView } from './components/views/HomeView';
+import { HomeView, type HomeTab } from './components/views/HomeView';
 import { AgentsView } from './components/views/AgentsView';
 import { CanvasView } from './components/views/CanvasView';
 import { ToolFormDrawer } from './components/views/ToolsView';
@@ -65,6 +65,7 @@ export default function App() {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [view, setView] = useState<View>('home');
+  const [homeTab, setHomeTab] = useState<HomeTab>('overview');
   const [drawerForm, setDrawerForm] = useState<DrawerForm>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [workflowToOpen, setWorkflowToOpen] = useState<string | null>(null);
@@ -91,12 +92,19 @@ export default function App() {
   return (
     <div className="relative flex h-screen flex-col overflow-hidden">
       <div className="ambient-layer" aria-hidden />
-      <Topbar collapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed((c) => !c)} />
+      <Topbar
+        collapsed={sidebarCollapsed}
+        onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+        agents={agents}
+        runs={runs}
+        onOpenGraph={() => { setView('home'); setHomeTab('graph'); }}
+        graphActive={view === 'home' && homeTab === 'graph'}
+      />
       <div className="relative z-10 flex min-h-0 flex-1">
         <Sidebar view={view} setView={setView} collapsed={sidebarCollapsed} />
         <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-10 py-9">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
-          <div className={view === 'home' ? '' : 'hidden'}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} runs={runs} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} /></div>
+          <div className={`h-full ${view === 'home' ? '' : 'hidden'}`}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} runs={runs} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} tab={homeTab} onTabChange={setHomeTab} /></div>
           <div className={view === 'agents' ? '' : 'hidden'}><AgentsView agents={agents} tools={tools} onOpen={openAgent} onCreate={addAgent} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('Agent deleted', 'success'); }} /></div>
           <div className={view === 'workflows' ? '' : 'hidden'}>
             <CanvasView
