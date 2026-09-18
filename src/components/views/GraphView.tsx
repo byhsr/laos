@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Bot, Globe, Maximize2, Sparkles, UserCog, Workflow as WorkflowIcon, Wrench, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowUpRight, Bot, Globe, Maximize2, Plus, Sparkles, UserCog, Workflow as WorkflowIcon, Wrench, X, ZoomIn, ZoomOut } from 'lucide-react';
 import type { Agent, Integration, Skill, Tool, Workflow } from '../../types';
 
 const NODE_W = 196;
@@ -15,6 +15,7 @@ const FIT_MARGIN = 72;
 type Kind = 'skill' | 'tool' | 'integration' | 'agent' | 'manager' | 'workflow';
 type GNode = { id: string; kind: Kind; label: string; sub: string; x: number; y: number };
 type GEdge = { id: string; from: string; to: string };
+type LinkField = 'toolIds' | 'skillIds' | 'integrations';
 
 const ICON: Record<Kind, ReactNode> = {
   skill: <Sparkles size={14} />,
@@ -34,17 +35,194 @@ const LABEL: Record<Kind, string> = {
   workflow: 'Workflows',
 };
 
+// Which agent field a capability node links through.
+const FIELD_OF: Partial<Record<Kind, LinkField>> = {
+  tool: 'toolIds',
+  skill: 'skillIds',
+  integration: 'integrations',
+};
+
 const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 
-export function GraphView({ agents, skills, tools, integrations, workflows, onOpenAgent, onOpenWorkflow, embedded = false }: {
+function LinkRow({ name, onRemove }: { name: string; onRemove: () => void }) {
+  return (
+    <div className="group flex items-center gap-2 rounded-md border border-line bg-panel2/50 px-2.5 py-1.5">
+      <span className="min-w-0 flex-1 truncate text-[12px] text-text">{name}</span>
+      <button
+        className="grid h-5 w-5 shrink-0 cursor-pointer place-items-center rounded text-muted opacity-0 transition-opacity hover:bg-[#e11d48] hover:text-white group-hover:opacity-100"
+        onClick={onRemove}
+        title="Remove link"
+      >
+        <X size={11} />
+      </button>
+    </div>
+  );
+}
+
+function LinkSection({ title, linked, available, onAdd, onRemove, empty }: {
+  title: string;
+  linked: { id: string; name: string }[];
+  available: { id: string; name: string }[];
+  onAdd: (id: string) => void;
+  onRemove: (id: string) => void;
+  empty: string;
+}) {
+  return (
+    <section className="mb-5 last:mb-0">
+      <div className="mb-2 flex items-baseline justify-between">
+        <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted">{title}</span>
+        <span className="font-mono text-[10px] text-muted">{linked.length}</span>
+      </div>
+
+      {linked.length === 0 && available.length === 0 ? (
+        <p className="text-[11.5px] leading-[1.6] text-muted">{empty}</p>
+      ) : (
+        <div className="grid gap-1.5">
+          {linked.map((i) => <LinkRow key={i.id} name={i.name} onRemove={() => onRemove(i.id)} />)}
+          {available.length > 0 && (
+            <div className="mt-0.5 flex flex-wrap gap-1.5">
+              {available.map((i) => (
+                <button
+                  key={i.id}
+                  className="flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-dashed border-soft px-2 py-1 text-[11px] text-muted transition-colors hover:border-mid hover:text-text"
+                  onClick={() => onAdd(i.id)}
+                  title={`Link ${i.name}`}
+                >
+                  <Plus size={10} /><span className="truncate">{i.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Inspector({ node, agents, skills, tools, integrations, workflows, onClose, onOpenAgent, onOpenWorkflow, onSaveAgent, onSaveWorkflow }: {
+  node: GNode;
   agents: Agent[]; skills: Skill[]; tools: Tool[]; integrations: Integration[]; workflows: Workflow[];
-  onOpenAgent: (id: string) => void; onOpenWorkflow: (id: string) => void; embedded?: boolean;
+  onClose: () => void; onOpenAgent: (id: string) => void; onOpenWorkflow: (id: string) => void;
+  onSaveAgent: (a: Agent) => Promise<void>; onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
+}) {
+  const named = (list: { id: string; name: string }[]) => list.map((i) => ({ id: i.id, name: i.name }));
+  const namedAgents = named(agents);
+
+  const patchAgent = (agent: Agent, field: LinkField, next: string[]) => {
+    void onSaveAgent({ ...agent, [field]: next });
+  };
+
+  const openTarget = () => {
+    const rawId = node.id.slice(node.id.indexOf(':') + 1);
+    if (node.kind === 'agent' || node.kind === 'manager') onOpenAgent(rawId);
+    if (node.kind === 'workflow') onOpenWorkflow(rawId);
+  };
+
+  const isAgentish = node.kind === 'agent' || node.kind === 'manager';
+  const agentNode = isAgentish ? agents.find((a) => `agent:${a.id}` === node.id) : undefined;
+  const wfNode = node.kind === 'workflow' ? workflows.find((w) => `wf:${w.id}` === node.id) : undefined;
+  const capField = FIELD_OF[node.kind];
+
+  return (
+    <aside className="glass flex w-[300px] shrink-0 flex-col overflow-hidden rounded-[16px] border border-hairline">
+      <header className="flex shrink-0 items-start justify-between gap-2 border-b border-hairline px-3.5 py-3">
+        <div className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-muted">
+            <i className="grid h-4 w-4 place-items-center rounded bg-panel2">{ICON[node.kind]}</i>
+            {LABEL[node.kind]}
+          </span>
+          <b className="mt-1 block truncate text-[13px] text-text">{node.label}</b>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {(isAgentish || node.kind === 'workflow') && (
+            <button className="secondary" onClick={openTarget} title="Open"><ArrowUpRight size={12} /></button>
+          )}
+          <button className="secondary" onClick={onClose} title="Close"><X size={12} /></button>
+        </div>
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-3.5 py-4">
+        {agentNode && (
+          <>
+            <LinkSection
+              title="Tools" empty="No tools configured yet."
+              linked={named(tools.filter((t) => (agentNode.toolIds ?? []).includes(t.id)))}
+              available={named(tools.filter((t) => !(agentNode.toolIds ?? []).includes(t.id)))}
+              onAdd={(id) => patchAgent(agentNode, 'toolIds', [...(agentNode.toolIds ?? []), id])}
+              onRemove={(id) => patchAgent(agentNode, 'toolIds', (agentNode.toolIds ?? []).filter((x) => x !== id))}
+            />
+            <LinkSection
+              title="Skills" empty="No skills configured yet."
+              linked={named(skills.filter((s) => (agentNode.skillIds ?? []).includes(s.id)))}
+              available={named(skills.filter((s) => !(agentNode.skillIds ?? []).includes(s.id)))}
+              onAdd={(id) => patchAgent(agentNode, 'skillIds', [...(agentNode.skillIds ?? []), id])}
+              onRemove={(id) => patchAgent(agentNode, 'skillIds', (agentNode.skillIds ?? []).filter((x) => x !== id))}
+            />
+            <LinkSection
+              title="Integrations" empty="No integrations configured yet."
+              linked={named(integrations.filter((i) => (agentNode.integrations ?? []).includes(i.id)))}
+              available={named(integrations.filter((i) => !(agentNode.integrations ?? []).includes(i.id)))}
+              onAdd={(id) => patchAgent(agentNode, 'integrations', [...(agentNode.integrations ?? []), id])}
+              onRemove={(id) => patchAgent(agentNode, 'integrations', (agentNode.integrations ?? []).filter((x) => x !== id))}
+            />
+          </>
+        )}
+
+        {capField && (
+          <LinkSection
+            title="Used by"
+            empty={`No agent uses this ${node.kind} yet.`}
+            linked={namedAgents.filter((a) => (agents.find((x) => x.id === a.id)?.[capField] ?? []).includes(node.id.slice(node.id.indexOf(':') + 1)))}
+            available={namedAgents.filter((a) => !(agents.find((x) => x.id === a.id)?.[capField] ?? []).includes(node.id.slice(node.id.indexOf(':') + 1)))}
+            onAdd={(agentId) => {
+              const a = agents.find((x) => x.id === agentId);
+              const itemId = node.id.slice(node.id.indexOf(':') + 1);
+              if (a) patchAgent(a, capField, [...(a[capField] ?? []), itemId]);
+            }}
+            onRemove={(agentId) => {
+              const a = agents.find((x) => x.id === agentId);
+              const itemId = node.id.slice(node.id.indexOf(':') + 1);
+              if (a) patchAgent(a, capField, (a[capField] ?? []).filter((x) => x !== itemId));
+            }}
+          />
+        )}
+
+        {wfNode && (
+          <LinkSection
+            title="Agents in this workflow"
+            empty="This workflow has no agent steps yet. Add agents on the canvas."
+            linked={namedAgents.filter((a) => wfNode.nodes.some((n) => n.agentId === a.id))}
+            available={named(agents.filter((a) => !a.isManager && !wfNode.nodes.some((n) => n.agentId === a.id)))}
+            onAdd={(agentId) => {
+              const a = agents.find((x) => x.id === agentId);
+              if (!a) return;
+              const nodes = [...wfNode.nodes, { id: `node-${Date.now()}`, type: 'agent' as const, agentId, label: a.name, x: 80 + wfNode.nodes.length * 220, y: 120 }];
+              void onSaveWorkflow({ ...wfNode, nodes });
+            }}
+            onRemove={(agentId) => {
+              const nodes = wfNode.nodes.filter((n) => n.agentId !== agentId);
+              const kept = new Set(nodes.map((n) => n.id));
+              void onSaveWorkflow({ ...wfNode, nodes, edges: wfNode.edges.filter((e) => kept.has(e.from) && kept.has(e.to)) });
+            }}
+          />
+        )}
+      </div>
+    </aside>
+  );
+}
+
+export function GraphView({ agents, skills, tools, integrations, workflows, onOpenAgent, onOpenWorkflow, onSaveAgent, onSaveWorkflow, embedded = false }: {
+  agents: Agent[]; skills: Skill[]; tools: Tool[]; integrations: Integration[]; workflows: Workflow[];
+  onOpenAgent: (id: string) => void; onOpenWorkflow: (id: string) => void;
+  onSaveAgent: (a: Agent) => Promise<void>; onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
+  embedded?: boolean;
 }) {
   const canvasRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const dragRef = useRef<{ x: number; y: number; px: number; py: number; moved: boolean } | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [hover, setHover] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
 
   // Mirrors so the imperative wheel handler never reads stale state.
   const zoomRef = useRef(zoom); zoomRef.current = zoom;
@@ -91,12 +269,16 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
   }, [agents, skills, tools, integrations, workflows]);
 
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  // A clicked node stays the focus; hover only traces when nothing is selected.
+  const focus = selected ?? hover;
   const connected = useMemo(() => {
-    if (!hover) return new Set<string>();
-    const set = new Set<string>([hover]);
-    edges.forEach((e) => { if (e.from === hover) set.add(e.to); if (e.to === hover) set.add(e.from); });
+    if (!focus) return new Set<string>();
+    const set = new Set<string>([focus]);
+    edges.forEach((e) => { if (e.from === focus) set.add(e.to); if (e.to === focus) set.add(e.from); });
     return set;
-  }, [hover, edges]);
+  }, [focus, edges]);
+
+  const selNode = selected ? nodes.find((n) => n.id === selected) ?? null : null;
 
   // Scale the whole graph down until it fits the viewport, then centre it.
   const fit = useCallback(() => {
@@ -142,7 +324,6 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
     return () => el.removeEventListener('wheel', onWheel);
   }, [nodes.length]);
 
-  // Zoom toward the centre of the viewport for the button controls.
   const zoomBy = (factor: number) => {
     const el = canvasRef.current;
     if (!el) return;
@@ -164,8 +345,8 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
     return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
   };
 
-  const edgeActive = (e: GEdge) => !!hover && (e.from === hover || e.to === hover);
-  const nodeDim = (id: string) => !!hover && !connected.has(id);
+  const edgeActive = (e: GEdge) => !!focus && (e.from === focus || e.to === focus);
+  const nodeDim = (id: string) => !!focus && !connected.has(id);
 
   const counts = [
     { kind: 'agent' as Kind, n: agents.filter((a) => !a.isManager).length },
@@ -185,104 +366,138 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
           <div className="min-w-0">
             <span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span>
             <h1 className="m-0 text-[24px]">Graph</h1>
-            <p className="mt-1 text-[12px] leading-[1.6] text-muted">What is wired to what — skills, tools and integrations feeding agents, and the workflows those agents run in. Drag to pan, scroll to zoom, hover to trace.</p>
+            <p className="mt-1 text-[12px] leading-[1.6] text-muted">What is wired to what. Drag to pan, scroll to zoom, click a node to see and edit its links.</p>
           </div>
         </header>
       )}
 
       {nodes.length === 0 ? (
-        <div className="grid flex-1 place-items-center rounded-[16px] border border-dashed border-soft p-8 text-center">
+        <div className="grid flex-1 place-items-center rounded-[16px] p-8 text-center">
           <div>
             <p className="text-[13px] text-text">Nothing to map yet</p>
             <p className="mx-auto mt-1 max-w-[340px] text-[12px] leading-[1.6] text-muted">Add an agent, tool, skill or workflow and it shows up here, wired to whatever it uses.</p>
           </div>
         </div>
       ) : (
-        <div
-          ref={canvasRef}
-          className="relative min-h-0 flex-1 cursor-grab overflow-hidden rounded-[16px] border border-line bg-panel active:cursor-grabbing"
-          onPointerDown={(e) => {
-            if (e.button !== 0) return;
-            // Nodes handle their own presses — starting a pan here would capture
-            // the pointer and swallow the node's click.
-            if ((e.target as HTMLElement).closest('[data-node]')) return;
-            dragRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
-            e.currentTarget.setPointerCapture(e.pointerId);
-          }}
-          onPointerMove={(e) => {
-            const d = dragRef.current;
-            if (!d) return;
-            setPan({ x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) });
-          }}
-          onPointerUp={(e) => { dragRef.current = null; e.currentTarget.releasePointerCapture(e.pointerId); }}
-          onPointerLeave={() => { dragRef.current = null; }}
-        >
+        <div className="flex min-h-0 flex-1 gap-3">
+          {/* No surface of its own — the graph floats on the workspace background. */}
           <div
-            className="absolute top-0 left-0 origin-top-left"
-            style={{ width, height, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+            ref={canvasRef}
+            className="relative min-h-0 flex-1 cursor-grab overflow-hidden active:cursor-grabbing"
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              // Nodes handle their own presses — capturing here would swallow their click.
+              if ((e.target as HTMLElement).closest('[data-node]')) return;
+              dragRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y, moved: false };
+              e.currentTarget.setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              const d = dragRef.current;
+              if (!d) return;
+              if (!d.moved && Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 4) d.moved = true;
+              if (d.moved) setPan({ x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) });
+            }}
+            onPointerUp={(e) => {
+              const d = dragRef.current;
+              dragRef.current = null;
+              e.currentTarget.releasePointerCapture(e.pointerId);
+              if (d && !d.moved) setSelected(null);
+            }}
+            onPointerLeave={() => { dragRef.current = null; }}
           >
-            <svg className="pointer-events-none absolute top-0 left-0 z-0" width={width} height={height}>
-              {edges.map((e) => {
-                const from = byId.get(e.from);
-                const to = byId.get(e.to);
-                if (!from || !to) return null;
-                const active = edgeActive(e);
+            <div
+              className="absolute top-0 left-0 origin-top-left"
+              style={{ width, height, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+            >
+              <svg className="pointer-events-none absolute top-0 left-0 z-0" width={width} height={height}>
+                <defs>
+                  <marker id="gv-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-soft)" />
+                  </marker>
+                  <marker id="gv-arrow-on" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-green)" />
+                  </marker>
+                </defs>
+                {edges.map((e) => {
+                  const from = byId.get(e.from);
+                  const to = byId.get(e.to);
+                  if (!from || !to) return null;
+                  const active = edgeActive(e);
+                  return (
+                    <g key={e.id}>
+                      <path
+                        d={path(from, to)}
+                        className={`fill-none ${active ? 'stroke-[var(--green)]' : 'stroke-soft'}`}
+                        strokeWidth={active ? 1.8 : 1.2}
+                        markerEnd={active ? 'url(#gv-arrow-on)' : 'url(#gv-arrow)'}
+                      />
+                      {active && (
+                        <>
+                          <circle cx={from.x + NODE_W} cy={from.y + NODE_H / 2} r={3} fill="var(--color-green)" />
+                          <circle cx={to.x} cy={to.y + NODE_H / 2} r={3} fill="var(--color-green)" />
+                        </>
+                      )}
+                    </g>
+                  );
+                })}
+              </svg>
+
+              {nodes.map((n) => {
+                const dim = nodeDim(n.id);
+                const isSel = selected === n.id;
                 return (
-                  <path
-                    key={e.id}
-                    d={path(from, to)}
-                    className={`fill-none ${active ? 'stroke-[var(--green)]' : 'stroke-line'}`}
-                    strokeWidth={active ? 1.8 : 1.2}
-                  />
+                  <button
+                    key={n.id}
+                    type="button"
+                    data-node
+                    onMouseEnter={() => setHover(n.id)}
+                    onMouseLeave={() => setHover(null)}
+                    onClick={() => setSelected((s) => (s === n.id ? null : n.id))}
+                    className={`absolute z-[1] flex cursor-pointer items-center gap-3 rounded-[14px] border bg-panel px-3 text-left shadow-soft transition-all duration-150 ${dim ? 'opacity-25' : 'opacity-100'} ${isSel ? 'border-[var(--green)]' : focus === n.id ? 'border-mid' : 'border-line hover:border-mid'}`}
+                    style={{ left: n.x, top: n.y, width: NODE_W, height: NODE_H }}
+                  >
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-panel2 text-muted">{ICON[n.kind]}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12px] text-text">{n.label}</span>
+                      <span className="block truncate font-mono text-[10.5px] text-muted">{n.sub}</span>
+                    </span>
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${isSel ? 'bg-[var(--green)]' : 'bg-soft'}`} />
+                  </button>
                 );
               })}
-            </svg>
+            </div>
 
-            {nodes.map((n) => {
-              const dim = nodeDim(n.id);
-              return (
-                <button
-                  key={n.id}
-                  type="button"
-                  data-node
-                  onMouseEnter={() => setHover(n.id)}
-                  onMouseLeave={() => setHover(null)}
-                  onClick={() => {
-                    if (n.kind === 'agent' || n.kind === 'manager') onOpenAgent(n.id.slice('agent:'.length));
-                    if (n.kind === 'workflow') onOpenWorkflow(n.id.slice('wf:'.length));
-                  }}
-                  className={`absolute z-[1] flex cursor-pointer items-center gap-3 rounded-[16px] border bg-panel px-3 text-left transition-all duration-150 ${dim ? 'opacity-25' : 'opacity-100'} ${hover === n.id ? 'border-mid' : 'border-line hover:border-mid'}`}
-                  style={{ left: n.x, top: n.y, width: NODE_W, height: NODE_H }}
-                >
-                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-panel2 text-muted">{ICON[n.kind]}</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[12px] text-text">{n.label}</span>
-                    <span className="block truncate font-mono text-[10.5px] text-muted">{n.sub}</span>
-                  </span>
-                </button>
-              );
-            })}
+            <div
+              className="glass absolute top-3 right-3 z-[6] flex items-center gap-0.5 rounded-lg border border-hairline p-1"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <button className={zoomBtn} title="Zoom out" onClick={() => zoomBy(0.9)}><ZoomOut size={13} /></button>
+              <span className="w-10 text-center font-mono text-[11px] text-muted">{Math.round(zoom * 100)}%</span>
+              <button className={zoomBtn} title="Zoom in" onClick={() => zoomBy(1.1)}><ZoomIn size={13} /></button>
+              <button className={zoomBtn} title="Fit to view" onClick={fit}><Maximize2 size={13} /></button>
+            </div>
+
+            <div className="glass pointer-events-none absolute bottom-3 left-3 z-[6] flex flex-wrap items-center gap-3 rounded-lg border border-hairline px-3 py-1.5">
+              {counts.filter((c) => c.n > 0).map((c) => (
+                <span key={c.kind} className="flex items-center gap-1.5 font-mono text-[10.5px] text-muted">
+                  <i className="grid h-4 w-4 place-items-center rounded bg-panel2">{ICON[c.kind]}</i>
+                  {c.n} {LABEL[c.kind].toLowerCase()}
+                </span>
+              ))}
+            </div>
           </div>
 
-          {/* Zoom controls float over the canvas so the surface stays uncluttered */}
-          <div
-            className="glass absolute top-3 right-3 z-[6] flex items-center gap-0.5 rounded-lg border border-hairline p-1"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <button className={zoomBtn} title="Zoom out" onClick={() => zoomBy(0.9)}><ZoomOut size={13} /></button>
-            <span className="w-10 text-center font-mono text-[11px] text-muted">{Math.round(zoom * 100)}%</span>
-            <button className={zoomBtn} title="Zoom in" onClick={() => zoomBy(1.1)}><ZoomIn size={13} /></button>
-            <button className={zoomBtn} title="Fit to view" onClick={fit}><Maximize2 size={13} /></button>
-          </div>
-
-          <div className="glass pointer-events-none absolute bottom-3 left-3 z-[6] flex flex-wrap items-center gap-3 rounded-lg border border-hairline px-3 py-1.5">
-            {counts.filter((c) => c.n > 0).map((c) => (
-              <span key={c.kind} className="flex items-center gap-1.5 font-mono text-[10.5px] text-muted">
-                <i className="grid h-4 w-4 place-items-center rounded bg-panel2">{ICON[c.kind]}</i>
-                {c.n} {LABEL[c.kind].toLowerCase()}
-              </span>
-            ))}
-          </div>
+          {selNode && (
+            <Inspector
+              node={selNode}
+              agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows}
+              onClose={() => setSelected(null)}
+              onOpenAgent={onOpenAgent}
+              onOpenWorkflow={onOpenWorkflow}
+              onSaveAgent={onSaveAgent}
+              onSaveWorkflow={onSaveWorkflow}
+            />
+          )}
         </div>
       )}
     </div>

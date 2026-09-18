@@ -11,9 +11,10 @@ export type HomeTab = 'overview' | 'graph';
 const tabBtn = (active: boolean) =>
   `flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${active ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`;
 
-export function HomeView({ agents, tools, skills, integrations, runs, workflows, onOpen, onCreate, onOpenWorkflow, tab, onTabChange }: {
+export function HomeView({ agents, tools, skills, integrations, runs, workflows, onOpen, onCreate, onOpenWorkflow, onSaveAgent, onSaveWorkflow, tab, onTabChange }: {
   agents: Agent[]; tools: Tool[]; skills: Skill[]; integrations: Integration[]; runs: Run[]; workflows: Workflow[];
   onOpen: (id: string) => void; onCreate: () => void; onOpenWorkflow: (id: string) => void;
+  onSaveAgent: (a: Agent) => Promise<void>; onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
   tab: HomeTab; onTabChange: (t: HomeTab) => void;
 }) {
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
@@ -72,7 +73,7 @@ export function HomeView({ agents, tools, skills, integrations, runs, workflows,
       </div>
 
       <div className={`min-h-0 flex-1 ${tab === 'graph' ? '' : 'hidden'}`}>
-        <GraphView embedded agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows} onOpenAgent={onOpen} onOpenWorkflow={onOpenWorkflow} />
+        <GraphView embedded agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows} onOpenAgent={onOpen} onOpenWorkflow={onOpenWorkflow} onSaveAgent={onSaveAgent} onSaveWorkflow={onSaveWorkflow} />
       </div>
     </div>
   );

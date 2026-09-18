@@ -11,17 +11,72 @@ use crate::http;
 use crate::manager::manager_turn;
 use crate::tasks::list_tasks;
 
+// Reads the telegram integration config blob (empty object when unset).
+fn telegram_config(conn: &Connection) -> serde_json::Value {
+  let Ok(mut stmt) = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'") else {
+    return serde_json::json!({});
+  };
+  let Ok(mut rows) = stmt.query_map([], |row| row.get::<_, String>(0)) else {
+    return serde_json::json!({});
+  };
+  match rows.next().transpose() {
+    Ok(Some(cfg)) => serde_json::from_str(&cfg).unwrap_or_else(|_| serde_json::json!({})),
+    _ => serde_json::json!({}),
+  }
+}
+
+fn cfg_str(cfg: &serde_json::Value, key: &str) -> Option<String> {
+  cfg.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string())
+}
+
+// Merges `mutate` into the telegram config and writes it back, never clobbering
+// the stored bot token. `connected` tracks whether a tunnel/webhook is live.
+fn write_telegram_config(conn: &Connection, connected: bool, mutate: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>)) -> Result<(), String> {
+  let mut merged = telegram_config(conn);
+  if !merged.is_object() { merged = serde_json::json!({}); }
+  mutate(merged.as_object_mut().unwrap());
+  conn.execute(
+    "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES ('telegram','Telegram','telegram',?1,1,?2,?3)
+     ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, connected=excluded.connected",
+    params![serde_json::to_string(&merged).map_err(|e| e.to_string())?, if connected { 1 } else { 0 }, now()],
+  ).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 // Reads the Telegram bot token from the telegram integration config, if enabled.
 fn telegram_token(conn: &Connection) -> Result<Option<String>, String> {
-  let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
-  let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
-  match rows.next().transpose().map_err(|e| e.to_string())? {
-    Some(cfg_json) => {
-      let cfg: serde_json::Value = serde_json::from_str(&cfg_json).map_err(|e| e.to_string())?;
-      Ok(cfg.get("token").and_then(|t| t.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string()))
-    }
-    None => Ok(None),
+  Ok(cfg_str(&telegram_config(conn), "token"))
+}
+
+fn webhook_registered(conn: &Connection) -> bool {
+  telegram_config(conn).get("webhookRegistered").and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+fn webhook_secret(conn: &Connection) -> Option<String> {
+  cfg_str(&telegram_config(conn), "webhookSecret")
+}
+
+// Telegram constrains secret_token to 1-256 chars of A-Za-z0-9_-
+fn generate_webhook_secret() -> String {
+  use std::hash::{BuildHasher, Hasher};
+  let mut out = String::new();
+  for i in 0..2u64 {
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u64(i);
+    h.write_u64(u64::from(std::process::id()));
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+    out.push_str(&format!("{:016x}", h.finish()));
   }
+  out
+}
+
+// Returns the stored webhook secret, minting one on first use.
+fn ensure_webhook_secret(conn: &Connection) -> Result<String, String> {
+  if let Some(s) = webhook_secret(conn) { return Ok(s); }
+  let secret = generate_webhook_secret();
+  let to_store = secret.clone();
+  write_telegram_config(conn, true, move |o| { o.insert("webhookSecret".into(), serde_json::json!(to_store)); })?;
+  Ok(secret)
 }
 
 // ---------------------------------------------------------------------------
@@ -36,6 +91,78 @@ fn telegram_log(conn: &Connection, direction: &str, chat_id: &str, text: &str, r
   );
   // Cap the log to the most recent 500 rows.
   let _ = conn.execute("DELETE FROM telegram_logs WHERE id NOT IN (SELECT id FROM telegram_logs ORDER BY id DESC LIMIT 500)", []);
+}
+
+// Telegram caps sendMessage at 4096 characters; anything longer is rejected whole.
+fn split_for_telegram(text: &str) -> Vec<String> {
+  const LIMIT: usize = 4000; // stay clear of the 4096 ceiling
+  let mut out: Vec<String> = Vec::new();
+  let mut cur = String::new();
+  let mut len = 0usize;
+  for line in text.split_inclusive('\n') {
+    let line_len = line.chars().count();
+    if len > 0 && len + line_len > LIMIT {
+      out.push(std::mem::take(&mut cur));
+      len = 0;
+    }
+    if line_len > LIMIT {
+      for ch in line.chars() {
+        if len >= LIMIT { out.push(std::mem::take(&mut cur)); len = 0; }
+        cur.push(ch);
+        len += 1;
+      }
+    } else {
+      cur.push_str(line);
+      len += line_len;
+    }
+  }
+  if !cur.is_empty() { out.push(cur); }
+  if out.is_empty() { out.push(String::new()); }
+  out
+}
+
+// Pulls Telegram's own explanation out of an error body so the log says what
+// actually went wrong instead of a bare status line.
+fn telegram_error(body: &str) -> String {
+  serde_json::from_str::<serde_json::Value>(body).ok()
+    .and_then(|v| v.get("description").and_then(|d| d.as_str()).map(|s| s.to_string()))
+    .unwrap_or_else(|| body.chars().take(200).collect())
+}
+
+// The model answers in Markdown, which Telegram's legacy `Markdown` mode barely
+// accepts — one unbalanced `*`, `_` or `[` and it rejects the whole message with
+// 400. Its HTML mode covers more ground and escapes cleanly, so convert to that
+// first and fall back to the raw text if even that is refused. Formatting is
+// optional here; delivery is not.
+async fn telegram_send_chunk(url: &str, chat_id: i64, markdown: &str) -> Result<(), String> {
+  let client = http::client();
+  let send = |body: serde_json::Value| client.post(url).json(&body).send();
+
+  let formatted = serde_json::json!({
+    "chat_id": chat_id,
+    "text": crate::tg_markdown::to_telegram_html(markdown),
+    "parse_mode": "HTML",
+  });
+  let resp = send(formatted).await.map_err(|e| format!("Could not reach Telegram: {e}"))?;
+  if resp.status().is_success() { return Ok(()); }
+  let status = resp.status();
+  let detail = telegram_error(&resp.text().await.unwrap_or_default());
+
+  let plain = serde_json::json!({ "chat_id": chat_id, "text": markdown });
+  let retry = send(plain).await.map_err(|e| format!("Could not reach Telegram: {e}"))?;
+  if retry.status().is_success() { return Ok(()); }
+  let retry_status = retry.status();
+  let retry_detail = telegram_error(&retry.text().await.unwrap_or_default());
+  Err(format!("{retry_status} {retry_detail} (formatted send failed: {status} {detail})"))
+}
+
+// Sends a reply, splitting anything over the message-size limit.
+async fn telegram_send_message(token: &str, chat_id: i64, text: &str) -> Result<(), String> {
+  let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+  for chunk in split_for_telegram(text) {
+    telegram_send_chunk(&url, chat_id, &chunk).await?;
+  }
+  Ok(())
 }
 
 #[tauri::command]
@@ -65,14 +192,35 @@ fn tunnel_url_store() -> &'static std::sync::Mutex<Option<String>> {
 fn set_tunnel_url(u: Option<String>) { *tunnel_url_store().lock().unwrap() = u; }
 fn get_tunnel_url() -> Option<String> { tunnel_url_store().lock().unwrap().clone() }
 
+// Telegram turns run one at a time. The webhook server spawns a task per delivery
+// and the polling loop runs its own, so a few quick messages would otherwise fire
+// concurrent provider calls and trip the provider's rate limit — a burst is fine,
+// a stampede is not.
+static TELEGRAM_TURN_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+async fn telegram_manager_turn(app: &AppHandle, text: &str) -> String {
+  let lock = TELEGRAM_TURN_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
+  let _guard = lock.lock().await;
+  manager_turn(app, text).await.unwrap_or_else(|e| format!("Manager error: {e}"))
+}
+
+// Telegram re-delivers a webhook update when our response is slow. Remember what
+// we have already handled so a retry doesn't run the Manager a second time.
+static SEEN_UPDATES: std::sync::OnceLock<std::sync::Mutex<std::collections::VecDeque<i64>>> = std::sync::OnceLock::new();
+
+fn first_time_update(id: i64) -> bool {
+  let store = SEEN_UPDATES.get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()));
+  let Ok(mut q) = store.lock() else { return true };
+  if q.contains(&id) { return false; }
+  q.push_back(id);
+  while q.len() > 256 { q.pop_front(); }
+  true
+}
+
 // Reads the persisted tunnel URL from the telegram integration config (survives
 // app restarts where the in-memory state is lost).
 fn get_persisted_tunnel_url(conn: &Connection) -> Option<String> {
-  let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").ok()?;
-  let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).ok()?;
-  let cfg = rows.next().transpose().ok()??;
-  let v: serde_json::Value = serde_json::from_str(&cfg).ok()?;
-  v.get("tunnelUrl").and_then(|t| t.as_str()).map(|s| s.to_string())
+  cfg_str(&telegram_config(conn), "tunnelUrl")
 }
 
 // Spawns cloudflared (system binary) pointed at a local port. Returns the
@@ -167,24 +315,11 @@ pub async fn telegram_start_tunnel(app: AppHandle, local_port: Option<u16>, on_p
   // Persist the local port + tunnel URL, MERGING with any existing config
   // (never clobber the stored bot token).
   let conn = db(&app)?;
-  let existing: serde_json::Value = {
-    let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
-    let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
-    match rows.next().transpose().map_err(|e| e.to_string())? {
-      Some(cfg) => serde_json::from_str(&cfg).unwrap_or(serde_json::json!({})),
-      None => serde_json::json!({}),
-    }
-  };
-  let mut merged = existing;
-  if let Some(obj) = merged.as_object_mut() {
-    obj.insert("tunnelUrl".into(), serde_json::json!(url));
-    obj.insert("tunnelPort".into(), serde_json::json!(port));
-  }
-  conn.execute(
-    "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES ('telegram','Telegram','telegram',?1,1,1,?2)
-     ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, connected=1",
-    params![serde_json::to_string(&merged).map_err(|e| e.to_string())?, now()],
-  ).map_err(|e| e.to_string())?;
+  let persisted = url.clone();
+  write_telegram_config(&conn, true, move |o| {
+    o.insert("tunnelUrl".into(), serde_json::json!(persisted));
+    o.insert("tunnelPort".into(), serde_json::json!(port));
+  })?;
 
   Ok(url)
 }
@@ -263,32 +398,18 @@ pub async fn telegram_register_custom_url(app: AppHandle, public_url: String, on
   if url.is_empty() || (!url.starts_with("https://") && !url.starts_with("http://")) {
     return Err("Public URL must start with http:// or https://".into());
   }
+  let secret = ensure_webhook_secret(&conn)?;
   let webhook_url = format!("{url}/webhook/telegram");
   step(&format!("Registering webhook at {webhook_url}…"));
   let resp = http::client()
-    .get(format!("https://api.telegram.org/bot{token}/setWebhook?url={webhook_url}"))
+    .get(format!("https://api.telegram.org/bot{token}/setWebhook?url={webhook_url}&secret_token={secret}"))
     .send().await.map_err(|e| format!("setWebhook request failed: {e}"))?;
   let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
   if json.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
-    // Merge into config, preserving the token.
-    let existing: serde_json::Value = {
-      let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
-      let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
-      match rows.next().transpose().map_err(|e| e.to_string())? {
-        Some(cfg) => serde_json::from_str(&cfg).unwrap_or(serde_json::json!({})),
-        None => serde_json::json!({}),
-      }
-    };
-    let mut merged = existing;
-    if let Some(obj) = merged.as_object_mut() {
-      obj.insert("tunnelUrl".into(), serde_json::json!(url));
-      obj.insert("webhookRegistered".into(), serde_json::json!(true));
-    }
-    conn.execute(
-      "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES ('telegram','Telegram','telegram',?1,1,1,?2)
-       ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, connected=1",
-      params![serde_json::to_string(&merged).map_err(|e| e.to_string())?, now()],
-    ).map_err(|e| e.to_string())?;
+    write_telegram_config(&conn, true, move |o| {
+      o.insert("tunnelUrl".into(), serde_json::json!(url));
+      o.insert("webhookRegistered".into(), serde_json::json!(true));
+    })?;
     step("Webhook registered ✓");
     Ok(format!("Webhook registered at {webhook_url}"))
   } else {
@@ -307,32 +428,18 @@ pub async fn telegram_register_webhook(app: AppHandle, on_progress: tauri::ipc::
   let token = telegram_token(&conn)?.ok_or("Telegram token not configured.")?;
   step("Token OK — checking tunnel…");
   let url = get_tunnel_url().ok_or("Tunnel not running. Start the tunnel first.")?;
+  let secret = ensure_webhook_secret(&conn)?;
   let webhook_url = format!("{url}/webhook/telegram");
   step(&format!("Registering webhook at {webhook_url}…"));
   let resp = http::client()
-    .get(format!("https://api.telegram.org/bot{token}/setWebhook?url={webhook_url}"))
+    .get(format!("https://api.telegram.org/bot{token}/setWebhook?url={webhook_url}&secret_token={secret}"))
     .send().await.map_err(|e| format!("setWebhook request failed: {e}"))?;
   let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
   if json.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
-    // Merge webhook status into config, preserving the stored token.
-    let existing: serde_json::Value = {
-      let mut stmt = conn.prepare("SELECT config_json FROM integration_configs WHERE id='telegram'").map_err(|e| e.to_string())?;
-      let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
-      match rows.next().transpose().map_err(|e| e.to_string())? {
-        Some(cfg) => serde_json::from_str(&cfg).unwrap_or(serde_json::json!({})),
-        None => serde_json::json!({}),
-      }
-    };
-    let mut merged = existing;
-    if let Some(obj) = merged.as_object_mut() {
-      obj.insert("tunnelUrl".into(), serde_json::json!(url));
-      obj.insert("webhookRegistered".into(), serde_json::json!(true));
-    }
-    conn.execute(
-      "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES ('telegram','Telegram','telegram',?1,1,1,?2)
-       ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, connected=1",
-      params![serde_json::to_string(&merged).map_err(|e| e.to_string())?, now()],
-    ).map_err(|e| e.to_string())?;
+    write_telegram_config(&conn, true, move |o| {
+      o.insert("tunnelUrl".into(), serde_json::json!(url));
+      o.insert("webhookRegistered".into(), serde_json::json!(true));
+    })?;
     step("Webhook registered ✓");
     Ok(format!("Webhook registered at {webhook_url}"))
   } else {
@@ -351,8 +458,50 @@ pub async fn telegram_stop_tunnel(app: AppHandle) -> Result<(), String> {
     let _ = http::client().get(format!("https://api.telegram.org/bot{t}/deleteWebhook")).send().await;
   }
   set_tunnel_url(None);
-  let _ = conn.execute("UPDATE integration_configs SET connected=0 WHERE id='telegram'", []);
+  // Clear the webhook flags too, otherwise the polling loop would keep pausing
+  // for a webhook that no longer exists.
+  let _ = write_telegram_config(&conn, false, |o| {
+    o.insert("webhookRegistered".into(), serde_json::json!(false));
+    o.remove("tunnelUrl");
+    o.remove("tunnelPort");
+  });
   Ok(())
+}
+
+// Called once at startup. Our cloudflared tunnel is a child of this process, so
+// it never survives a restart — but Telegram still holds the webhook, which makes
+// getUpdates fail and silently stalls message delivery. Clear it so long-polling
+// takes over again. A user-managed custom domain has no `tunnelPort` and may still
+// be alive, so that registration is left alone.
+pub(crate) async fn telegram_reconcile_on_boot(app: AppHandle) {
+  let Ok(conn) = db(&app) else { return };
+  let cfg = telegram_config(&conn);
+  let registered = cfg.get("webhookRegistered").and_then(|v| v.as_bool()).unwrap_or(false);
+  let ephemeral = cfg.get("tunnelPort").is_some();
+
+  if !registered {
+    if ephemeral {
+      let _ = write_telegram_config(&conn, false, |o| { o.remove("tunnelUrl"); o.remove("tunnelPort"); });
+    }
+    return;
+  }
+
+  if !ephemeral {
+    if webhook_secret(&conn).is_none() {
+      telegram_log(&conn, "sys", "", "", "", "error", "A webhook is registered without a secret token. Re-run the webhook registration to secure it.");
+    }
+    return;
+  }
+
+  if let Ok(Some(token)) = telegram_token(&conn) {
+    let _ = http::client().get(format!("https://api.telegram.org/bot{token}/deleteWebhook")).send().await;
+  }
+  let _ = write_telegram_config(&conn, false, |o| {
+    o.insert("webhookRegistered".into(), serde_json::json!(false));
+    o.remove("tunnelUrl");
+    o.remove("tunnelPort");
+  });
+  telegram_log(&conn, "sys", "", "", "", "info", "Tunnel from the previous session is gone — webhook cleared, long-polling resumed.");
 }
 
 #[tauri::command]
@@ -421,7 +570,12 @@ pub async fn telegram_webhook_health(app: AppHandle) -> Result<serde_json::Value
       .build().unwrap_or_else(|_| http::client());
     // Send a minimal update that the receiver ignores but still answers 200 to.
     let probe = serde_json::json!({ "update_id": 0, "message": { "message_id": 0, "chat": { "id": 0, "type": "private" }, "date": 0, "text": "__health_probe__" } });
-    match client.post(format!("{telegram_url}/webhook/telegram")).json(&probe).send().await {
+    let mut probe_req = client.post(format!("{telegram_url}/webhook/telegram")).json(&probe);
+    // The receiver enforces the secret token, so the self-test must carry it too.
+    if let Some(secret) = webhook_secret(&conn) {
+      probe_req = probe_req.header("X-Telegram-Bot-Api-Secret-Token", secret);
+    }
+    match probe_req.send().await {
       Ok(r) => { tunnel_reachable = r.status().is_success(); if !tunnel_reachable { probe_error = format!("HTTP {}", r.status()); } }
       Err(e) => probe_error = e.to_string(),
     }
@@ -437,6 +591,15 @@ pub async fn telegram_webhook_health(app: AppHandle) -> Result<serde_json::Value
     "probeError": probe_error,
     "telegram": telegram_info,
   }))
+}
+
+// Case-insensitive lookup of a header value in a raw HTTP request.
+fn header_value(req: &str, name: &str) -> Option<String> {
+  let head = req.split("\r\n\r\n").next().unwrap_or("");
+  head.lines().skip(1).find_map(|line| {
+    let (k, v) = line.split_once(':')?;
+    if k.trim().eq_ignore_ascii_case(name) { Some(v.trim().to_string()) } else { None }
+  })
 }
 
 // Minimal HTTP server that receives Telegram webhook POSTs at /webhook/telegram
@@ -466,9 +629,22 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
       let req = String::from_utf8_lossy(&buf[..n]).to_string();
       // Only handle POST /webhook/telegram.
       if !req.starts_with("POST /webhook/telegram") { return; }
+      // Authenticate: Telegram echoes the secret_token we registered in this header.
+      // Without this the endpoint is an open remote trigger for the Manager.
+      if let Ok(c) = db(&app) {
+        if let Some(secret) = webhook_secret(&c) {
+          let supplied = header_value(&req, "X-Telegram-Bot-Api-Secret-Token").unwrap_or_default();
+          if supplied != secret {
+            telegram_log(&c, "sys", "", "", "", "error", "Rejected a webhook POST with a missing or invalid secret token.");
+            let _ = socket.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 9\r\n\r\nForbidden").await;
+            return;
+          }
+        }
+      }
       // Extract the JSON body (after the blank line).
       let body = req.split("\r\n\r\n").nth(1).unwrap_or("");
       if let Ok(update) = serde_json::from_str::<serde_json::Value>(body.trim_end_matches('\0')) {
+        let update_id = update.get("update_id").and_then(|u| u.as_i64()).unwrap_or(0);
         let text = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string());
         let chat_id = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64());
         // Health self-test probe — acknowledge without routing to the LLM.
@@ -478,20 +654,25 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
         }
         if let (Some(text), Some(chat_id)) = (text, chat_id) {
           if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "received", "webhook"); }
-          let reply = manager_turn(&app, &text).await.unwrap_or_else(|e| format!("Manager error: {e}"));
-          if let Ok(token) = db(&app).and_then(|c| telegram_token(&c)) {
-            if let Some(t) = token {
-              let send_url = format!("https://api.telegram.org/bot{t}/sendMessage");
-              let send_result = http::client().post(&send_url).json(&serde_json::json!({ "chat_id": chat_id, "text": reply, "parse_mode": "Markdown" })).send().await;
-              if let Ok(c) = db(&app) {
-                match send_result {
-                  Ok(r) if r.status().is_success() => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", "webhook"),
-                  Ok(r) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &format!("Telegram returned {}", r.status())),
-                  Err(e) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &e.to_string()),
+          // Acknowledge before doing the model work. Replying only after a
+          // multi-second turn makes Telegram time out and re-deliver the update,
+          // which multiplies the provider calls behind a single message.
+          let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
+          if first_time_update(update_id) {
+            tokio::spawn(async move {
+              let reply = telegram_manager_turn(&app, &text).await;
+              if let Ok(Some(t)) = db(&app).and_then(|c| telegram_token(&c)) {
+                let send_result = telegram_send_message(&t, chat_id, &reply).await;
+                if let Ok(c) = db(&app) {
+                  match send_result {
+                    Ok(()) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", "webhook"),
+                    Err(e) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &e),
+                  }
                 }
               }
-            }
+            });
           }
+          return;
         }
       }
       let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
@@ -508,9 +689,11 @@ pub(crate) async fn telegram_loop(app: AppHandle) {
       Ok(Some(t)) => t,
       _ => { tokio::time::sleep(std::time::Duration::from_secs(5)).await; continue; }
     };
-    // If a tunnel webhook is active, long-polling must pause (Telegram rejects
-    // getUpdates while a webhook is set).
-    if get_tunnel_url().is_some() {
+    // A registered webhook — including one left over from a previous session
+    // whose tunnel is long gone — makes Telegram reject getUpdates, so polling
+    // has to pause for either signal, not just a live in-memory tunnel.
+    let webhook_active = db(&app).map(|c| webhook_registered(&c)).unwrap_or(false);
+    if get_tunnel_url().is_some() || webhook_active {
       tokio::time::sleep(std::time::Duration::from_secs(5)).await;
       continue;
     }
@@ -525,6 +708,11 @@ pub(crate) async fn telegram_loop(app: AppHandle) {
         Ok(v) => v,
         Err(_) => { tokio::time::sleep(std::time::Duration::from_secs(5)).await; continue; }
       };
+      // Back off rather than hammering the API when Telegram reports an error.
+      if !json.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        continue;
+      }
       let updates = json.get("result").and_then(|r| r.as_array()).cloned().unwrap_or_default();
       for update in updates {
         let update_id = update.get("update_id").and_then(|u| u.as_i64()).unwrap_or(0);
@@ -551,15 +739,13 @@ pub(crate) async fn telegram_loop(app: AppHandle) {
               None => "No tasks.".into(),
             }
           }
-          _ => manager_turn(&app, &text).await.unwrap_or_else(|e| format!("Manager error: {e}")),
+          _ => telegram_manager_turn(&app, &text).await,
         };
-        let send_url = format!("https://api.telegram.org/bot{token}/sendMessage");
-        let send_result = http::client().post(&send_url).json(&serde_json::json!({ "chat_id": chat_id, "text": reply, "parse_mode": "Markdown" })).send().await;
+        let send_result = telegram_send_message(&token, chat_id, &reply).await;
         if let Ok(c) = db(&app) {
           match send_result {
-            Ok(r) if r.status().is_success() => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", ""),
-            Ok(r) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &format!("Telegram returned {}", r.status())),
-            Err(e) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &e.to_string()),
+            Ok(()) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", ""),
+            Err(e) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &e),
           }
         }
       }

@@ -171,10 +171,11 @@ async fn run_openai_tool_chat(url: &str, key: &str, model: &str, is_openrouter: 
   for _round in 0..MAX_TOOL_ROUNDS {
     let mut body = serde_json::json!({ "model": model, "messages": messages, "tools": tool_schemas(tools), "stream": false });
     http::apply_openai_defaults(&mut body, is_openrouter, http::CHAT_MAX_TOKENS);
-    let mut req = client.post(url).header("Authorization", format!("Bearer {key}")).json(&body);
-    if is_openrouter { req = req.header("HTTP-Referer", "https://local-agent-os.app").header("X-Title", "Local Agent OS"); }
-    let response = req.send().await.map_err(|e| format!("Could not reach the model provider: {e}"))?;
-    if !response.status().is_success() { return Err(format!("Model provider returned {}", response.status())); }
+    let response = http::send_with_retry(|| {
+      let mut req = client.post(url).header("Authorization", format!("Bearer {key}")).json(&body);
+      if is_openrouter { req = req.header("HTTP-Referer", "https://local-agent-os.app").header("X-Title", "Local Agent OS"); }
+      req
+    }, http::MODEL_ATTEMPTS).await?;
     let parsed: serde_json::Value = response.json().await.map_err(|e| format!("Could not parse the tool response: {e}"))?;
     prompt_tokens += parsed["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
     completion_tokens += parsed["usage"]["completion_tokens"].as_u64().unwrap_or(0);
@@ -255,12 +256,13 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
     }
     let mut body = serde_json::json!({"model":model,"messages":[{"role":"user","content":prompt}]});
     http::apply_openai_defaults(&mut body, true, http::CHAT_MAX_TOKENS);
-    let response = http::client().post("https://openrouter.ai/api/v1/chat/completions")
-      .header("Authorization", format!("Bearer {key}"))
-      .header("HTTP-Referer", "https://local-agent-os.app")
-      .header("X-Title", "Local Agent OS")
-      .json(&body).send().await.map_err(|e| format!("Could not reach OpenRouter: {e}"))?;
-    if !response.status().is_success() { return Err(format!("OpenRouter returned {}", response.status())); }
+    let response = http::send_with_retry(|| {
+      http::client().post("https://openrouter.ai/api/v1/chat/completions")
+        .header("Authorization", format!("Bearer {key}"))
+        .header("HTTP-Referer", "https://local-agent-os.app")
+        .header("X-Title", "Local Agent OS")
+        .json(&body)
+    }, http::MODEL_ATTEMPTS).await?;
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
     let output = json["choices"][0]["message"]["content"].as_str().unwrap_or("OpenRouter returned no text.").to_string();
     let pt = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
@@ -282,10 +284,11 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
     }
     let mut body = serde_json::json!({"model":model,"messages":[{"role":"user","content":prompt}]});
     http::apply_openai_defaults(&mut body, false, http::CHAT_MAX_TOKENS);
-    let response = http::client().post("https://api.groq.com/openai/v1/chat/completions")
-      .header("Authorization", format!("Bearer {key}"))
-      .json(&body).send().await.map_err(|e| format!("Could not reach Groq: {e}"))?;
-    if !response.status().is_success() { return Err(format!("Groq returned {}", response.status())); }
+    let response = http::send_with_retry(|| {
+      http::client().post("https://api.groq.com/openai/v1/chat/completions")
+        .header("Authorization", format!("Bearer {key}"))
+        .json(&body)
+    }, http::MODEL_ATTEMPTS).await?;
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
     let output = json["choices"][0]["message"]["content"].as_str().unwrap_or("Groq returned no text.").to_string();
     let pt = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0);

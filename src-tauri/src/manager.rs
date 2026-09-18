@@ -243,26 +243,28 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   // The provider expects the bare model name; only our stored id carries the prefix.
   let api_model = manager.model.split_once(':').map(|(_, m)| m.to_string()).unwrap_or_else(|| manager.model.clone());
   let mut final_output = String::new();
+  let is_ollama = manager.model.starts_with("ollama:");
+  let is_groq = manager.model.starts_with("groq:");
+  let provider_url = if is_ollama {
+    "http://127.0.0.1:11434/api/chat".to_string()
+  } else if is_groq {
+    "https://api.groq.com/openai/v1/chat/completions".to_string()
+  } else {
+    "https://openrouter.ai/api/v1/chat/completions".to_string()
+  };
+  let provider_key = if is_ollama { None } else { Some(api_key_for(&conn, &manager.model)?) };
+
   for _round in 0..MAX_TOOL_ROUNDS {
     let mut body = serde_json::json!({ "model": api_model, "messages": messages, "tools": tool_schemas(&tools), "stream": false });
-    let response = if manager.model.starts_with("ollama:") {
-      client.post("http://127.0.0.1:11434/api/chat").json(&body).send().await
-    } else if manager.model.starts_with("groq:") {
-      let key = api_key_for(&conn, &manager.model)?;
-      http::apply_openai_defaults(&mut body, false, http::CHAT_MAX_TOKENS);
-      client.post("https://api.groq.com/openai/v1/chat/completions")
-        .header("Authorization", format!("Bearer {key}"))
-        .json(&body).send().await
-    } else {
-      let key = api_key_for(&conn, &manager.model)?;
-      http::apply_openai_defaults(&mut body, true, http::CHAT_MAX_TOKENS);
-      client.post("https://openrouter.ai/api/v1/chat/completions")
-        .header("Authorization", format!("Bearer {key}"))
-        .header("HTTP-Referer", "https://local-agent-os.app")
-        .header("X-Title", "Local Agent OS")
-        .json(&body).send().await
-    }.map_err(|e| format!("Could not reach the model provider: {e}"))?;
-    if !response.status().is_success() { return Err(format!("Model provider returned {}", response.status())); }
+    if !is_ollama { http::apply_openai_defaults(&mut body, !is_groq, http::CHAT_MAX_TOKENS); }
+    let response = http::send_with_retry(|| {
+      let mut req = client.post(&provider_url).json(&body);
+      if let Some(k) = &provider_key { req = req.header("Authorization", format!("Bearer {k}")); }
+      if !is_ollama && !is_groq {
+        req = req.header("HTTP-Referer", "https://local-agent-os.app").header("X-Title", "Local Agent OS");
+      }
+      req
+    }, http::MODEL_ATTEMPTS).await?;
     let parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
     // Support both Ollama (message.tool_calls) and OpenAI-compatible shapes.
     let calls_arr = parsed["message"]["tool_calls"].as_array()
@@ -554,11 +556,23 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
         messages.push(ChatMessage { role: "tool".into(), content: Some(result.map_err(|e| e.to_string())?), tool_calls: None, tool_call_id: Some(call_id) });
       }
     } else {
-      final_output = parsed["message"]["content"].as_str().unwrap_or("").to_string();
+      // Ollama puts the text at message.content; the OpenAI-compatible providers
+      // (Groq/OpenRouter) put it at choices[0].message.content. Reading only the
+      // first shape returned an empty reply, which Telegram then rejected as
+      // "message text is empty".
+      final_output = parsed["message"]["content"].as_str()
+        .or_else(|| parsed["choices"][0]["message"]["content"].as_str())
+        .unwrap_or("")
+        .to_string();
       break;
     }
   }
   let _ = home;
+  if final_output.trim().is_empty() {
+    // Every round was a tool call, or the provider returned no text. Never hand
+    // back an empty reply.
+    final_output = format!("{} didn't return a reply for that. Try again.", manager.name);
+  }
   Ok(final_output)
 }
 

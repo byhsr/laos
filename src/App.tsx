@@ -104,7 +104,7 @@ export default function App() {
         <Sidebar view={view} setView={setView} collapsed={sidebarCollapsed} />
         <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-10 py-9">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
-          <div className={`h-full ${view === 'home' ? '' : 'hidden'}`}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} runs={runs} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} tab={homeTab} onTabChange={setHomeTab} /></div>
+          <div className={`h-full ${view === 'home' ? '' : 'hidden'}`}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} runs={runs} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} onSaveAgent={persistAgent} onSaveWorkflow={saveWorkflow} tab={homeTab} onTabChange={setHomeTab} /></div>
           <div className={view === 'agents' ? '' : 'hidden'}><AgentsView agents={agents} tools={tools} onOpen={openAgent} onCreate={addAgent} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('Agent deleted', 'success'); }} /></div>
           <div className={view === 'workflows' ? '' : 'hidden'}>
             <CanvasView

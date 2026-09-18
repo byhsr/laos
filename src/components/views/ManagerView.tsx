@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, CornerDownLeft, Info, RefreshCw, Send, Trash2 } from 'lucide-react';
+import { CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RefreshCw, RotateCcw, Send, Settings, Trash2 } from 'lucide-react';
+import { ContextMenu, type MenuItem } from '../ui/ContextMenu';
 import type { Agent, Integration, ModelConfig, Task } from '../../types';
 import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
 import { useTasksStore } from '../../hooks/useTasks';
@@ -145,41 +146,28 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  const menuItems: MenuItem[] = [
+    { key: 'chat', label: 'Chat', icon: <MessageSquare size={13} />, active: tab === 'chat', onSelect: () => setTab('chat') },
+    { key: 'info', label: 'Info', icon: <Info size={13} />, active: tab === 'info', onSelect: () => setTab('info') },
+    { key: 'telegram', label: 'Telegram', icon: <Send size={13} />, active: tab === 'telegram', onSelect: () => setTab('telegram') },
+    { key: 'new', label: 'New chat', icon: <MessageSquarePlus size={13} />, dividerBefore: true, onSelect: () => {
+      const m = agents.find((a) => a.id === managerId)?.model ?? models.find((x) => x.enabled)?.id ?? '';
+      void newSession(managerId, m);
+    } },
+    { key: 'config', label: 'Config', icon: <Settings size={13} />, onSelect: openConfig },
+    { key: 'reset', label: 'Reset memory', icon: <RotateCcw size={13} />, onSelect: () => { void reset(managerId); } },
+  ];
+
   return (
-    <div className="flex h-full flex-col gap-2">
-      {/* Tab bar */}
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <Bot size={14} className="text-[var(--green)]" />
-          <span className="font-mono text-[11px] uppercase tracking-[1px] text-text">Laos</span>
-          <span className="font-mono text-[11px] text-muted">{currentAgentId ? `→ ${agents.find((a) => a.id === currentAgentId)?.name ?? currentAgentId}` : ''}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <button className={`flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'chat' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('chat')}>Chat</button>
-          <button className={`flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'info' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('info')}>
-            Info
-            <span className="group relative inline-flex">
-              <Info size={11} className="text-mid" />
-              <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 hidden -translate-x-1/2 whitespace-nowrap rounded-[8px] border border-line bg-panel2 px-2 py-1 text-[11px] font-normal text-text shadow-[0_8px_20px_#000a] group-hover:block">Agents, integrations, active tasks, chats &amp; commands</span>
-            </span>
-          </button>
-          <button className={`flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${tab === 'telegram' ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`} onClick={() => setTab('telegram')}>Telegram</button>
-          <button className="rounded-[10px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; const m = agents.find((a) => a.id === id)?.model ?? models.find((x) => x.enabled)?.id ?? ''; newSession(id, m); }}>New chat</button>
-          <button className="rounded-[10px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={openConfig}>Config</button>
-          <button className="rounded-[10px] border-0 bg-none px-2.5 py-1.5 text-[11px] text-muted hover:bg-panel2 hover:text-text" onClick={() => { const id = agents.find((a) => a.isManager)?.id ?? 'manager'; reset(id); }} title="Clear Laos's memory">Reset memory</button>
-        </div>
+    <div className="flex h-full flex-col gap-1">
+      <header className="flex shrink-0 items-center justify-end">
+        <ContextMenu items={menuItems} />
       </header>
 
       {tab === 'chat' && (
         <div className="relative flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
             <div ref={scrollRef} className="chat-log flex-1 scrollbar-thin scrollbar-color-mid overflow-y-auto px-4 pt-4 pb-24">
-              {messages.length === 0 && (
-                <div className="m-auto max-w-[380px] text-center text-[13px] leading-1.6 text-muted">
-                  <p>Ask Laos anything about your workspace — what agents exist, what they can do, or to delegate a task.</p>
-                  <p className="mt-2 font-mono text-[11px]">Try: "What agents do I have?" or "Ask the research agent to find competitors."</p>
-                </div>
-              )}
               {messages.map((m, i) => (
                 <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} last:mb-0`}>
                   <div className={`max-w-[78%] rounded-[16px] px-3.5 py-2.5 text-[13px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[8px] bg-line text-text' : 'rounded-tl-[8px] border border-line bg-panel2'}`}>
@@ -267,7 +255,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           <div className="rounded-[16px] border border-line bg-panel p-3.5">
             <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">CHATS</span>
             <div className="grid gap-1.5">
-              {sessions.length === 0 && <p className="px-2 text-[11px] text-muted">No chats yet. Send a message to start one.</p>}
+              {sessions.length === 0 && <p className="px-2 text-[11px] text-muted">No chats yet.</p>}
               {sessions.map((s) => (
                 <div key={s.id} className={`flex items-center gap-1 rounded-[10px] border px-2 py-1.5 ${s.id === sessionId ? 'border-[var(--green)] bg-panel2' : 'border-line bg-panel2/50'}`}>
                   <button className="flex-1 cursor-pointer overflow-hidden text-left" onClick={async () => {
@@ -305,11 +293,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             <button className="secondary" onClick={loadTelegramLogs}><RefreshCw size={12} />Refresh</button>
           </div>
           <div className="runs-console flex-1 overflow-y-auto rounded-lg border border-line bg-inset p-3.5 font-mono text-[12px] leading-[1.6]">
-            {telegramLogs.length === 0 ? (
-              <div className="console-empty p-2.5 text-center text-[12px] text-muted">
-                <p>No Telegram activity yet. Send a message to your bot — inbound messages, processing, and replies show up here live.</p>
-              </div>
-            ) : telegramLogs.map((l, i) => (
+            {telegramLogs.length === 0 ? null : telegramLogs.map((l, i) => (
               <div key={i} className="border-b border-[#1c1c1f] py-2 last:border-0">
                 <div className="flex items-center gap-3 text-[11px]">
                   <span className={l.direction === 'in' ? 'text-[#38bdf8]' : 'text-[#22c55e]'}>{l.direction === 'in' ? '▸ IN' : '◂ OUT'}</span>
@@ -340,13 +324,11 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
               options={models.map((m) => ({ value: m.id, label: m.label }))}
               onChange={(v) => setMgrDraft({ ...mgrDraft, model: v })}
             />
-            {models.length === 0 && <p className="mt-2 text-[12px] text-muted">No models configured. Add one in the Models tab.</p>}
 
             <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">PERSONA</label>
             <PersonaPicker value={mgrDraft.persona ?? 'ai-orb'} onChange={(v) => setMgrDraft({ ...mgrDraft, persona: v })} />
             <div className="mt-2 flex items-center gap-2">
               <AgentAvatar agent={{ ...mgrDraft, persona: mgrDraft.persona ?? 'ai-orb' }} size={28} />
-              <span className="text-[11px] text-muted">Animated Lottie gremlin avatar</span>
             </div>
 
             <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">OBJECTIVE / PROMPT</label>
@@ -357,7 +339,6 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
               placeholder="Describe Laos's role…"
               className="mt-1.5 w-full resize-y rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] leading-1.6 text-text outline-none focus:border-mid"
             />
-            <p className="mt-1.5 text-[11px] leading-relaxed text-muted">The system prompt is generated dynamically from your workspace and Laos's tools. This objective is a seed/fallback description.</p>
 
             <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">PERMISSIONS</label>
             <div className="mt-1.5 flex flex-wrap gap-3">

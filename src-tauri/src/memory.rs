@@ -48,10 +48,9 @@ async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &str) -> Resu
     };
     let mut body = serde_json::json!({ "model": api_model, "messages": [{ "role": "user", "content": prompt }] });
     http::apply_openai_defaults(&mut body, is_openrouter, http::SUMMARY_MAX_TOKENS);
-    let response = client.post(&url)
-      .header("Authorization", format!("Bearer {key}"))
-      .json(&body)
-      .send().await.map_err(|e| e.to_string())?;
+    let response = http::send_with_retry(|| {
+      client.post(&url).header("Authorization", format!("Bearer {key}")).json(&body)
+    }, http::MODEL_ATTEMPTS).await?;
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
     Ok(json["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
   }

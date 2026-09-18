@@ -10,6 +10,7 @@ mod models;
 mod storage;
 mod tasks;
 mod telegram;
+mod tg_markdown;
 mod tools;
 mod workflows;
 
@@ -17,8 +18,11 @@ fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .setup(|app| {
-      // Start the Telegram long-poll adapter (no-op until a token is configured).
       let handle = app.handle().clone();
+      // A tunnel from the previous session never survives a restart — clear its
+      // dead webhook so long-polling takes over instead of silently stalling.
+      tauri::async_runtime::spawn(telegram::telegram_reconcile_on_boot(handle.clone()));
+      // Start the Telegram long-poll adapter (no-op until a token is configured).
       tauri::async_runtime::spawn(telegram::telegram_loop(handle.clone()));
       // Start the local webhook receiver (used when a tunnel is active).
       tauri::async_runtime::spawn(telegram::telegram_webhook_server(handle, 14789));

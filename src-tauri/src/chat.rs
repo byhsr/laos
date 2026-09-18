@@ -101,10 +101,11 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
         "stream": false,
       });
       if !is_ollama { http::apply_openai_defaults(&mut body, is_openrouter, http::CHAT_MAX_TOKENS); }
-      let mut req = client.post(&url).json(&body);
-      if let Some(auth) = &auth { req = req.header("Authorization", format!("Bearer {auth}")); }
-      let response = req.send().await.map_err(|e| format!("Could not reach the model provider: {e}"))?;
-      if !response.status().is_success() { return Err(format!("Model provider returned {}", response.status())); }
+      let response = http::send_with_retry(|| {
+        let mut req = client.post(&url).json(&body);
+        if let Some(auth) = &auth { req = req.header("Authorization", format!("Bearer {auth}")); }
+        req
+      }, http::MODEL_ATTEMPTS).await?;
       let parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
 
       // Support both Ollama (message.tool_calls) and OpenAI-compatible
@@ -148,13 +149,11 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
     if is_openrouter { body["usage"] = serde_json::json!({ "include": true }); }
     else { body["stream_options"] = serde_json::json!({ "include_usage": true }); }
   }
-  let mut req = client.post(&url).json(&body);
-  if let Some(auth) = &auth { req = req.header("Authorization", format!("Bearer {auth}")); }
-
-  let response = req.send().await.map_err(|e| format!("Could not reach the model provider: {e}"))?;
-  if !response.status().is_success() {
-    return Err(format!("Model provider returned {}", response.status()));
-  }
+  let response = http::send_with_retry(|| {
+    let mut req = client.post(&url).json(&body);
+    if let Some(auth) = &auth { req = req.header("Authorization", format!("Bearer {auth}")); }
+    req
+  }, http::MODEL_ATTEMPTS).await?;
   let mut stream = response.bytes_stream();
   let mut buffer = String::new();
   let mut delta = String::new();

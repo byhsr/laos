@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronRight, Lock, Play, Send } from 'lucide-react';
+import { Check, ChevronRight, Lock, MessageSquarePlus, Play, RotateCcw, Send, Trash2 } from 'lucide-react';
+import { ContextMenu, type MenuItem } from './ui/ContextMenu';
 import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run, Skill, Tool } from '../types';
 import { Dropdown } from './ui/Dropdown';
 import { MultiDropdown } from './ui/MultiDropdown';
@@ -147,6 +148,25 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
   const statusColor = (s: string) => s === 'running' ? 'text-[#facc15]' : s === 'completed' ? 'text-[#22c55e]' : 'text-[#f87171]';
 
+  const newChat = async () => {
+    const sess = await createChatSession(agent.id, 'Chat');
+    useManagerStore.setState({ sessionId: sess.id });
+    setMessages(() => []);
+    setViewingSession(null);
+    setTab('chat');
+  };
+
+  const resetMemory = async () => {
+    await useManagerStore.getState().reset(agent.id);
+    toast('Memory cleared', 'success');
+  };
+
+  const menuItems: MenuItem[] = [
+    { key: 'new', label: 'New chat', icon: <MessageSquarePlus size={13} />, onSelect: () => { void newChat(); } },
+    { key: 'reset', label: 'Reset memory', icon: <RotateCcw size={13} />, onSelect: () => { void resetMemory(); } },
+    { key: 'delete', label: 'Delete agent', icon: <Trash2 size={13} />, danger: true, onSelect: () => { void onDelete(agent.id); } },
+  ];
+
   return (
     <div className="boxy flex h-full min-h-0 flex-col overflow-hidden">
       <header className="flex flex-wrap items-center justify-between gap-2">
@@ -164,8 +184,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               </button>
             );
           })}
-          <span className="agent-dot ml-1 inline-block h-2 w-2 rounded-full" style={{ background: agent.color }} />
-          <AgentAvatar agent={agent} size={20} animate={false} />
+          <ContextMenu items={menuItems} />
         </div>
       </header>
 
@@ -173,7 +192,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
         <div className="mt-4 flex h-[calc(100vh-190px)] min-h-[420px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line bg-panel text-center">
           <Lock size={20} className="text-muted" />
           <h3 style={{ margin: 0, fontSize: 14 }}>Finish setting up {agent.name}</h3>
-          <p className="text-muted" style={{ margin: 0, maxWidth: 340, fontSize: 12, lineHeight: 1.6 }}>Add a name, pick a model, and write an objective to unlock Chat and Runs.</p>
           <button className="primary" onClick={() => setTab('config')}><Check size={13} />Go to config</button>
         </div>
       )}
@@ -183,11 +201,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
           {/* Chat history box — full height, input overlays on top of it */}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
             <div className="chat-log flex-1 scrollbar-thin scrollbar-color-mid overflow-y-auto px-4 pt-4 pb-24" ref={scrollRef}>
-              {messages.length === 0 && (
-                <div className="chat-empty m-auto max-w-[360px] text-center text-[13px] leading-[1.6] text-muted">
-                  <p>Say hello to {agent.name}. Send a task — the agent will use its tools ({agent.toolIds.map(toolName).join(', ') || 'none'}) to get things done.</p>
-                </div>
-              )}
               {messages.map((m, i) => (
                 <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} last:mb-0`}>
                   <div className={`max-w-[78%] rounded-[16px] px-3.5 py-2.5 text-[13.5px] leading-[1.6] break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[8px] bg-line text-text' : 'rounded-tl-[8px] border border-line bg-panel2'}`}>
@@ -222,9 +235,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
       {tab === 'runs' && (
         <div className="runs-console mt-4 h-[calc(100vh-190px)] min-h-[420px] overflow-y-auto rounded-lg border border-line bg-inset p-3.5 font-mono text-[12px] leading-[1.6]">
-          {runs.filter((r) => r.agentId === agent.id).length === 0 && (
-            <div className="console-empty p-2.5 text-center text-[12px] text-muted"><p>No runs yet for {agent.name}. Send a message in Chat and every step shows up here.</p></div>
-          )}
           {runs.filter((r) => r.agentId === agent.id).sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()).map((r) => {
             const isOpen = expandedRuns.has(r.id);
             const totalTokens = (r.promptTokens ?? 0) + (r.completionTokens ?? 0);
@@ -283,7 +293,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                 <button className="secondary" onClick={async () => { await deleteChatSession(viewingSession); setViewingSession(null); listChatSessions(agent.id).then(setSessions); }}>Delete chat</button>
               </div>
               <div className="grid gap-2">
-                {history.length === 0 ? <p className="text-center text-[12px] text-muted">No messages in this chat.</p> : history.map((m, i) => (
+                {history.map((m, i) => (
                   <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[78%] rounded-[16px] px-3 py-2 text-[12.5px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[8px] bg-line text-text' : 'rounded-tl-[8px] border border-line bg-panel2'}`}>
                       <span className="mb-0.5 block font-mono text-[10px] text-muted">{m.role === 'user' ? 'you' : agent.name}</span>
@@ -297,18 +307,8 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             <div>
               <div className="mb-3 flex items-center justify-between">
                 <span className="font-mono text-[11px] tracking-[1px] text-muted">PAST CHATS</span>
-                <button className="primary" onClick={async () => {
-                  const sess = await createChatSession(agent.id, 'Chat');
-                  useManagerStore.setState({ sessionId: sess.id });
-                  setMessages(() => []);
-                  listChatSessions(agent.id).then(setSessions);
-                  setViewingSession(null);
-                  setTab('chat');
-                }}>New chat</button>
               </div>
-              {sessions.length === 0 ? (
-                <p className="text-center text-[12px] text-muted">No past chats yet. Start a chat, then it shows up here as a separate session.</p>
-              ) : (
+              {sessions.length === 0 ? null : (
                 <div className="grid gap-1.5">
                   {sessions.map((s) => (
                     <button key={s.id} className="flex cursor-pointer items-center justify-between rounded-[10px] border border-line bg-panel2 px-3 py-2 text-left hover:border-mid" onClick={async () => { setViewingSession(s.id); const msgs = await getChatSession(s.id); setHistory(msgs.map((m, i) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: `#${i + 1}` }))); }}>
@@ -333,7 +333,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               placeholder="Describe what this agent should do, its role, how it should behave, what format to return…"
               className="prompt-editor mt-[7px] min-h-[300px] w-full flex-1 resize-none rounded-lg border border-line bg-panel2 px-4 py-3.5 font-sans text-[15px] leading-[1.7] text-text outline-none placeholder:text-muted focus:border-mid"
             />
-            <p className="config-hint mt-3 flex-none text-[12px] leading-[1.55] text-muted">This becomes the agent's system prompt. It runs on every task, so be specific about role, tone, and output format.</p>
           </div>
 
           <div className="config-side self-start rounded-lg border border-line bg-panel p-[22px]">
@@ -351,7 +350,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             <PersonaPicker value={draft.persona ?? 'ai-orb'} onChange={(v) => setDraft({ ...draft, persona: v })} />
             <div className="mt-2 flex items-center gap-2">
               <AgentAvatar agent={{ ...draft, persona: draft.persona ?? 'ai-orb' }} size={28} />
-              <span className="text-[11px] text-muted">Animated Lottie gremlin avatar</span>
             </div>
 
             <label className="mt-3.5 block text-[11px] font-semibold text-muted">TOOLS</label>
@@ -361,7 +359,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               onChange={(v) => setDraft({ ...draft, toolIds: v })}
               placeholder="Select tools…"
             />
-            {enabledTools.length === 0 && <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>No enabled tools. Add some in the Tools tab.</p>}
 
             <label className="mt-3.5 block text-[11px] font-semibold text-muted">SKILLS</label>
             <MultiDropdown
@@ -370,7 +367,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               onChange={(v) => setDraft({ ...draft, skillIds: v })}
               placeholder="Select skills…"
             />
-            {skills.length === 0 && <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>No skills yet. Add some in the Skills tab.</p>}
 
             <label className="mt-3.5 block text-[11px] font-semibold text-muted">INTEGRATIONS</label>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -381,7 +377,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                   <span className="font-mono text-[10px] text-muted">({i.actions.length} actions)</span>
                 </label>
               ))}
-              {integrations.filter((i) => i.connected).length === 0 && <p style={{ fontSize: 11, color: 'var(--muted)', margin: 0 }}>No connected integrations. Connect them in the Integrations tab.</p>}
             </div>
 
             <label className="mt-3.5 block text-[11px] font-semibold text-muted">PERMISSIONS</label>
@@ -394,7 +389,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
-              <button className="secondary" onClick={() => onDelete(agent.id)}>Delete</button>
               <button className="primary" onClick={() => save(true)} disabled={!isComplete(draft)}><Check size={13} />Save &amp; start chatting</button>
             </div>
             {error && <p style={{ fontSize: 11, color: '#f87171', margin: '8px 0 0' }}>{error}</p>}
