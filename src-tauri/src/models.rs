@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct AgentRequest {
   pub id: String, pub name: String, pub objective: String, pub model: String,
   pub tool_ids: Vec<String>, pub integrations: Vec<String>, pub home_path: String, pub permissions: Vec<String>,
+  #[serde(default)] pub skill_ids: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -25,6 +26,10 @@ pub struct ToolRecord { pub id: String, pub name: String, pub kind: String, pub 
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct SkillRecord { pub id: String, pub name: String, pub description: String, pub content: String }
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentRecord {
   pub id: String, pub name: String, pub objective: String, pub model: String,
   pub tool_ids: Vec<String>, pub integrations: Vec<String>, pub memory: bool,
@@ -32,6 +37,7 @@ pub struct AgentRecord {
   #[serde(default)] pub x: f64, #[serde(default)] pub y: f64,
   #[serde(default)] pub is_manager: bool, #[serde(default)] pub description: String,
   #[serde(default)] pub persona: String,
+  #[serde(default)] pub skill_ids: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -58,10 +64,6 @@ pub struct IntegrationAction { pub name: String, pub description: String }
 #[serde(rename_all = "camelCase")]
 pub struct TaskRecord { pub id: String, pub requester: String, pub assigned_agent: String, pub status: String, pub input: String, pub context: String, pub result: Option<String>, pub created_at: String, pub completed_at: Option<String> }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ConversationRecord { pub agent_id: String, pub messages: serde_json::Value }
-
 // Ollama chat (tool-calling) request/response
 #[derive(Serialize)]
 pub struct ChatRequest { pub model: String, pub messages: Vec<ChatMessage>, pub tools: Option<Vec<serde_json::Value>>, pub stream: bool }
@@ -74,15 +76,3 @@ pub struct ToolCallFunction { pub name: String, pub arguments: serde_json::Value
 
 #[derive(Deserialize)]
 pub struct ChatResponse { pub message: ChatMessage, #[serde(default)] pub prompt_eval_count: u64, #[serde(default)] pub eval_count: u64 }
-
-// Firecrawl/WebAPI response shapes
-#[derive(Deserialize)]
-pub struct FirecrawlSearchResponse { pub data: Option<FirecrawlSearchData> }
-#[derive(Deserialize)]
-pub struct FirecrawlSearchData { #[serde(default)] pub web: Vec<SearchResult> }
-#[derive(Deserialize)]
-pub struct SearchResult { pub title: Option<String>, pub description: Option<String>, pub url: Option<String> }
-#[derive(Deserialize)]
-pub struct FirecrawlScrapeResponse { pub data: Option<FirecrawlScrapeData> }
-#[derive(Deserialize)]
-pub struct FirecrawlScrapeData { pub markdown: Option<String> }

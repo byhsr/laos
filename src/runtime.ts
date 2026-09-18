@@ -1,5 +1,5 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
-import type { Agent, Integration, ModelConfig, Run, RunEvent, Task, Tool, Workflow, WorkflowRunResult } from './types';
+import type { Agent, Integration, ModelConfig, Run, RunEvent, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
 
 // Streams a chat completion, calling onDelta with each token chunk and onConfirm
 // with structured confirmation requests from the Manager.
@@ -180,6 +180,22 @@ export async function saveTool(tool: Tool): Promise<void> {
 
 export async function deleteTool(id: string): Promise<void> {
   await invoke('delete_tool', { id });
+}
+
+export async function listSkills(): Promise<Skill[]> {
+  try {
+    return await invoke<Skill[]>('list_skills');
+  } catch {
+    return [];
+  }
+}
+
+export async function saveSkill(skill: Skill): Promise<void> {
+  await invoke('save_skill', { skill });
+}
+
+export async function deleteSkill(id: string): Promise<void> {
+  await invoke('delete_skill', { id });
 }
 
 export async function listAgents(): Promise<Agent[]> {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronRight, Lock, Play, Send } from 'lucide-react';
-import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run, Tool } from '../types';
+import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run, Skill, Tool } from '../types';
 import { Dropdown } from './ui/Dropdown';
 import { MultiDropdown } from './ui/MultiDropdown';
 import { AgentAvatar, PersonaPicker } from './ui/AgentAvatar';
@@ -33,8 +33,8 @@ const runDuration = (r: Run) => {
   return `${(ms / 1000).toFixed(1)}s`;
 };
 
-export function AgentWindow({ agent, tools, models, integrations, runs, onBack, onSave, onDelete, onRun }: {
-  agent: Agent; tools: Tool[]; models: ModelConfig[]; integrations: Integration[]; runs: Run[];
+export function AgentWindow({ agent, tools, skills, models, integrations, runs, onBack, onSave, onDelete, onRun }: {
+  agent: Agent; tools: Tool[]; skills: Skill[]; models: ModelConfig[]; integrations: Integration[]; runs: Run[];
   onBack: () => void; onSave: (a: Agent) => Promise<void>; onDelete: (id: string) => Promise<void>; onRun: (input: string, agent: Agent) => Promise<ExecutionResult>;
 }) {
   const complete = isComplete(agent);
@@ -362,6 +362,15 @@ export function AgentWindow({ agent, tools, models, integrations, runs, onBack, 
               placeholder="Select tools…"
             />
             {enabledTools.length === 0 && <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>No enabled tools. Add some in the Tools tab.</p>}
+
+            <label className="mt-3.5 block text-[11px] font-semibold text-muted">SKILLS</label>
+            <MultiDropdown
+              values={draft.skillIds ?? []}
+              options={skills.map((s) => ({ value: s.id, label: s.name }))}
+              onChange={(v) => setDraft({ ...draft, skillIds: v })}
+              placeholder="Select skills…"
+            />
+            {skills.length === 0 && <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>No skills yet. Add some in the Skills tab.</p>}
 
             <label className="mt-3.5 block text-[11px] font-semibold text-muted">INTEGRATIONS</label>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

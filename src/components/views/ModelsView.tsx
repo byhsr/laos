@@ -4,14 +4,14 @@ import type { ModelConfig } from '../../types';
 import { Drawer } from '../ui/Drawer';
 import { Dropdown } from '../ui/Dropdown';
 
-export function ModelsView({ models, onAdd, onEdit, onDelete }: {
-  models: ModelConfig[]; onAdd: () => void; onEdit: (m: ModelConfig) => void; onDelete: (id: string) => Promise<void>;
+export function ModelsView({ models, onAdd, onEdit, onDelete, embedded = false }: {
+  models: ModelConfig[]; onAdd: () => void; onEdit: (m: ModelConfig) => void; onDelete: (id: string) => Promise<void>; embedded?: boolean;
 }) {
   return (
     <>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
-        <div><span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Models</h1></div>
-        <button className="primary" onClick={onAdd}><Check size={13} />Add model</button>
+        {!embedded && <div><span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Models</h1></div>}
+        <button className="primary ml-auto" onClick={onAdd}><Check size={13} />Add model</button>
       </header>
       <div className="model-config max-w-[760px] rounded-[10px] border border-line bg-panel p-[22px]">
         {models.map((m) => (

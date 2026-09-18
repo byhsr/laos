@@ -69,7 +69,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
 
   const managerAgent = agents.find((a) => a.isManager) ?? {
     id: 'manager', name: 'Manager', objective: '', model: models.find((m) => m.enabled)?.id ?? '', toolIds: [],
-    integrations: [], memory: true, permissions: ['network'], homePath: 'agents/manager', color: '#22c55e', x: 0, y: 0, isManager: true,
+    integrations: [], skillIds: [], memory: true, permissions: ['network'], homePath: 'agents/manager', color: '#22c55e', x: 0, y: 0, isManager: true,
   };
 
   // Deterministic command handler — these never reach the LLM.

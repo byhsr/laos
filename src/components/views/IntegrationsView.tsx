@@ -17,7 +17,7 @@ const LOGOS: Record<string, React.ReactNode> = {
 
 const OAUTH_PROVIDERS = ['sheets', 'docs', 'notion'];
 
-export function IntegrationsView({ integrations }: { integrations: Integration[] }) {
+export function IntegrationsView({ integrations, embedded = false }: { integrations: Integration[]; embedded?: boolean }) {
   const saveConfig = useIntegrationsStore((s) => s.saveConfig);
   const connect = useIntegrationsStore((s) => s.connect);
   const test = useIntegrationsStore((s) => s.test);
@@ -166,9 +166,11 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
 
   return (
     <>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
-        <div><span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Integrations</h1></div>
-      </header>
+      {!embedded && (
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
+          <div><span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Integrations</h1></div>
+        </header>
+      )}
       <div className="grid max-w-[1100px] grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {integrations.map((i) => {
           const isOAuth = OAUTH_PROVIDERS.includes(i.id);

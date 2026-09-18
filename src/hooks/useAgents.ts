@@ -38,7 +38,7 @@ export const useAgentsStore = create<AgentsState>((set) => ({
     const defaultModel = draft.model ?? useModelsStore.getState().models.find((m) => m.enabled)?.id ?? '';
     const agent: Agent = {
       id, name: draft.name ?? 'New Agent', objective: draft.objective ?? '', model: defaultModel,
-      toolIds: draft.toolIds ?? [], integrations: draft.integrations ?? [], memory: true,
+      toolIds: draft.toolIds ?? [], integrations: draft.integrations ?? [], skillIds: draft.skillIds ?? [], memory: true,
       permissions: draft.permissions ?? ['network'], homePath: `agents/${id}`, color: draft.color ?? '#22c55e',
       x: 160 + Math.random() * 160, y: 120 + Math.random() * 120,
     };

@@ -9,7 +9,7 @@ const fmtDate = (s?: string) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleString();
 };
 
-export function KnowledgeBaseView() {
+export function KnowledgeBaseView({ embedded = false }: { embedded?: boolean }) {
   const [docs, setDocs] = useState<KnowledgeDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -70,11 +70,13 @@ export function KnowledgeBaseView() {
   return (
     <>
       <header className="mb-6 flex items-end justify-between">
-        <div>
-          <span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span>
-          <h1 style={{ margin: 0, fontSize: 24 }}>Knowledge Base</h1>
-        </div>
-        <button className="primary" onClick={newDoc}><Plus size={14} />New doc</button>
+        {!embedded && (
+          <div>
+            <span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span>
+            <h1 style={{ margin: 0, fontSize: 24 }}>Knowledge Base</h1>
+          </div>
+        )}
+        <button className="primary ml-auto" onClick={newDoc}><Plus size={14} />New doc</button>
       </header>
 
       <div className="mb-4 flex items-center gap-2">

@@ -6,21 +6,19 @@ import { Dropdown } from '../ui/Dropdown';
 
 export const TOOL_KINDS: { kind: string; integration: string; desc: string }[] = [
   { kind: 'api', integration: 'http', desc: 'Call any REST API with configured params' },
-  { kind: 'web_search', integration: 'http', desc: 'Search the web, return top results' },
-  { kind: 'web_crawl', integration: 'http', desc: 'Scrape a single URL to clean markdown' },
   { kind: 'http_get', integration: 'http', desc: 'Permission-scoped GET request' },
   { kind: 'read_file', integration: 'builtin', desc: 'Read from agent files dir' },
   { kind: 'write_file', integration: 'builtin', desc: 'Write to agent files dir' },
 ];
 
-export function ToolsView({ tools, integrations, onAdd, onEdit, onDelete }: {
-  tools: Tool[]; integrations: Integration[]; onAdd: () => void; onEdit: (t: Tool) => void; onDelete: (id: string) => Promise<void>;
+export function ToolsView({ tools, integrations, onAdd, onEdit, onDelete, embedded = false }: {
+  tools: Tool[]; integrations: Integration[]; onAdd: () => void; onEdit: (t: Tool) => void; onDelete: (id: string) => Promise<void>; embedded?: boolean;
 }) {
   return (
     <>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
-        <div><span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Tools</h1></div>
-        <button className="primary" onClick={onAdd}><Check size={13} />Add tool</button>
+        {!embedded && <div><span className="font-mono text-[10px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Tools</h1></div>}
+        <button className="primary ml-auto" onClick={onAdd}><Check size={13} />Add tool</button>
       </header>
       <div className="grid max-w-[900px] gap-2.5">
         {tools.map((t) => {
@@ -59,7 +57,6 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
   const [error, setError] = useState<string | undefined>(undefined);
   const kindFor = (kind: string) => TOOL_KINDS.find((k) => k.kind === kind);
   const isApi = form.kind === 'api';
-  const isWeb = form.kind === 'web_search' || form.kind === 'web_crawl';
 
   const save = async () => {
     if (!form.name.trim() || !form.kind.trim()) { setError('Tool name and kind are required.'); return; }
@@ -178,29 +175,6 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
               ))}
               <button className="secondary justify-self-start" onClick={() => setParams([...(form.config.params ?? []), { name: '', type: 'string', description: '', required: false }])}><Plus size={12} />Add parameter</button>
             </div>
-          </>
-        )}
-
-        {isWeb && (
-          <>
-            <label className={labelCls}>BASE URL</label>
-            <input
-              value={form.config.baseUrl ?? ''}
-              onChange={(e) => setCfg({ baseUrl: e.target.value })}
-              placeholder="http://localhost:3002"
-              className={inputCls}
-            />
-            <p className="text-[11px] leading-[1.5] text-muted" style={{ margin: '6px 0 0' }}>The search/crawl API endpoint. Agents with the network permission can call it.</p>
-
-            <label className={labelCls}>API KEY</label>
-            <input
-              type="password"
-              value={form.config.apiKey ?? ''}
-              onChange={(e) => setCfg({ apiKey: e.target.value })}
-              placeholder="Optional"
-              className={inputCls}
-            />
-            <p className="text-[11px] leading-[1.5] text-muted" style={{ margin: '6px 0 0' }}>Sent as a Bearer token if the endpoint requires one.</p>
           </>
         )}
 

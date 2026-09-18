@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Agent, DrawerForm, View } from './types';
-import { emptyModel, emptyTool } from './types';
+import { emptyModel, emptySkill, emptyTool } from './types';
 import { useAgentsStore } from './hooks/useAgents';
 import { useRunsStore } from './hooks/useRuns';
 import { useModelsStore } from './hooks/useModels';
 import { useToolsStore } from './hooks/useTools';
+import { useSkillsStore } from './hooks/useSkills';
 import { useWorkflowsStore } from './hooks/useWorkflows';
 import { useWorkspaceStore } from './hooks/useWorkspace';
 import { useIntegrationsStore } from './hooks/useIntegrations';
@@ -15,13 +16,14 @@ import { HomeView } from './components/views/HomeView';
 import { AgentsView } from './components/views/AgentsView';
 import { CanvasView } from './components/views/CanvasView';
 import { RunsConsole } from './components/views/RunsConsole';
-import { IntegrationsView } from './components/views/IntegrationsView';
-import { ToolsView, ToolFormDrawer } from './components/views/ToolsView';
-import { ModelsView, ModelFormDrawer } from './components/views/ModelsView';
+import { ToolFormDrawer } from './components/views/ToolsView';
+import { ModelFormDrawer } from './components/views/ModelsView';
 import { SettingsView } from './components/views/SettingsView';
 import { ManagerView } from './components/views/ManagerView';
 import { TasksView } from './components/views/TasksView';
-import { KnowledgeBaseView } from './components/views/KnowledgeBaseView';
+import { WorkshopView } from './components/views/WorkshopView';
+import { SkillFormDrawer } from './components/views/SkillsView';
+import { GraphView } from './components/views/GraphView';
 import { Toaster } from './components/ui/Toaster';
 import { toast } from './hooks/useToast';
 import { Plus } from 'lucide-react';
@@ -45,6 +47,10 @@ export default function App() {
   const saveTool = useToolsStore((s) => s.saveTool);
   const deleteTool = useToolsStore((s) => s.deleteTool);
   const loadTools = useToolsStore((s) => s.loadTools);
+  const skills = useSkillsStore((s) => s.skills);
+  const saveSkill = useSkillsStore((s) => s.saveSkill);
+  const deleteSkill = useSkillsStore((s) => s.deleteSkill);
+  const loadSkills = useSkillsStore((s) => s.loadSkills);
   const integrations = useIntegrationsStore((s) => s.integrations);
   const loadIntegrations = useIntegrationsStore((s) => s.loadIntegrations);
   const loadWorkspace = useWorkspaceStore((s) => s.loadWorkspace);
@@ -56,8 +62,8 @@ export default function App() {
   const loadRuns = useRunsStore((s) => s.loadRuns);
 
   useEffect(() => {
-    loadAgents(); loadModels(); loadTools(); loadWorkspace(); loadWorkflows(); loadIntegrations(); loadRuns();
-  }, [loadAgents, loadModels, loadTools, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns]);
+    loadAgents(); loadModels(); loadTools(); loadSkills(); loadWorkspace(); loadWorkflows(); loadIntegrations(); loadRuns();
+  }, [loadAgents, loadModels, loadTools, loadSkills, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns]);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [view, setView] = useState<View>('home');
@@ -92,6 +98,7 @@ export default function App() {
         <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-bg px-9 py-8">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
           <div className={view === 'home' ? '' : 'hidden'}><HomeView agents={agents} tools={tools} runs={runs} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} /></div>
+          <div className={view === 'graph' ? '' : 'hidden'}><GraphView agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows} onOpenAgent={openAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} /></div>
           <div className={view === 'agents' ? '' : 'hidden'}><AgentsView agents={agents} tools={tools} onOpen={openAgent} onCreate={addAgent} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('Agent deleted', 'success'); }} /></div>
           <div className={view === 'workflows' ? '' : 'hidden'}>
             <CanvasView
@@ -106,13 +113,27 @@ export default function App() {
           <div className={view === 'manager' ? '' : 'hidden'}><ManagerView agents={agents} integrations={integrations} models={models} /></div>
           <div className={view === 'tasks' ? '' : 'hidden'}><TasksView agents={agents} /></div>
           <div className={view === 'runs' ? '' : 'hidden'}><RunsConsole runs={runs} agents={agents} onOpenAgent={openAgent} onClear={clearRuns} /></div>
-          <div className={view === 'integrations' ? '' : 'hidden'}><IntegrationsView integrations={integrations} /></div>
-          <div className={view === 'tools' ? '' : 'hidden'}><ToolsView tools={tools} integrations={integrations} onAdd={() => setDrawerForm({ kind: 'tool', editing: emptyTool(), isNew: true })} onEdit={(t) => setDrawerForm({ kind: 'tool', editing: t, isNew: false })} onDelete={async (id) => { await deleteTool(id); setTools((prev) => prev.filter((p) => p.id !== id)); setAgents((prev) => prev.map((a) => ({ ...a, toolIds: a.toolIds.filter((t) => t !== id) }))); toast('Tool deleted', 'success'); }} /></div>
-          <div className={view === 'models' ? '' : 'hidden'}><ModelsView models={models} onAdd={() => setDrawerForm({ kind: 'model', editing: emptyModel(), isNew: true })} onEdit={(m) => setDrawerForm({ kind: 'model', editing: m, isNew: false })} onDelete={deleteModel} /></div>
-          <div className={view === 'knowledge' ? '' : 'hidden'}><KnowledgeBaseView /></div>
-          <div className={view === 'settings' ? '' : 'hidden'}><SettingsView /></div>
+          <div className={view === 'workshop' ? '' : 'hidden'}>
+            <WorkshopView
+              skills={skills} tools={tools} integrations={integrations}
+              onAddSkill={() => setDrawerForm({ kind: 'skill', editing: emptySkill(), isNew: true })}
+              onEditSkill={(s) => setDrawerForm({ kind: 'skill', editing: s, isNew: false })}
+              onDeleteSkill={async (id) => { await deleteSkill(id); setAgents((prev) => prev.map((a) => ({ ...a, skillIds: a.skillIds.filter((s) => s !== id) }))); toast('Skill deleted', 'success'); }}
+              onAddTool={() => setDrawerForm({ kind: 'tool', editing: emptyTool(), isNew: true })}
+              onEditTool={(t) => setDrawerForm({ kind: 'tool', editing: t, isNew: false })}
+              onDeleteTool={async (id) => { await deleteTool(id); setTools((prev) => prev.filter((p) => p.id !== id)); setAgents((prev) => prev.map((a) => ({ ...a, toolIds: a.toolIds.filter((t) => t !== id) }))); toast('Tool deleted', 'success'); }}
+            />
+          </div>
+          <div className={view === 'settings' ? '' : 'hidden'}>
+            <SettingsView
+              models={models}
+              onAddModel={() => setDrawerForm({ kind: 'model', editing: emptyModel(), isNew: true })}
+              onEditModel={(m) => setDrawerForm({ kind: 'model', editing: m, isNew: false })}
+              onDeleteModel={deleteModel}
+            />
+          </div>
           {selectedAgent && (
-            <div className={view === 'agent' ? '' : 'hidden'}><AgentWindow key={selectedAgent.id} agent={selectedAgent} tools={tools} models={models} integrations={integrations} runs={runs} onBack={() => setView('agents')} onSave={persistAgent} onDelete={async (id) => { await deleteAgent(id); setSelectedAgentId(null); setView('agents'); }} onRun={handleRun} /></div>
+            <div className={view === 'agent' ? '' : 'hidden'}><AgentWindow key={selectedAgent.id} agent={selectedAgent} tools={tools} skills={skills} models={models} integrations={integrations} runs={runs} onBack={() => setView('agents')} onSave={persistAgent} onDelete={async (id) => { await deleteAgent(id); setSelectedAgentId(null); setView('agents'); }} onRun={handleRun} /></div>
           )}
         </main>
         {drawerForm && drawerForm.kind === 'tool' && (
@@ -127,6 +148,13 @@ export default function App() {
             editing={drawerForm.editing} isNew={drawerForm.isNew}
             onClose={() => setDrawerForm(null)}
             onSave={async (m) => { await saveModel(m); setDrawerForm(null); toast('Model saved', 'success'); }}
+          />
+        )}
+        {drawerForm && drawerForm.kind === 'skill' && (
+          <SkillFormDrawer
+            editing={drawerForm.editing} isNew={drawerForm.isNew}
+            onClose={() => setDrawerForm(null)}
+            onSave={async (s) => { await saveSkill(s); setDrawerForm(null); toast('Skill saved', 'success'); }}
           />
         )}
       </div>
