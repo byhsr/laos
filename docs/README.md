@@ -103,7 +103,8 @@ macOS builds are unsigned, so the first launch needs right-click → Open.
 ### Auto-update
 
 The app checks for a new release ~4s after launch and shows an in-app prompt
-(`components/ui/UpdatePrompt.tsx`) offering **Install & restart**.
+(`components/ui/UpdatePrompt.tsx`) offering **Install & restart**. Settings → General also has a
+manual **Check for updates** (showing the installed version, from `updater::app_version`).
 
 - Rust side: `src-tauri/src/updater.rs` (`check_for_update`, `install_update`, `restart_app`)
   via `tauri-plugin-updater`. No JS updater package is used.

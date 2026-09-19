@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Check, Plus, RefreshCw, Server, Trash2, Upload } from 'lucide-react';
 import { deleteMcpServer, importMcpTools, listMcpServers, saveMcpServer, testMcpServer, type McpServer, type McpToolInfo } from '../../runtime';
 import { toast } from '../../hooks/useToast';
+import { useToolsStore } from '../../hooks/useTools';
 import { Drawer } from '../ui/Drawer';
 
 type Draft = { id: string; name: string; command: string; args: string; env: string; enabled: boolean };
@@ -75,6 +76,9 @@ export function McpServers() {
     setBusy(id);
     try {
       const n = await importMcpTools(id);
+      // Refresh the registry so the imported tools appear in the agent's TOOLS
+      // dropdown straight away instead of on the next app launch.
+      await useToolsStore.getState().loadTools();
       toast(`Imported ${n} tool${n === 1 ? '' : 's'} — attach them in an agent's Tools list`, 'success');
     } catch (e) {
       toast(typeof e === 'string' ? e : 'Import failed', 'error');
@@ -85,6 +89,7 @@ export function McpServers() {
 
   const remove = async (id: string) => {
     await deleteMcpServer(id);
+    await useToolsStore.getState().loadTools();
     toast('MCP server deleted', 'success');
     await load();
   };
