@@ -30,6 +30,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
   // visible chat survives tab switches regardless of the shared currentAgentId.
   const messages = useManagerStore(useShallow((s) => s.conversations[managerId] ?? []));
   const busy = useManagerStore((s) => s.busy);
+  const status = useManagerStore((s) => s.status);
   const currentAgentId = useManagerStore((s) => s.currentAgentId);
   const setCurrentAgent = useManagerStore((s) => s.setCurrentAgent);
   const send = useManagerStore((s) => s.send);
@@ -178,7 +179,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
                   <div className={`max-w-[78%] rounded-[16px] px-3.5 py-2.5 text-[13px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[8px] bg-line text-text' : 'rounded-tl-[8px] border border-line bg-panel2'}`}>
                     {m.role === 'user' ? m.content : <Markdown>{m.content}</Markdown>}
                     {busy && i === messages.length - 1 && m.role === 'assistant' && (
-                      m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming />
+                      m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming status={status} />
                     )}
                   </div>
                 </div>
