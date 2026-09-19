@@ -3,13 +3,17 @@ import { Bot, Plus, Trash2 } from 'lucide-react';
 import type { Agent } from '../../types';
 import { AgentAvatar } from '../ui/AgentAvatar';
 import { DeleteConfirm } from '../ui/DeleteConfirm';
+import { ContextMenuAt } from '../ui/ContextMenu';
+import { agentMenuItems } from '../ui/agentMenu';
 
-export function AgentsView({ agents, onOpen, onCreate, onDelete }: {
+export function AgentsView({ agents, onOpen, onCreate, onDelete, onSettings, onTogglePin }: {
   agents: Agent[]; onOpen: (id: string) => void; onCreate: () => void; onDelete: (id: string) => void;
+  onSettings: (id: string) => void; onTogglePin: (id: string, pinned: boolean) => void;
 }) {
   const visible = agents.filter((a) => !a.isManager);
   const [confirmTarget, setConfirmTarget] = useState<Agent | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; agent: Agent } | null>(null);
 
   const openConfirm = (a: Agent) => setConfirmTarget(a);
   const closeConfirm = () => setConfirmTarget(null);
@@ -34,7 +38,14 @@ export function AgentsView({ agents, onOpen, onCreate, onDelete }: {
       ) : (
         <div className="grid max-w-[1100px] grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3.5">
           {visible.map((a) => (
-            <div key={a.id} className="group relative cursor-pointer rounded-[16px] border border-line bg-panel p-[1px] text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-dotted hover:border-mid hover:shadow-lift" onClick={() => onOpen(a.id)} onMouseEnter={() => setHoveredId(a.id)} onMouseLeave={() => setHoveredId((h) => (h === a.id ? null : h))}>
+            <div
+              key={a.id}
+              className="group relative cursor-pointer rounded-[16px] border border-line bg-panel p-[1px] text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-dotted hover:border-mid hover:shadow-lift"
+              onClick={() => onOpen(a.id)}
+              onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, agent: a }); }}
+              onMouseEnter={() => setHoveredId(a.id)}
+              onMouseLeave={() => setHoveredId((h) => (h === a.id ? null : h))}
+            >
               <button
                 className="absolute top-2 right-2 z-[1] grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-black/35 text-white/85 opacity-0 backdrop-blur-sm transition-opacity duration-150 group-hover:opacity-100 hover:bg-[#e11d48] hover:text-white"
                 title="Delete agent"
@@ -49,6 +60,15 @@ export function AgentsView({ agents, onOpen, onCreate, onDelete }: {
             </div>
           ))}
         </div>
+      )}
+
+      {menu && (
+        <ContextMenuAt
+          items={agentMenuItems(menu.agent, { onOpen, onSettings, onTogglePin, onDelete: openConfirm })}
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+        />
       )}
 
       {confirmTarget && (

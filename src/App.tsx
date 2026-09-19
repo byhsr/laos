@@ -169,7 +169,7 @@ export default function App() {
         <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-10 py-9">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
           <div className={`h-full ${view === 'home' ? '' : 'hidden'}`}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} onSaveAgent={persistAgent} onSaveWorkflow={saveWorkflow} tab={homeTab} /></div>
-          <div className={view === 'agents' ? '' : 'hidden'}><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('Agent deleted', 'success'); }} /></div>
+          <div className={view === 'agents' ? '' : 'hidden'}><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('Agent deleted', 'success'); }} /></div>
           <div className={view === 'workflows' ? '' : 'hidden'}>
             <CanvasView
               agents={agents} tools={tools} workflows={workflows} integrations={integrations}

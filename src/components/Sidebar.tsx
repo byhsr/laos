@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { MessageSquare, Pin, PinOff, Settings, Trash2 } from 'lucide-react';
+import { Pin } from 'lucide-react';
 import type { Agent, View } from '../types';
 import { AgentAvatar } from './ui/AgentAvatar';
 import { Tooltip } from './ui/Tooltip';
-import { ContextMenuAt, type MenuItem } from './ui/ContextMenu';
+import { ContextMenuAt } from './ui/ContextMenu';
+import { agentMenuItems } from './ui/agentMenu';
 import { DeleteConfirm } from './ui/DeleteConfirm';
 
 // The sidebar is purely the agent chat list: the lead agent always holds the
@@ -31,28 +32,6 @@ export function Sidebar({ agents, view, selectedAgentId, onOpen, onTogglePin, on
 
   const closeDelete = () => setDeleteTarget(null);
 
-  // The lead agent can't be pinned or deleted.
-  const menuItems = (a: Agent): MenuItem[] => [
-    { key: 'open', label: 'Open chat', icon: <MessageSquare size={13} />, onSelect: () => onOpen(a.id) },
-    { key: 'settings', label: 'Settings', icon: <Settings size={13} />, onSelect: () => onSettings(a.id) },
-    ...(a.isManager ? [] : [
-      {
-        key: 'pin',
-        label: a.pinned ? 'Unpin' : 'Pin to top',
-        icon: a.pinned ? <PinOff size={13} /> : <Pin size={13} />,
-        dividerBefore: true,
-        onSelect: () => onTogglePin(a.id, !a.pinned),
-      },
-      {
-        key: 'delete',
-        label: 'Delete agent',
-        icon: <Trash2 size={13} />,
-        danger: true,
-        onSelect: () => setDeleteTarget(a),
-      },
-    ]),
-  ];
-
   return (
     <aside className={`glass relative z-10 my-3 ml-3 flex flex-col rounded-3xl px-3 py-4 shadow-soft transition-[width] duration-200 ease-out ${collapsed ? 'w-[68px]' : 'w-[236px]'}`}>
       <nav className={`grid min-h-0 gap-1 overflow-y-auto overflow-x-hidden ${collapsed ? 'justify-items-center' : ''}`}>
@@ -78,7 +57,14 @@ export function Sidebar({ agents, view, selectedAgentId, onOpen, onTogglePin, on
         })}
       </nav>
 
-      {menu && <ContextMenuAt items={menuItems(menu.agent)} x={menu.x} y={menu.y} onClose={() => setMenu(null)} />}
+      {menu && (
+        <ContextMenuAt
+          items={agentMenuItems(menu.agent, { onOpen, onSettings, onTogglePin, onDelete: (a) => setDeleteTarget(a) })}
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+        />
+      )}
 
       {deleteTarget && (
         <DeleteConfirm
