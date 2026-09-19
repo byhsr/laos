@@ -72,6 +72,15 @@ and an official local stdio server that takes an internal integration token:
 Then Test → Import. Requires Node/npx on the machine. Remember to **share the target Notion
 pages/databases with the integration** in Notion, or the token will see nothing.
 
+> `tools/list` succeeds even with an invalid token — Notion only validates it when a tool is
+> *called*, so a green Test proves the wiring, not the PAT. Verified against
+> `@notionhq/notion-mcp-server`, which advertises 24 tools (`API-post-search`,
+> `API-retrieve-a-page`, …).
+
+On Windows a command shim like `npx` is a `.cmd` file, which `Command::new` cannot launch
+directly — `spawn()` wraps the command in `cmd /C` there (the same approach as
+`run_command`).
+
 ## Permission & trust
 
 MCP tools are gated behind the agent's **`network`** permission — the same gate as `http_get`

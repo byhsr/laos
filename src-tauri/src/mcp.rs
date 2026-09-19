@@ -98,6 +98,15 @@ pub(crate) fn load_server(conn: &Connection, id: &str) -> Result<McpServer, Stri
 // Spawns the server with a watchdog that kills it after RPC_TIMEOUT. The handles
 // are taken out of the Child so reading never contends with the watchdog's lock.
 fn spawn(server: &McpServer) -> Result<(Arc<Mutex<Child>>, ChildStdin, BufReader<ChildStdout>), String> {
+  // On Windows a bare name only resolves to an .exe, so command shims like
+  // `npx` (npx.cmd) or `uvx` need cmd /C — the same approach as run_command.
+  #[cfg(windows)]
+  let mut cmd = {
+    let mut c = Command::new("cmd");
+    c.arg("/C").arg(&server.command);
+    c
+  };
+  #[cfg(not(windows))]
   let mut cmd = Command::new(&server.command);
   cmd.args(&server.args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
   for (k, v) in &server.env { cmd.env(k, v); }
