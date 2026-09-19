@@ -246,6 +246,26 @@ export async function listWorkflowRuns(workflowId?: string): Promise<WorkflowRun
   try { return await invoke<WorkflowRunRecord[]>('list_workflow_runs', { workflowId: workflowId ?? null }); } catch { return []; }
 }
 
+// MCP connector (stdio). Servers are configured commands; their advertised tools
+// can be imported into the tool registry and attached to agents.
+export type McpServer = { id: string; name: string; command: string; args: string[]; env: Record<string, string>; enabled: boolean };
+export type McpToolInfo = { name: string; description: string; schema: Record<string, unknown> };
+export async function listMcpServers(): Promise<McpServer[]> {
+  try { return await invoke<McpServer[]>('list_mcp_servers'); } catch { return []; }
+}
+export async function saveMcpServer(server: McpServer): Promise<string> {
+  return await invoke<string>('save_mcp_server', { server });
+}
+export async function deleteMcpServer(id: string): Promise<void> {
+  await invoke('delete_mcp_server', { id });
+}
+export async function testMcpServer(id: string): Promise<McpToolInfo[]> {
+  return await invoke<McpToolInfo[]>('test_mcp_server', { id });
+}
+export async function importMcpTools(id: string): Promise<number> {
+  return await invoke<number>('import_mcp_tools', { id });
+}
+
 export async function listIntegrations(): Promise<Integration[]> {
   try {
     return await invoke<Integration[]>('list_integrations');

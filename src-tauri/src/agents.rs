@@ -8,11 +8,12 @@ use tauri::{AppHandle, Manager};
 use crate::db::{db, now};
 use crate::http;
 use crate::integrations::integration_definitions;
+use crate::mcp;
 use crate::models::*;
 use crate::storage::stored_api_key;
 use crate::tasks::list_tasks;
 use crate::tools::{
-  AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, ReadAnyFileTool, ReadFileTool,
+  AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool, ReadAnyFileTool, ReadFileTool,
   RunCommandTool, SearchFilesTool, WriteFileTool, MAX_TOOL_ROUNDS,
 };
 
@@ -55,6 +56,22 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
       }
       "read_file" if has_files => tools.push(Box::new(ReadFileTool { home: home.to_path_buf() })),
       "write_file" if has_files => tools.push(Box::new(WriteFileTool { home: home.to_path_buf() })),
+      // MCP tools spawn the configured server's command, so they sit behind the
+      // same `network` permission as the other API tools.
+      "mcp" if has_network => {
+        let server_id = str_cfg("serverId");
+        let tool_name = str_cfg("toolName");
+        if !server_id.is_empty() && !tool_name.is_empty() {
+          if let Ok(server) = mcp::load_server(conn, &server_id) {
+            tools.push(Box::new(McpTool {
+              server,
+              tool_name,
+              tool_description: str_cfg("description"),
+              schema: config.get("schema").cloned().unwrap_or_else(|| serde_json::json!({ "type": "object", "properties": {} })),
+            }));
+          }
+        }
+      }
       _ => {}
     }
   }

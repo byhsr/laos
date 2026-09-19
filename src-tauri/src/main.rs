@@ -5,6 +5,7 @@ mod db;
 mod http;
 mod integrations;
 mod manager;
+mod mcp;
 mod memory;
 mod models;
 mod storage;
@@ -59,6 +60,12 @@ fn main() {
       integrations::start_oauth,
       integrations::connect_oauth,
       integrations::complete_oauth,
+      // MCP connector (stdio)
+      mcp::list_mcp_servers,
+      mcp::save_mcp_server,
+      mcp::delete_mcp_server,
+      mcp::test_mcp_server,
+      mcp::import_mcp_tools,
       // Agent + workflow execution
       agents::execute_agent,
       workflows::execute_workflow,

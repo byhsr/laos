@@ -4,11 +4,13 @@
 pub(crate) mod api;
 pub(crate) mod filesystem;
 pub(crate) mod integration;
+pub(crate) mod mcp;
 pub(crate) mod web;
 
 pub(crate) use api::{ApiParam, ApiTool};
 pub(crate) use filesystem::{ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool};
 pub(crate) use integration::IntegrationTool;
+pub(crate) use mcp::McpTool;
 pub(crate) use web::HttpTool;
 
 use async_trait::async_trait;

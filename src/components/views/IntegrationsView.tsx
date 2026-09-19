@@ -5,6 +5,7 @@ import type { Integration } from '../../types';
 import { useIntegrationsStore } from '../../hooks/useIntegrations';
 import { toast } from '../../hooks/useToast';
 import { Drawer } from '../ui/Drawer';
+import { McpServers } from './McpServers';
 import { telegramRegisterCustomUrl, telegramRegisterWebhook, telegramStartTunnel, telegramStopTunnel, telegramTunnelStatus } from '../../runtime';
 
 const LOGOS: Record<string, React.ReactNode> = {
@@ -214,6 +215,8 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
           );
         })}
       </div>
+
+      <McpServers />
 
       {active && (
         <Drawer

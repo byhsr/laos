@@ -21,6 +21,7 @@ tool registry, workflow execution, memory, and the Telegram adapter.
 | [harness.md](./harness.md) | **The model-request harness**: every provider call path, the shared HTTP client/retry/timeouts, streaming protocols, token accounting, and the duplication to streamline |
 | [tool-calls.md](./tool-calls.md) | Tool registry + kinds, permission gating, the end-to-end tool-call lifecycle, dispatch, and the confirmation gate |
 | [integrations.md](./integrations.md) | Integration catalog, how providers become tools, credential storage/masking, OAuth, testing |
+| [mcp.md](./mcp.md) | The generic MCP connector: servers, tool discovery/import, how a call runs, limits |
 | [memory.md](./memory.md) | Context assembly, the rolling window, summarization, long-term facts, chat sessions, day context, recall |
 | [webhooks.md](./webhooks.md) | Telegram tunnel + webhook receiver + long-poll, the OAuth loopback, health checks and logs |
 | [data-model.md](./data-model.md) | SQLite schema, migrations, record types, memory keys, ID conventions |
@@ -45,7 +46,8 @@ src-tauri/                   Backend (Rust / Tauri v2)
   src/chat.rs                Streaming chat + the shared tool-call round loop
   src/manager.rs             "Laos" system agent: prompt, turn loop, tool dispatch, approvals
   src/memory.rs              Conversations, rolling window, summaries/facts, chat sessions
-  src/tools/                 AgentTool trait + implementations (api, filesystem, integration, web)
+  src/mcp.rs                 MCP connector (stdio JSON-RPC): servers, discovery, calls
+  src/tools/                 AgentTool trait + implementations (api, filesystem, integration, mcp, web)
   src/workflows.rs           Rule engine (deterministic checks + LLM judge) and linear execution
   src/tasks.rs               Task lifecycle + runs feed
   src/integrations.rs        Integration catalog, credential masking/merge, OAuth
@@ -132,6 +134,7 @@ Find the row for what you're changing, update the listed code and doc together.
 | A Manager tool or the confirmation list | `src-tauri/src/manager.rs` (`manager_tools`, `dispatch_manager_tool`, `requires_confirmation`) | [tool-calls.md](./tool-calls.md) |
 | The confirmation popup UX | `src/components/ui/ConfirmDialog.tsx`, `src/hooks/useConfirm.ts`, `src/runtime.ts` | [tool-calls.md](./tool-calls.md) |
 | An integration provider, action, or credential field | `src-tauri/src/integrations.rs`, `src-tauri/src/tools/integration.rs` | [integrations.md](./integrations.md) |
+| MCP servers, discovery, or the connector protocol | `src-tauri/src/mcp.rs`, `src-tauri/src/tools/mcp.rs`, `src/components/views/McpServers.tsx` | [mcp.md](./mcp.md) |
 | OAuth scopes, redirect port, or token exchange | `src-tauri/src/integrations.rs` | [integrations.md](./integrations.md), [webhooks.md](./webhooks.md) |
 | Telegram tunnel/webhook/polling/receiver | `src-tauri/src/telegram.rs`, `src-tauri/src/tg_markdown.rs` | [webhooks.md](./webhooks.md) |
 | Memory, context assembly, or summarization | `src-tauri/src/memory.rs`, `src-tauri/src/chat.rs` | [memory.md](./memory.md) |

@@ -63,6 +63,22 @@ pub struct WorkflowRunRecord {
   pub prompt_tokens: u64, pub completion_tokens: u64,
 }
 
+// A configured MCP server: the command to run plus its args and env (env values
+// are masked on read since that's where tokens live).
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerRecord {
+  pub id: String, pub name: String, pub command: String,
+  pub args: serde_json::Value, pub env: serde_json::Value, pub enabled: bool,
+}
+
+// A tool advertised by an MCP server (tools/list).
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolInfo {
+  pub name: String, pub description: String, pub schema: serde_json::Value,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct IntegrationRecord { pub id: String, pub name: String, pub provider: String, pub enabled: bool, pub connected: bool, pub config: serde_json::Value, pub actions: Vec<IntegrationAction> }

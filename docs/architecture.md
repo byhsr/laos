@@ -34,6 +34,7 @@ crosses `src/runtime.ts`. The backend has no knowledge of React; it returns plai
 | `chat.rs` | Streaming chat (`stream_chat`) + the shared tool-call round loop and the confirmation gate. |
 | `manager.rs` | The "Laos" system agent: system prompt builder, non-streaming turn loop, `dispatch_manager_tool`, approvals. |
 | `memory.rs` | Conversations, rolling window, summarization, chat sessions, day context, `build_context_bundle`. |
+| `mcp.rs` | MCP connector: JSON-RPC over stdio to a local MCP server; tool discovery, import, and calls. |
 | `tools/` | `AgentTool` trait + implementations (`api.rs`, `filesystem.rs`, `integration.rs`, `web.rs`). |
 | `updater.rs` | In-app updater: checks the signed release manifest, installs an update, restarts. |
 | `workflows.rs` | Deterministic rule engine + LLM judge; linear workflow execution. |
@@ -62,6 +63,7 @@ Registered in `main.rs::invoke_handler`. The frontend wrapper for each lives in 
 | --- | --- | --- |
 | Storage bootstrap + CRUD | `initialize_storage`, `list_model_configs`, `save_model_config`, `delete_model_config`, `list_tools`, `save_tool`, `delete_tool`, `list_agents`, `save_agent`, `delete_agent`, `list_workflows`, `save_workflow`, `delete_workflow`, `list_knowledge_docs`, `get_knowledge_doc`, `save_knowledge_doc`, `delete_knowledge_doc`, `list_skills`, `save_skill`, `delete_skill` | `storage.rs` |
 | Integrations | `list_integrations`, `save_integration_config`, `test_integration`, `start_oauth`, `connect_oauth`, `complete_oauth` | `integrations.rs` |
+| MCP | `list_mcp_servers`, `save_mcp_server`, `delete_mcp_server`, `test_mcp_server`, `import_mcp_tools` | `mcp.rs` |
 | Execution | `execute_agent`, `execute_workflow` | `agents.rs`, `workflows.rs` |
 | Tasks + runs | `list_all_tasks`, `get_task`, `run_task`, `cancel_task`, `list_runs` | `tasks.rs` |
 | Manager + chat | `manager_message`, `confirm_manager_tool`, `stream_chat` | `manager.rs`, `chat.rs` |
