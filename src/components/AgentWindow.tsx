@@ -58,6 +58,19 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   const enabledTools = tools.filter((t) => t.enabled);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const avatarRef = useRef<HTMLInputElement>(null);
+
+  // Custom avatar: read the file as a data URL and keep it on the agent record.
+  const onPickAvatar = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { toast('Image must be under 2 MB', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = () => setDraft((d) => ({ ...d, avatar: String(reader.result ?? '') }));
+    reader.onerror = () => toast('Could not read that image', 'error');
+    reader.readAsDataURL(file);
+  };
 
   const setMessages = (fn: (prev: ChatEntry[]) => ChatEntry[]) => {
     useManagerStore.setState((s) => {
@@ -361,6 +374,16 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             <div className="mt-2 flex items-center gap-2">
               <AgentAvatar agent={{ ...draft, persona: draft.persona ?? 'ai-orb' }} size={28} />
             </div>
+
+            <label className="mt-3.5 block text-[11px] font-semibold text-muted">AVATAR</label>
+            <div className="mt-1.5 flex items-center gap-2">
+              <input ref={avatarRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden" onChange={onPickAvatar} />
+              <button type="button" className="secondary" onClick={() => avatarRef.current?.click()}>Upload image</button>
+              {draft.avatar && (
+                <button type="button" className="secondary" onClick={() => setDraft({ ...draft, avatar: '' })}>Remove</button>
+              )}
+            </div>
+            <p className="mt-1.5 text-[10.5px] leading-1.5 text-muted">PNG, JPEG, GIF or WebP up to 2 MB. Overrides the persona.</p>
 
             <label className="mt-3.5 block text-[11px] font-semibold text-muted">TOOLS</label>
             <MultiDropdown

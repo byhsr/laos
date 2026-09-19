@@ -209,7 +209,7 @@ pub fn delete_skill(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn list_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
   let conn = db(&app)?;
-  let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona, skill_ids FROM agents ORDER BY name").map_err(|e| e.to_string())?;
+  let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona, skill_ids, pinned, avatar FROM agents ORDER BY name").map_err(|e| e.to_string())?;
   let rows = stmt.query_map([], |row| {
     let tool_ids: String = row.get(4)?;
     let integrations: String = row.get(5)?;
@@ -222,6 +222,7 @@ pub fn list_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
       home_path: row.get(8)?, color: row.get(9)?, x: row.get(10)?, y: row.get(11)?,
       is_manager: row.get::<_, i64>(12)? != 0, description: row.get(13)?, persona: row.get(14)?,
       skill_ids: parse_json_vec(&skill_ids),
+      pinned: row.get::<_, i64>(16)? != 0, avatar: row.get(17)?,
     })
   }).map_err(|e| e.to_string())?;
   let mut out = Vec::new();
@@ -233,8 +234,8 @@ pub fn list_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
 pub fn save_agent(app: AppHandle, agent: AgentRecord) -> Result<(), String> {
   let conn = db(&app)?;
   conn.execute(
-    "INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona, skill_ids) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
-     ON CONFLICT(id) DO UPDATE SET name=excluded.name, objective=excluded.objective, model=excluded.model, tool_ids=excluded.tool_ids, integrations=excluded.integrations, memory=excluded.memory, permissions=excluded.permissions, home_path=excluded.home_path, color=excluded.color, x=excluded.x, y=excluded.y, is_manager=excluded.is_manager, description=excluded.description, persona=excluded.persona, skill_ids=excluded.skill_ids",
+    "INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona, skill_ids, pinned, avatar) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, objective=excluded.objective, model=excluded.model, tool_ids=excluded.tool_ids, integrations=excluded.integrations, memory=excluded.memory, permissions=excluded.permissions, home_path=excluded.home_path, color=excluded.color, x=excluded.x, y=excluded.y, is_manager=excluded.is_manager, description=excluded.description, persona=excluded.persona, skill_ids=excluded.skill_ids, pinned=excluded.pinned, avatar=excluded.avatar",
     params![agent.id, agent.name, agent.objective, agent.model,
       serde_json::to_string(&agent.tool_ids).unwrap_or_else(|_| "[]".into()),
       serde_json::to_string(&agent.integrations).unwrap_or_else(|_| "[]".into()),
@@ -242,7 +243,8 @@ pub fn save_agent(app: AppHandle, agent: AgentRecord) -> Result<(), String> {
       serde_json::to_string(&agent.permissions).unwrap_or_else(|_| "[]".into()),
       agent.home_path, agent.color, agent.x, agent.y,
       if agent.is_manager { 1 } else { 0 }, agent.description, agent.persona,
-      serde_json::to_string(&agent.skill_ids).unwrap_or_else(|_| "[]".into())],
+      serde_json::to_string(&agent.skill_ids).unwrap_or_else(|_| "[]".into()),
+      if agent.pinned { 1 } else { 0 }, agent.avatar],
   ).map_err(|e| e.to_string())?;
   Ok(())
 }

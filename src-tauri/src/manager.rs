@@ -382,6 +382,7 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
         tool_ids: arr("toolIds"), integrations: arr("integrations"), memory: true, skill_ids: arr("skillIds"),
         permissions: arr("permissions").into_iter().filter(|p| p == "network" || p == "files").collect(),
         home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(), persona: "ai-orb".into(),
+        pinned: false, avatar: String::new(),
       };
       save_agent(app.clone(), agent)?;
       Ok(format!("Created agent '{name}' (id: {id})."))
@@ -395,7 +396,7 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
       if agent_id.is_empty() { return Err("update_agent requires agentId.".into()); }
       let existing = {
-        let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona, skill_ids FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona, skill_ids, pinned, avatar FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
         let mut rows = stmt.query_map(params![agent_id], |row| {
           let tool_ids: String = row.get(4)?;
           let integrations: String = row.get(5)?;
@@ -408,6 +409,7 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
             home_path: row.get(8)?, color: row.get(9)?, x: row.get(10)?, y: row.get(11)?,
             is_manager: row.get::<_, i64>(12)? != 0, description: row.get(13)?, persona: row.get(14)?,
             skill_ids: parse_json_vec(&skill_ids),
+            pinned: row.get::<_, i64>(16)? != 0, avatar: row.get(17)?,
           })
         }).map_err(|e| e.to_string())?;
         rows.next().transpose().map_err(|e| e.to_string())?

@@ -145,6 +145,15 @@ export default function App() {
           onBrowse={() => setView('agents')}
           onHome={() => setView('home')}
           homeActive={view === 'home' && homeTab !== 'graph'}
+          onTogglePin={(id, pinned) => {
+            const a = agents.find((x) => x.id === id);
+            if (a) void persistAgent({ ...a, pinned });
+          }}
+          onDelete={async (id) => {
+            await deleteAgent(id);
+            if (selectedAgentId === id) { setSelectedAgentId(null); setView('home'); }
+            toast('Agent deleted', 'success');
+          }}
           collapsed={sidebarCollapsed}
         />
         <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-10 py-9">

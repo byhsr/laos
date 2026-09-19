@@ -22,6 +22,9 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   if !agents_cols.iter().any(|c| c == "description") { conn.execute("ALTER TABLE agents ADD COLUMN description TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   if !agents_cols.iter().any(|c| c == "persona") { conn.execute("ALTER TABLE agents ADD COLUMN persona TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   if !agents_cols.iter().any(|c| c == "skill_ids") { conn.execute("ALTER TABLE agents ADD COLUMN skill_ids TEXT NOT NULL DEFAULT '[]'", []).map_err(|e| e.to_string())?; }
+  if !agents_cols.iter().any(|c| c == "pinned") { conn.execute("ALTER TABLE agents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
+  // Custom avatar as a data URL (empty = fall back to the persona animation).
+  if !agents_cols.iter().any(|c| c == "avatar") { conn.execute("ALTER TABLE agents ADD COLUMN avatar TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   let runs_cols = cols("runs")?;
   if !runs_cols.iter().any(|c| c == "prompt_tokens") { conn.execute("ALTER TABLE runs ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
   if !runs_cols.iter().any(|c| c == "completion_tokens") { conn.execute("ALTER TABLE runs ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }

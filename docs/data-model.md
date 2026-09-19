@@ -34,6 +34,8 @@ All `CREATE TABLE` statements live in `db.rs`. Column lists below are exact.
 | `description` | TEXT | Added by migration. |
 | `skill_ids` | TEXT | Added by migration; JSON array. |
 | `persona` | TEXT | **Added by migration only** (not in the initial `CREATE`). |
+| `pinned` | INTEGER | Added by migration; pinned agents sort above the rest in the sidebar. |
+| `avatar` | TEXT | Added by migration; optional custom avatar (data URL). Empty falls back to the persona animation. |
 
 ### `runs`
 
@@ -112,7 +114,7 @@ Written by `execute_agent` (agents.rs) and `stream_chat` (chat.rs); read by `lis
 
 | Table | Added columns |
 | --- | --- |
-| `agents` | `is_manager`, `description`, `persona`, `skill_ids` |
+| `agents` | `is_manager`, `description`, `persona`, `skill_ids`, `pinned`, `avatar` |
 | `runs` | `prompt_tokens`, `completion_tokens` |
 | `chat_sessions` | `summary` |
 

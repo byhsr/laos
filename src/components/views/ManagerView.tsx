@@ -42,6 +42,19 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [mgrDraft, setMgrDraft] = useState<Agent | null>(null);
+  const avatarRef = useRef<HTMLInputElement>(null);
+
+  // Custom avatar: read the file as a data URL and keep it on the agent record.
+  const onPickAvatar = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { toast('Image must be under 2 MB', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = () => setMgrDraft((d) => (d ? { ...d, avatar: String(reader.result ?? '') } : d));
+    reader.onerror = () => toast('Could not read that image', 'error');
+    reader.readAsDataURL(file);
+  };
   const [sessions, setSessions] = useState<{ id: string; title: string; createdAt: string; updatedAt: string }[]>([]);
   const [viewingSession, setViewingSession] = useState<string | null>(null);
   const [viewMsgs, setViewMsgs] = useState<ChatEntry[]>([]);
@@ -301,6 +314,16 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
             <div className="mt-2 flex items-center gap-2">
               <AgentAvatar agent={{ ...mgrDraft, persona: mgrDraft.persona ?? 'ai-orb' }} size={28} />
             </div>
+
+            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">AVATAR</label>
+            <div className="mt-1.5 flex items-center gap-2">
+              <input ref={avatarRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden" onChange={onPickAvatar} />
+              <button type="button" className="secondary" onClick={() => avatarRef.current?.click()}>Upload image</button>
+              {mgrDraft.avatar && (
+                <button type="button" className="secondary" onClick={() => setMgrDraft({ ...mgrDraft, avatar: '' })}>Remove</button>
+              )}
+            </div>
+            <p className="mt-1.5 text-[10.5px] leading-1.5 text-muted">PNG, JPEG, GIF or WebP up to 2 MB. Overrides the persona.</p>
 
             <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">OBJECTIVE / PROMPT</label>
             <textarea

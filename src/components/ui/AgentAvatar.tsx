@@ -51,12 +51,22 @@ export const PERSONAS: { id: string; label: string; data: string | object }[] = 
 const personaData = (id?: string) => PERSONAS.find((p) => p.id === id)?.data ?? PERSONAS[0].data;
 
 export function AgentAvatar({ agent, size = 32, animate = true, playing }: {
-  agent: { id?: string; name: string; color?: string; persona?: string };
+  agent: { id?: string; name: string; color?: string; persona?: string; avatar?: string };
   size?: number;
   animate?: boolean;
   playing?: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
+
+  // A custom uploaded avatar wins over the persona animation.
+  if (agent.avatar) {
+    return (
+      <span className="grid shrink-0 place-items-center overflow-hidden rounded-lg bg-panel2" style={{ width: size, height: size }}>
+        <img src={agent.avatar} alt={agent.name} className="h-full w-full object-cover" />
+      </span>
+    );
+  }
+
   const data = animate ? personaData(agent.persona) : undefined;
 
   if (data) {

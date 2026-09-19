@@ -38,6 +38,10 @@ pub struct AgentRecord {
   #[serde(default)] pub is_manager: bool, #[serde(default)] pub description: String,
   #[serde(default)] pub persona: String,
   #[serde(default)] pub skill_ids: Vec<String>,
+  // Pinned agents sort above the rest in the sidebar.
+  #[serde(default)] pub pinned: bool,
+  // Optional custom avatar (data URL); empty falls back to the persona animation.
+  #[serde(default)] pub avatar: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
