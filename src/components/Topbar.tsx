@@ -43,11 +43,16 @@ export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, 
 
   return (
     <div className="app-drag relative z-50 flex h-9 flex-none items-center justify-between gap-2 px-2 pt-1.5 select-none">
-      {/* Left: shell toggle + every section + new agent */}
+      {/* Left: shell toggle, graph, every section, new agent */}
       <div className="glass flex min-w-0 items-center gap-0.5 rounded-lg p-1">
         <Tooltip label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
           <button className={iconBtn()} onClick={onToggleSidebar}>
             <PanelLeft className="h-3 w-3" />
+          </button>
+        </Tooltip>
+        <Tooltip label={navLabel(labels, 'graph')}>
+          <button className={iconBtn(graphActive)} onClick={onOpenGraph}>
+            <Globe className="h-3 w-3" />
           </button>
         </Tooltip>
         <span className="mx-0.5 h-3.5 w-px shrink-0 bg-hairline" />
@@ -69,14 +74,6 @@ export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, 
       {/* Right: vitals + window controls — kept as separate floating clusters */}
       <div className="flex shrink-0 items-center gap-1.5">
         <div className="glass flex items-center gap-1 rounded-lg py-0.5 pr-1 pl-1">
-          <Tooltip label={navLabel(labels, 'graph')}>
-            <button
-              className={`app-no-drag grid h-5 w-5 shrink-0 cursor-pointer place-items-center rounded-md transition-colors duration-150 ${graphActive ? 'bg-white/10 text-text' : 'text-muted hover:bg-white/5 hover:text-text'}`}
-              onClick={onOpenGraph}
-            >
-              <Globe className="h-3 w-3" />
-            </button>
-          </Tooltip>
           <Vitals agents={agents} runs={runs} />
         </div>
 
