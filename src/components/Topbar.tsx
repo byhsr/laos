@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Blocks, Bot, Globe, Home, ListChecks, Maximize, Minimize2, Minus, PanelLeft, Plus, Send, Settings, Terminal, UserCog, Workflow, X } from 'lucide-react';
+import { Blocks, Bot, Globe, Home, ListChecks, Maximize, Minimize2, Minus, PanelLeft, Plus, Send, Settings, Terminal, Workflow, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { Agent, Run, View } from '../types';
 import { Vitals } from './Vitals';
@@ -9,7 +9,6 @@ import { Tooltip } from './ui/Tooltip';
 // Every section lives in the topbar; the sidebar is purely the agent chat list.
 const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
   { key: 'home', view: 'home', icon: <Home size={12} /> },
-  { key: 'manager', view: 'manager', icon: <UserCog size={12} /> },
   { key: 'agents', view: 'agents', icon: <Bot size={12} /> },
   { key: 'workflows', view: 'workflows', icon: <Workflow size={12} /> },
   { key: 'tasks', view: 'tasks', icon: <ListChecks size={12} /> },
@@ -19,10 +18,10 @@ const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
   { key: 'settings', view: 'settings', icon: <Settings size={12} /> },
 ];
 
-export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, agents, runs, managerName, onOpenGraph, graphActive }: {
+export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, agents, runs, onOpenGraph, graphActive }: {
   collapsed: boolean; onToggleSidebar: () => void;
   view: View; setView: (v: View) => void; onNewAgent: () => void;
-  agents: Agent[]; runs: Run[]; managerName: string; onOpenGraph: () => void; graphActive: boolean;
+  agents: Agent[]; runs: Run[]; onOpenGraph: () => void; graphActive: boolean;
 }) {
   const [maximized, setMaximized] = useState(false);
   const labels = useNavLabels((s) => s.labels);
@@ -59,7 +58,7 @@ export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, 
         </Tooltip>
         <span className="mx-0.5 h-3.5 w-px shrink-0 bg-hairline" />
         {NAV.map((n) => (
-          <Tooltip key={n.key} label={n.view === 'manager' ? managerName : navLabel(labels, n.key)}>
+          <Tooltip key={n.key} label={navLabel(labels, n.key)}>
             <button className={iconBtn(view === n.view && !(n.view === 'home' && graphActive))} onClick={() => setView(n.view)}>
               {n.icon}
             </button>

@@ -50,18 +50,24 @@ export const PERSONAS: { id: string; label: string; data: string | object }[] = 
 
 const personaData = (id?: string) => PERSONAS.find((p) => p.id === id)?.data ?? PERSONAS[0].data;
 
-export function AgentAvatar({ agent, size = 32, animate = true, playing }: {
+export function AgentAvatar({ agent, size = 32, animate = true, playing, fluid = false }: {
   agent: { id?: string; name: string; color?: string; persona?: string; avatar?: string };
   size?: number;
   animate?: boolean;
   playing?: boolean;
+  // Fills the parent's width as a square — used by the agent tiles.
+  fluid?: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
+  const boxClass = fluid
+    ? 'grid aspect-square w-full place-items-center overflow-hidden rounded-[14px] bg-panel2'
+    : 'grid shrink-0 place-items-center overflow-hidden rounded-lg bg-panel2';
+  const boxStyle = fluid ? undefined : { width: size, height: size };
 
   // A custom uploaded avatar wins over the persona animation.
   if (agent.avatar) {
     return (
-      <span className="grid shrink-0 place-items-center overflow-hidden rounded-lg bg-panel2" style={{ width: size, height: size }}>
+      <span className={boxClass} style={boxStyle}>
         <img src={agent.avatar} alt={agent.name} className="h-full w-full object-cover" />
       </span>
     );
@@ -73,12 +79,12 @@ export function AgentAvatar({ agent, size = 32, animate = true, playing }: {
     const active = playing ?? hovered;
     return (
       <span
-        className="grid shrink-0 place-items-center overflow-hidden rounded-lg bg-panel2"
-        style={{ width: size, height: size }}
+        className={boxClass}
+        style={boxStyle}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        <Lottie src={data} loop autoplay={active} style={{ width: size * 1.4, height: size * 1.4 }} />
+        <Lottie src={data} loop autoplay={active} style={fluid ? { width: '135%', height: '135%' } : { width: size * 1.4, height: size * 1.4 }} />
       </span>
     );
   }
@@ -86,8 +92,8 @@ export function AgentAvatar({ agent, size = 32, animate = true, playing }: {
   // Fallback: colored initial tile.
   return (
     <span
-      className="grid shrink-0 place-items-center rounded-lg bg-panel2 text-[13px] font-bold"
-      style={{ width: size, height: size, color: agent.color }}
+      className={`grid place-items-center bg-panel2 font-bold ${fluid ? 'aspect-square w-full rounded-[14px] text-[28px]' : 'shrink-0 rounded-lg text-[13px]'}`}
+      style={fluid ? { color: agent.color } : { width: size, height: size, color: agent.color }}
     >
       {agent.name.charAt(0).toUpperCase()}
     </span>

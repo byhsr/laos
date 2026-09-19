@@ -145,7 +145,6 @@ export default function App() {
         onNewAgent={addAgent}
         agents={agents}
         runs={runs}
-        managerName={agents.find((a) => a.isManager)?.name ?? 'Manager'}
         onOpenGraph={() => { setView('home'); setHomeTab('graph'); }}
         graphActive={view === 'home' && homeTab === 'graph'}
       />
