@@ -28,6 +28,24 @@ const PERMISSIONS = [
   { key: 'host_fs', label: 'Host filesystem', hint: 'whole device' },
 ] as const;
 
+// Collapsible config section — collapsed by default, so the panel reads as
+// Name → Model → Prompt and everything else is one summarised line until asked for.
+function Section({ title, summary, defaultOpen = false, children }: {
+  title: string; summary?: string; defaultOpen?: boolean; children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border-t border-hairline pt-4">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full cursor-pointer items-center gap-2 text-left">
+        <span className="shrink-0 text-[10.5px] font-semibold tracking-[0.09em] text-muted uppercase">{title}</span>
+        <span className="min-w-0 flex-1 truncate text-right font-mono text-[10.5px] text-muted">{summary}</span>
+        <ChevronRight size={13} className={`shrink-0 text-muted transition-transform duration-150 ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && <div className="mt-3.5">{children}</div>}
+    </div>
+  );
+}
+
 // Safe date formatting — DB timestamps can be empty/malformed, and new Date('')
 // throws, which would blank the whole screen.
 const fmtDate = (s?: string | null) => {
@@ -366,20 +384,20 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       )}
 
       {tab === 'config' && (
-        <div className="config-grid mt-5 grid h-[calc(100vh-200px)] min-h-[440px] items-stretch gap-5" style={{ gridTemplateColumns: 'minmax(0, 1fr) 340px' }}>
-          {/* Primary editor */}
-          <div className="config-main flex min-h-0 flex-col rounded-[16px] border border-line bg-panel p-6">
+        <div className="config-grid mt-5 grid h-[calc(100vh-200px)] min-h-[440px] items-stretch gap-7" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
+          {/* The prompt is the work — give it the room */}
+          <div className="config-main flex min-h-0 flex-col rounded-[16px] border border-hairline bg-panel p-6">
             <label className={FIELD_LABEL}>Objective / prompt</label>
             <textarea
               value={draft.objective}
               onChange={(e) => setDraft({ ...draft, objective: e.target.value })}
               placeholder="Describe what this agent should do, its role, how it should behave, what format to return…"
-              className="prompt-editor mt-2 min-h-[300px] w-full flex-1 resize-none rounded-lg border border-line bg-panel2 px-4 py-4 font-sans text-[15px] leading-[1.75] text-text outline-none transition-colors placeholder:text-muted focus:border-mid"
+              className="prompt-editor mt-2 min-h-[300px] w-full flex-1 resize-none rounded-lg border border-hairline bg-panel2 px-4 py-4 font-sans text-[15px] leading-[1.75] text-text outline-none transition-colors placeholder:text-muted focus:border-mid"
             />
           </div>
 
-          {/* Config rail */}
-          <div className="config-side flex max-h-full min-h-0 flex-col gap-5 overflow-y-auto rounded-[16px] border border-line bg-panel p-6">
+          {/* Everything else stays quiet until asked for */}
+          <div className="config-side flex max-h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1">
             <div>
               <label className={FIELD_LABEL}>Name</label>
               <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Agent name" className={FIELD} />
@@ -394,48 +412,46 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               />
             </div>
 
-            <div>
-              <label className={FIELD_LABEL}>Look</label>
+            <Section title="Appearance" summary={draft.avatar ? 'custom image' : 'persona'}>
               <div className="flex items-center gap-3">
                 <AgentAvatar agent={{ ...draft, persona: draft.persona ?? 'ai-orb' }} size={40} playing />
                 <div className="min-w-0 flex-1">
                   <PersonaPicker value={draft.persona ?? 'ai-orb'} onChange={(v) => setDraft({ ...draft, persona: v })} />
                 </div>
               </div>
-              <div className="mt-2.5 flex items-center gap-2">
+              <div className="mt-3 flex items-center gap-2">
                 <input ref={avatarRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden" onChange={onPickAvatar} />
                 <button type="button" className="secondary" onClick={() => avatarRef.current?.click()}>Upload image</button>
                 {draft.avatar && (
                   <button type="button" className="secondary" onClick={() => setDraft({ ...draft, avatar: '' })}>Remove</button>
                 )}
               </div>
-              <p className="mt-2 text-[10.5px] leading-1.5 text-muted">PNG, JPEG, GIF or WebP up to 2 MB — overrides the persona.</p>
-            </div>
+              <p className="mt-2 text-[10.5px] leading-1.5 text-muted">PNG, JPEG, GIF or WebP up to 2 MB — replaces the persona.</p>
+            </Section>
 
-            <div>
+            <Section
+              title="Capabilities"
+              summary={`${draft.toolIds.length} tools · ${(draft.skillIds ?? []).length} skills · ${draft.integrations.length} integrations`}
+            >
               <label className={FIELD_LABEL}>Tools</label>
               <MultiDropdown
                 values={draft.toolIds}
                 options={enabledTools.map((t) => ({ value: t.id, label: t.name }))}
                 onChange={(v) => setDraft({ ...draft, toolIds: v })}
-                placeholder="Select tools…"
+                placeholder="None attached"
               />
-            </div>
 
-            <div>
-              <label className={FIELD_LABEL}>Skills</label>
+              <label className={`${FIELD_LABEL} mt-4`}>Skills</label>
               <MultiDropdown
                 values={draft.skillIds ?? []}
                 options={skills.map((s) => ({ value: s.id, label: s.name }))}
                 onChange={(v) => setDraft({ ...draft, skillIds: v })}
-                placeholder="Select skills…"
+                placeholder="None attached"
               />
-            </div>
 
-            <div>
-              <label className={FIELD_LABEL}>Integrations</label>
+              <label className={`${FIELD_LABEL} mt-4`}>Integrations</label>
               {integrations.filter((i) => i.connected).length === 0 ? (
-                <p className="px-2 py-1 text-[11.5px] leading-1.6 text-muted">None connected yet — add one in Workshop → Integrations.</p>
+                <p className="px-2 py-1 text-[11.5px] leading-1.6 text-muted">None connected yet.</p>
               ) : (
                 <div className="-mx-2">
                   {integrations.filter((i) => i.connected).map((i) => (
@@ -449,10 +465,9 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                   ))}
                 </div>
               )}
-            </div>
+            </Section>
 
-            <div>
-              <label className={FIELD_LABEL}>Permissions</label>
+            <Section title="Permissions" summary={draft.permissions.join(', ') || 'none'}>
               <div className="-mx-2">
                 {PERMISSIONS.map((p) => (
                   <Checkbox
@@ -464,14 +479,21 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                   />
                 ))}
               </div>
-            </div>
+            </Section>
 
-            <div className="mt-1 flex flex-col gap-2">
-              <button className="primary w-full" onClick={() => save(true)} disabled={!isComplete(draft)}>
-                <Check size={13} />Save &amp; start chatting
+            <div className="mt-auto flex items-center gap-3 border-t border-hairline pt-4">
+              <button
+                className="primary"
+                onClick={() => save(true)}
+                disabled={!isComplete(draft) || JSON.stringify(draft) === JSON.stringify(agent)}
+              >
+                <Check size={13} />{isComplete(agent) ? 'Save changes' : 'Save & start chatting'}
               </button>
-              {error && <p className="text-[11px] leading-1.5 text-[#f87171]">{error}</p>}
+              {JSON.stringify(draft) !== JSON.stringify(agent) && isComplete(draft) && (
+                <span className="font-mono text-[10.5px] text-muted">unsaved</span>
+              )}
             </div>
+            {error && <p className="text-[11px] leading-1.5 text-[#f87171]">{error}</p>}
           </div>
         </div>
       )}
