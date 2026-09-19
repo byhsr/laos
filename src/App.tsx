@@ -123,6 +123,7 @@ export default function App() {
           selectedAgentId={selectedAgentId}
           onOpen={openAgent}
           onBrowse={() => setView('agents')}
+          onHome={() => setView('home')}
           collapsed={sidebarCollapsed}
         />
         <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-10 py-9">
