@@ -75,7 +75,7 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   };
 
   let system = if is_manager {
-    build_manager_system_prompt(&conn, &full_memory)?
+    build_manager_system_prompt(&conn, &agent.name, &full_memory)?
   } else {
     // Compact long-term memory plus the time-based context (last chat summary,
     // today, yesterday) go in on every turn, so the agent starts each call

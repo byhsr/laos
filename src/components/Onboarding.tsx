@@ -52,7 +52,7 @@ export function Onboarding({ manager, models, onFinish, onSkip }: {
   const finish = async () => {
     setSaving(true);
     try {
-      await onFinish({ name: name.trim() || 'Manager', objective: objective.trim(), persona, model });
+      await onFinish({ name: name.trim() || manager.name, objective: objective.trim(), persona, model });
     } finally {
       setSaving(false);
     }

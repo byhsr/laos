@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { BookOpen, Check, Plus, Search, Trash2, X } from 'lucide-react';
 import { deleteKnowledgeDoc, listKnowledgeDocs, saveKnowledgeDoc, type KnowledgeDoc } from '../../runtime';
 import { toast } from '../../hooks/useToast';
+import { useAgentsStore } from '../../hooks/useAgents';
 
 const fmtDate = (s?: string) => {
   if (!s) return '';
@@ -10,6 +11,8 @@ const fmtDate = (s?: string) => {
 };
 
 export function KnowledgeBaseView({ embedded = false }: { embedded?: boolean }) {
+  // The lead agent's configured name, never a hardcoded one.
+  const leadName = useAgentsStore((s) => s.agents.find((a) => a.isManager)?.name?.trim() || 'the lead agent');
   const [docs, setDocs] = useState<KnowledgeDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -98,7 +101,7 @@ export function KnowledgeBaseView({ embedded = false }: { embedded?: boolean }) 
         <div className="grid min-h-[280px] place-items-center rounded-[16px] border border-dashed border-soft">
           <div className="text-center text-muted">
             <BookOpen size={28} className="mx-auto mb-2 opacity-50" />
-            <p className="text-[12px]">No docs yet. Create one — or ask Laos to save company wiki, ICP notes, and decisions here.</p>
+            <p className="text-[12px]">No docs yet. Create one — or ask {leadName} to save company wiki, ICP notes, and decisions here.</p>
           </div>
         </div>
       ) : (

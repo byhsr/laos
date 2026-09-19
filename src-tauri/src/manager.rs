@@ -158,7 +158,7 @@ pub(crate) async fn run_manager_tool(app: &AppHandle, tools: &[Box<dyn AgentTool
 
 // Builds the Manager's system prompt by enumerating its actual tools, so its
 // capabilities are always in sync with the code and never need hand-writing.
-pub(crate) fn build_manager_system_prompt(conn: &Connection, memory_blob: &str) -> Result<String, String> {
+pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, memory_blob: &str) -> Result<String, String> {
   let context = build_workspace_context(conn)?;
   let mut tool_list = String::new();
   for t in manager_tools() {
@@ -183,7 +183,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, memory_blob: &str) 
   let day_context = build_day_context(conn, &manager_id).unwrap_or_default();
 
   Ok(format!(
-    "You are the Manager of a real, running agent workspace application. You are NOT a simulated or virtual entity â€” you have real tools and real effects on the user's machine.\n\n\
+    "You are {name}, the lead agent of a real, running agent workspace application. You are NOT a simulated or virtual entity â€” you have real tools and real effects on the user's machine.\n\n\
      You can actually do these things right now (do not claim you cannot):\n{tool_list}\n\
      When a tool returns a result, that result is real. When you create an agent or run a task, it really happens on the user's device.\n\n\
      Rules:\n\
@@ -269,7 +269,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
       memory_blob.push_str(&format!("- {fact}: {v}\n"));
     }
   }
-  let context = build_manager_system_prompt(&conn, &memory_blob)?;
+  let context = build_manager_system_prompt(&conn, &manager.name, &memory_blob)?;
   let prompt = format!("{context}\n\nUser message: {message}");
 
   // Manager tools plus every imported MCP tool, so the Manager can use any

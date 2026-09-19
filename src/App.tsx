@@ -166,7 +166,9 @@ export default function App() {
           }}
           collapsed={sidebarCollapsed}
         />
-        <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-10 pt-9">
+        {/* Chat surfaces carry their own header row, so the workspace's usual
+            top padding is dead space there — keep it minimal. */}
+        <main className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-10 ${view === 'agent' || view === 'manager' ? 'pt-2' : 'pt-9'}`}>
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
           <div className={`h-full ${view === 'home' ? '' : 'hidden'}`}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} onSaveAgent={persistAgent} onSaveWorkflow={saveWorkflow} tab={homeTab} /></div>
           <div className={view === 'agents' ? '' : 'hidden'}><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('Agent deleted', 'success'); }} /></div>

@@ -26,6 +26,9 @@ const STATUS_COLOR: Record<string, string> = {
 
 export function ManagerView({ agents, integrations, models, openConfigRequest = 0 }: { agents: Agent[]; integrations: Integration[]; models: ModelConfig[]; openConfigRequest?: number }) {
   const managerId = agents.find((a) => a.isManager)?.id ?? 'manager';
+  // The lead agent's configured name is the only name shown anywhere — nothing
+  // user-facing hardcodes it.
+  const leadName = agents.find((a) => a.isManager)?.name?.trim() || 'Manager';
   // Read the manager's own conversation directly (like AgentWindow), so the
   // visible chat survives tab switches regardless of the shared currentAgentId.
   const messages = useManagerStore(useShallow((s) => s.conversations[managerId] ?? []));
@@ -72,7 +75,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
   const saveConfig = async () => {
     if (!mgrDraft) return;
     await persistAgent(mgrDraft);
-    toast('Laos config saved', 'success');
+    toast(`${leadName} config saved`, 'success');
     setConfigOpen(false);
   };
 
@@ -107,7 +110,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
       return tasks.map((t) => `- **${t.status}** → ${agents.find((a) => a.id === t.assignedAgent)?.name ?? t.assignedAgent}: ${t.input}`).join('\n');
     }
     if (cmd === '/help') {
-      return 'Available commands:\n- /agents — list agents\n- /tasks — list tasks\n- /switch &lt;agent&gt; — switch conversation to an agent\n- /help — this message\n\nEverything else goes to Laos.';
+      return `Available commands:\n- /agents — list agents\n- /tasks — list tasks\n- /switch &lt;agent&gt; — switch conversation to an agent\n- /help — this message\n\nEverything else goes to ${leadName}.`;
     }
     if (cmd === '/switch') {
       const name = arg(/^\/switch\s+(.+)$/i);
@@ -198,7 +201,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
               value={input}
               onChange={onInputChange}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
-              placeholder="Message Laos…  (/agents, /tasks, /switch, /help)"
+              placeholder={`Message ${leadName}…  (/agents, /tasks, /switch, /help)`}
               style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--color-hairline)', borderRadius: 16, padding: '12px 16px', color: 'var(--text)', resize: 'none', minHeight: 44, maxHeight: 160, boxShadow: 'var(--shadow-soft)', outline: 'none' }}
             />
             <button className="primary" onClick={submit} disabled={busy || !input.trim()} title="Send"><Send size={14} /></button>
@@ -294,7 +297,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
 
       {configOpen && mgrDraft && (
         <Drawer
-          title="Laos config"
+          title={`${leadName} config`}
           onClose={() => setConfigOpen(false)}
           initialWidth={Math.round(window.innerWidth / 2)}
           resizable
@@ -337,7 +340,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
               value={mgrDraft.objective}
               onChange={(e) => setMgrDraft({ ...mgrDraft, objective: e.target.value })}
               rows={5}
-              placeholder="Describe Laos's role…"
+              placeholder={`Describe ${leadName}'s role…`}
               className="mt-1.5 w-full resize-y rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] leading-1.6 text-text outline-none focus:border-mid"
             />
 
@@ -355,7 +358,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
 
             <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">MEMORY</label>
             <div className="mt-1.5 flex items-center gap-2">
-              <button className="secondary" onClick={() => { const id = mgrDraft.id; reset(id); toast('Laos memory cleared', 'success'); }}>Reset memory</button>
+              <button className="secondary" onClick={() => { const id = mgrDraft.id; reset(id); toast(`${leadName} memory cleared`, 'success'); }}>Reset memory</button>
             </div>
           </div>
         </Drawer>
