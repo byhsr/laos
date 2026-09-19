@@ -60,7 +60,7 @@ export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, 
         <span className="mx-0.5 h-3.5 w-px shrink-0 bg-hairline" />
         {NAV.map((n) => (
           <Tooltip key={n.key} label={n.view === 'manager' ? managerName : navLabel(labels, n.key)}>
-            <button className={iconBtn(view === n.view)} onClick={() => setView(n.view)}>
+            <button className={iconBtn(view === n.view && !(n.view === 'home' && graphActive))} onClick={() => setView(n.view)}>
               {n.icon}
             </button>
           </Tooltip>

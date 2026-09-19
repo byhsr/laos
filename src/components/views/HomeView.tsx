@@ -1,4 +1,4 @@
-import { Home as HomeIcon, Plus, Workflow as WorkflowIcon } from 'lucide-react';
+import { Workflow as WorkflowIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { Agent, Integration, Run, Skill, Tool, Workflow } from '../../types';
 import { AgentAvatar } from '../ui/AgentAvatar';
@@ -8,14 +8,13 @@ const SHOW = 4;
 
 export type HomeTab = 'overview' | 'graph';
 
-const tabBtn = (active: boolean) =>
-  `flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${active ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`;
-
-export function HomeView({ agents, tools, skills, integrations, runs, workflows, onOpen, onCreate, onOpenWorkflow, onSaveAgent, onSaveWorkflow, tab, onTabChange }: {
+// No header: the section title, the Overview/Graph tabs and "New agent" all live
+// in the topbar (Graph is its own topbar button, + creates an agent).
+export function HomeView({ agents, tools, skills, integrations, runs, workflows, onOpen, onCreate, onOpenWorkflow, onSaveAgent, onSaveWorkflow, tab }: {
   agents: Agent[]; tools: Tool[]; skills: Skill[]; integrations: Integration[]; runs: Run[]; workflows: Workflow[];
   onOpen: (id: string) => void; onCreate: () => void; onOpenWorkflow: (id: string) => void;
   onSaveAgent: (a: Agent) => Promise<void>; onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
-  tab: HomeTab; onTabChange: (t: HomeTab) => void;
+  tab: HomeTab;
 }) {
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
   const agentTokens = (id: string) => (runs ?? []).filter((r) => r.agentId === id).reduce((sum, r) => sum + (r.promptTokens ?? 0) + (r.completionTokens ?? 0), 0);
@@ -25,19 +24,7 @@ export function HomeView({ agents, tools, skills, integrations, runs, workflows,
 
   return (
     <div className="flex h-full flex-col">
-      <header className="mb-5 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <HomeIcon size={14} className="text-[var(--green)]" />
-          <span className="font-mono text-[11px] uppercase tracking-[1px] text-text">Home</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <button className={tabBtn(tab === 'overview')} onClick={() => onTabChange('overview')}>Overview</button>
-          <button className={tabBtn(tab === 'graph')} onClick={() => onTabChange('graph')}>Graph</button>
-          <button className="primary ml-1" onClick={onCreate}><Plus size={13} />New agent</button>
-        </div>
-      </header>
-
-      {/* Overview stays mounted so Graph's pan/zoom survives tab switches. */}
+      {/* Overview stays mounted so Graph's pan/zoom survives view switches. */}
       <div className={`min-h-0 flex-1 overflow-y-auto ${tab === 'overview' ? '' : 'hidden'}`}>
         <div className="mb-3 flex items-center justify-between">
           <span className="font-mono text-[11px] tracking-[1px] text-muted">Agents</span>

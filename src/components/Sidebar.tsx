@@ -55,12 +55,6 @@ export function Sidebar({ agents, view, selectedAgentId, onOpen, onTogglePin, on
 
   return (
     <aside className={`glass relative z-10 my-3 ml-3 flex flex-col rounded-3xl px-3 py-4 shadow-soft transition-[width] duration-200 ease-out ${collapsed ? 'w-[68px]' : 'w-[236px]'}`}>
-      {!collapsed && (
-        <div className="mb-2 shrink-0 px-1">
-          <span className="font-mono text-[10.5px] tracking-[1px] text-muted">AGENTS</span>
-        </div>
-      )}
-
       <nav className={`grid min-h-0 gap-1 overflow-y-auto overflow-x-hidden ${collapsed ? 'justify-items-center' : ''}`}>
         {list.length === 0 && !collapsed && <p className="px-1 text-[11px] leading-1.6 text-muted">No agents yet — use + in the topbar.</p>}
         {list.map((a) => {
