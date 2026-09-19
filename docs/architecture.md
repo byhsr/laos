@@ -82,7 +82,7 @@ points into the same underlying model layer — see [harness.md](./harness.md).
 | Backend bridge | `runtime.ts` | One typed wrapper per command. `streamChat` wraps a Tauri `Channel`; structured events arrive as JSON strings, token deltas as plain text. |
 | Stores | `hooks/useAgents.ts`, `useRuns.ts`, `useModels.ts`, `useTools.ts`, `useSkills.ts`, `useWorkflows.ts`, `useWorkspace.ts`, `useIntegrations.ts`, `useManager.ts`, `useTasks.ts`, `useConfirm.ts`, `useToast.ts` | One Zustand store per domain; loaded once on mount in `App.tsx`. |
 | Views | `components/views/*` | Home, Agents (browse), Canvas (workflows), Manager (Laos), Tasks, Runs, Telegram, Workshop (Skills/Tools/Integrations/Knowledge), Settings (General/Models), plus the agent window. |
-| Shell | `components/Topbar.tsx`, `components/Sidebar.tsx` | The topbar carries **every** section nav + New agent + window controls; the sidebar is the **agent chat list** (click an agent to open its chat). Section names are user-editable via `hooks/useNavLabels.ts` (localStorage). |
+| Shell | `components/Topbar.tsx`, `components/Sidebar.tsx` | The topbar carries **every** section nav + New agent + window controls; the sidebar is the **agent chat list**, plus Home/Graph shortcuts and the agents browser. Section names are user-editable via `hooks/useNavLabels.ts` (localStorage). |
 | Primitives | `components/ui/*` | Drawer (resizable right panel), Dropdown/MultiDropdown (portaled), ConfirmDialog, Toaster, Tooltip (shell icon controls), AgentAvatar/PersonaPicker, ContextMenu. |
 | Personas | `assets/agents/*.json` + `components/ui/AgentAvatar.tsx` (`PERSONAS`) | Lottie files; add a file and register it in `PERSONAS`. |
 

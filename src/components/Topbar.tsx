@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Blocks, Globe, Home, ListChecks, Maximize, Minimize2, Minus, PanelLeft, Plus, Send, Settings, Terminal, UserCog, Workflow, X } from 'lucide-react';
+import { Blocks, Home, ListChecks, Maximize, Minimize2, Minus, PanelLeft, Plus, Send, Settings, Terminal, UserCog, Workflow, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { Agent, Run, View } from '../types';
 import { Vitals } from './Vitals';
@@ -18,10 +18,10 @@ const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
   { key: 'settings', view: 'settings', icon: <Settings size={12} /> },
 ];
 
-export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, agents, runs, onOpenGraph, graphActive }: {
+export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, agents, runs }: {
   collapsed: boolean; onToggleSidebar: () => void;
   view: View; setView: (v: View) => void; onNewAgent: () => void;
-  agents: Agent[]; runs: Run[]; onOpenGraph: () => void; graphActive: boolean;
+  agents: Agent[]; runs: Run[];
 }) {
   const [maximized, setMaximized] = useState(false);
   const labels = useNavLabels((s) => s.labels);
@@ -67,17 +67,9 @@ export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, 
         </Tooltip>
       </div>
 
-      {/* Right: graph, vitals, window controls — kept as separate floating clusters */}
+      {/* Right: vitals + window controls — kept as separate floating clusters */}
       <div className="flex shrink-0 items-center gap-1.5">
         <div className="glass flex items-center gap-1 rounded-lg py-0.5 pr-1 pl-1">
-          <Tooltip label="Graph">
-            <button
-              className={`app-no-drag grid h-5 w-5 shrink-0 cursor-pointer place-items-center rounded-md transition-colors duration-150 ${graphActive ? 'bg-white/10 text-text' : 'text-muted hover:bg-white/5 hover:text-text'}`}
-              onClick={onOpenGraph}
-            >
-              <Globe className="h-3 w-3" />
-            </button>
-          </Tooltip>
           <Vitals agents={agents} runs={runs} />
         </div>
 
