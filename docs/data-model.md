@@ -3,7 +3,9 @@
 SQLite is the single store for everything. Opened per command by `db::db(app)`; there is no
 shared pool.
 
-- **File:** `local-agent-os.sqlite3` in the Tauri app data dir.
+- **File:** `local-agent-os.sqlite3` in the Tauri app data dir — on Windows
+  `%APPDATA%\com.localagentos.app\` (`…\Roaming\com.localagentos.app`). Next to it sits the
+  per-agent workspace: `agents/<id>/{files,memory,runs,outputs}` plus a generated `config.json`.
 - **Connection:** a fresh `rusqlite::Connection` per call, `busy_timeout` 5s so background
   summarization can overlap a chat turn.
 - **Schema:** one idempotent `CREATE TABLE IF NOT EXISTS` batch in `db.rs`, plus targeted
@@ -152,3 +154,13 @@ There is no version table — migrations are single-column `ALTER`s that are saf
 `workflows.nodes` / `workflows.edges` are stored as JSON and executed by
 `workflows::execute_workflow` (linear BFS order; `loop`/`trigger` pass through, `checker` and
 `gate` emit envelopes; per-step token fields are currently always `0`).
+
+## What is *not* persisted
+
+- **Workflow run results.** `execute_workflow` returns its steps and final output to the UI and
+  writes nothing; its agent nodes call `run_agent_once`, which never creates a `runs` row. Only
+  the workflow *definition* is stored, so a workflow execution leaves no history.
+- **Failed or cancelled chat turns.** `stream_chat` inserts the `runs` row only after the stream
+  completes; an error mid-stream records nothing.
+- Per-agent `files/`, `memory/` and `runs/` folders are created as scaffolding but unused — only
+  `outputs/<runId>.txt` (one-shot `execute_agent` runs) and `config.json` are actually written.
