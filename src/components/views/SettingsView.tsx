@@ -85,7 +85,7 @@ export function SettingsView({ models, onAddModel, onEditModel, onDeleteModel }:
 
         <div className="mt-4 max-w-[700px] rounded-[16px] border border-line bg-panel p-[22px]">
           <h3 className="mb-[5px] text-[14px]">Navigation</h3>
-          <p className="mb-4 text-[12px] leading-[1.7] text-muted">Rename the topbar sections. Leave a field blank to restore the default.</p>
+          <p className="mb-4 text-[12px] leading-[1.7] text-muted">Rename the navigation sections. Leave a field blank to restore the default.</p>
           <div className="grid gap-2">
             {NAV_SECTIONS.map((s) => (
               <label key={s.key} className="flex items-center gap-3">

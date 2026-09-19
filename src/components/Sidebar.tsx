@@ -1,14 +1,16 @@
-import { Globe, Home, LayoutGrid } from 'lucide-react';
+import { Home, LayoutGrid } from 'lucide-react';
 import type { Agent, View } from '../types';
 import { AgentAvatar } from './ui/AgentAvatar';
 import { Tooltip } from './ui/Tooltip';
+import { navLabel, useNavLabels } from '../hooks/useNavLabels';
 
-// The sidebar is the agent chat list: click an agent to open its chat. Every
-// workspace section lives in the topbar instead.
-export function Sidebar({ agents, view, selectedAgentId, graphActive, onOpen, onBrowse, onHome, onGraph, collapsed }: {
-  agents: Agent[]; view: View; selectedAgentId: string | null; graphActive: boolean;
-  onOpen: (id: string) => void; onBrowse: () => void; onHome: () => void; onGraph: () => void; collapsed: boolean;
+// The sidebar is the agent chat list: click an agent to open its chat. The
+// workspace sections live in the topbar; Home lives here.
+export function Sidebar({ agents, view, selectedAgentId, homeActive, onOpen, onBrowse, onHome, collapsed }: {
+  agents: Agent[]; view: View; selectedAgentId: string | null; homeActive: boolean;
+  onOpen: (id: string) => void; onBrowse: () => void; onHome: () => void; collapsed: boolean;
 }) {
+  const labels = useNavLabels((s) => s.labels);
   const list = agents.filter((a) => !a.isManager);
   const headerBtn = (active: boolean) =>
     `grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded-md transition-colors duration-150 ${active ? 'bg-line text-text' : 'text-muted hover:bg-line hover:text-text'}`;
@@ -23,11 +25,8 @@ export function Sidebar({ agents, view, selectedAgentId, graphActive, onOpen, on
       <div className={`mb-2 flex shrink-0 items-center gap-1 ${collapsed ? 'justify-center' : 'justify-between px-1'}`}>
         {!collapsed && <span className="font-mono text-[10.5px] tracking-[1px] text-muted">AGENTS</span>}
         <div className="flex items-center gap-0.5">
-          <Tooltip label="Home" side="right">
-            <button className={headerBtn(view === 'home' && !graphActive)} onClick={onHome}><Home size={13} /></button>
-          </Tooltip>
-          <Tooltip label="Graph" side="right">
-            <button className={headerBtn(graphActive)} onClick={onGraph}><Globe size={13} /></button>
+          <Tooltip label={navLabel(labels, 'home')} side="right">
+            <button className={headerBtn(homeActive)} onClick={onHome}><Home size={13} /></button>
           </Tooltip>
           <Tooltip label="All agents" side="right">
             <button className={headerBtn(false)} onClick={onBrowse}><LayoutGrid size={13} /></button>

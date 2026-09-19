@@ -114,6 +114,8 @@ export default function App() {
         onNewAgent={addAgent}
         agents={agents}
         runs={runs}
+        onOpenGraph={() => { setView('home'); setHomeTab('graph'); }}
+        graphActive={view === 'home' && homeTab === 'graph'}
       />
       <div className="relative z-10 flex min-h-0 flex-1">
         <Sidebar
@@ -123,8 +125,7 @@ export default function App() {
           onOpen={openAgent}
           onBrowse={() => setView('agents')}
           onHome={() => setView('home')}
-          onGraph={() => { setView('home'); setHomeTab('graph'); }}
-          graphActive={view === 'home' && homeTab === 'graph'}
+          homeActive={view === 'home' && homeTab !== 'graph'}
           collapsed={sidebarCollapsed}
         />
         <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-10 py-9">

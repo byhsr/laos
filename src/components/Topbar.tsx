@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Blocks, Home, ListChecks, Maximize, Minimize2, Minus, PanelLeft, Plus, Send, Settings, Terminal, UserCog, Workflow, X } from 'lucide-react';
+import { Blocks, Globe, ListChecks, Maximize, Minimize2, Minus, PanelLeft, Plus, Send, Settings, Terminal, UserCog, Workflow, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { Agent, Run, View } from '../types';
 import { Vitals } from './Vitals';
 import { navLabel, useNavLabels, type NavKey } from '../hooks/useNavLabels';
 import { Tooltip } from './ui/Tooltip';
 
-// Every workspace section lives in the topbar; the sidebar is the agent chat list.
+// Workspace sections live in the topbar; Home sits in the sidebar with the agents.
 const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
-  { key: 'home', view: 'home', icon: <Home size={12} /> },
   { key: 'manager', view: 'manager', icon: <UserCog size={12} /> },
   { key: 'workflows', view: 'workflows', icon: <Workflow size={12} /> },
   { key: 'tasks', view: 'tasks', icon: <ListChecks size={12} /> },
@@ -18,10 +17,10 @@ const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
   { key: 'settings', view: 'settings', icon: <Settings size={12} /> },
 ];
 
-export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, agents, runs }: {
+export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, agents, runs, onOpenGraph, graphActive }: {
   collapsed: boolean; onToggleSidebar: () => void;
   view: View; setView: (v: View) => void; onNewAgent: () => void;
-  agents: Agent[]; runs: Run[];
+  agents: Agent[]; runs: Run[]; onOpenGraph: () => void; graphActive: boolean;
 }) {
   const [maximized, setMaximized] = useState(false);
   const labels = useNavLabels((s) => s.labels);
@@ -70,6 +69,14 @@ export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, 
       {/* Right: vitals + window controls — kept as separate floating clusters */}
       <div className="flex shrink-0 items-center gap-1.5">
         <div className="glass flex items-center gap-1 rounded-lg py-0.5 pr-1 pl-1">
+          <Tooltip label={navLabel(labels, 'graph')}>
+            <button
+              className={`app-no-drag grid h-5 w-5 shrink-0 cursor-pointer place-items-center rounded-md transition-colors duration-150 ${graphActive ? 'bg-white/10 text-text' : 'text-muted hover:bg-white/5 hover:text-text'}`}
+              onClick={onOpenGraph}
+            >
+              <Globe className="h-3 w-3" />
+            </button>
+          </Tooltip>
           <Vitals agents={agents} runs={runs} />
         </div>
 

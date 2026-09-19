@@ -2,10 +2,11 @@ import { create } from 'zustand';
 
 // User-renameable topbar sections. These are a per-machine UI preference, so they
 // live in localStorage rather than the app database.
-export type NavKey = 'home' | 'manager' | 'workflows' | 'tasks' | 'workshop' | 'runs' | 'telegram' | 'settings';
+export type NavKey = 'home' | 'graph' | 'manager' | 'workflows' | 'tasks' | 'workshop' | 'runs' | 'telegram' | 'settings';
 
 export const NAV_SECTIONS: { key: NavKey; label: string }[] = [
   { key: 'home', label: 'Home' },
+  { key: 'graph', label: 'Graph' },
   { key: 'manager', label: 'Laos' },
   { key: 'workflows', label: 'Workflows' },
   { key: 'tasks', label: 'Tasks' },
