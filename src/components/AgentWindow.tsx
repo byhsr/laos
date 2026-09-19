@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronRight, Lock, MessageSquarePlus, Play, RotateCcw, Send, Trash2 } from 'lucide-react';
+import { Check, ChevronRight, Lock, MessageSquarePlus, Play, RotateCcw, Send, Settings, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from './ui/ContextMenu';
 import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run, Skill, Tool } from '../types';
 import { Dropdown } from './ui/Dropdown';
@@ -36,12 +36,18 @@ const runDuration = (r: Run) => {
   return `${(ms / 1000).toFixed(1)}s`;
 };
 
-export function AgentWindow({ agent, tools, skills, models, integrations, runs, onBack, onSave, onDelete, onRun }: {
+export function AgentWindow({ agent, tools, skills, models, integrations, runs, onBack, onSave, onDelete, onRun, tabRequest }: {
   agent: Agent; tools: Tool[]; skills: Skill[]; models: ModelConfig[]; integrations: Integration[]; runs: Run[];
   onBack: () => void; onSave: (a: Agent) => Promise<void>; onDelete: (id: string) => Promise<void>; onRun: (input: string, agent: Agent) => Promise<ExecutionResult>;
+  tabRequest?: { tab: 'chat' | 'config'; n: number };
 }) {
   const complete = isComplete(agent);
   const [tab, setTab] = useState<'chat' | 'runs' | 'info' | 'config' | 'history'>(complete ? 'chat' : 'config');
+
+  // Honour an explicit tab request from the sidebar (Settings / reopen to chat).
+  useEffect(() => {
+    if (tabRequest && tabRequest.n > 0) setTab(tabRequest.tab);
+  }, [tabRequest?.n]);
   // Chat messages live in the store so they survive navigating away and back.
   // useShallow prevents an infinite re-render loop when the conversation is
   // missing (the `?? []` would create a new reference every selector call).
@@ -182,6 +188,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   };
 
   const menuItems: MenuItem[] = [
+    { key: 'config', label: 'Settings', icon: <Settings size={13} />, onSelect: () => setTab('config') },
     { key: 'new', label: 'New chat', icon: <MessageSquarePlus size={13} />, onSelect: () => { void newChat(); } },
     { key: 'reset', label: 'Reset memory', icon: <RotateCcw size={13} />, onSelect: () => { void resetMemory(); } },
     { key: 'delete', label: 'Delete agent', icon: <Trash2 size={13} />, danger: true, onSelect: () => { void onDelete(agent.id); } },

@@ -23,7 +23,7 @@ const STATUS_COLOR: Record<string, string> = {
   cancelled: 'text-muted',
 };
 
-export function ManagerView({ agents, integrations, models }: { agents: Agent[]; integrations: Integration[]; models: ModelConfig[] }) {
+export function ManagerView({ agents, integrations, models, openConfigRequest = 0 }: { agents: Agent[]; integrations: Integration[]; models: ModelConfig[]; openConfigRequest?: number }) {
   const managerId = agents.find((a) => a.isManager)?.id ?? 'manager';
   // Read the manager's own conversation directly (like AgentWindow), so the
   // visible chat survives tab switches regardless of the shared currentAgentId.
@@ -80,6 +80,11 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
     listChatSessions(managerId).then(setSessions).catch(() => {});
   }, [managerId, loadHistory]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages]);
+  // "Settings" from the sidebar's context menu reopens the config drawer.
+  useEffect(() => {
+    if (openConfigRequest > 0) openConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openConfigRequest]);
 
   const managerAgent = agents.find((a) => a.isManager) ?? {
     id: 'manager', name: 'Manager', objective: '', model: models.find((m) => m.enabled)?.id ?? '', toolIds: [],

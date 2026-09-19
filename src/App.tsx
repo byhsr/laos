@@ -104,6 +104,17 @@ export default function App() {
     setShowOnboarding(false);
   };
 
+  // "Settings" from an agent's context menu: the lead opens its config drawer, a
+  // regular agent opens its Config tab. The nonce lets a repeat request re-fire.
+  const [configRequest, setConfigRequest] = useState<{ id: string; n: number; tab: 'chat' | 'config' }>({ id: '', n: 0, tab: 'chat' });
+  const openAgentSettings = (id: string) => {
+    const target = agents.find((a) => a.id === id);
+    if (!target) return;
+    if (target.isManager) setView('manager');
+    else { setSelectedAgentId(id); setView('agent'); }
+    setConfigRequest((r) => ({ id, n: r.n + 1, tab: 'config' }));
+  };
+
   const openAgent = (id: string) => {
     // The Manager is a root-level view; opening it goes to the Manager tab.
     if (agents.find((a) => a.id === id)?.isManager) {
@@ -112,6 +123,8 @@ export default function App() {
     }
     setSelectedAgentId(id);
     setView('agent');
+    // Reopening a row always lands on the chat, even if Settings was open.
+    setConfigRequest((r) => ({ id, n: r.n + 1, tab: 'chat' }));
   };
 
   const addAgent = async () => {
@@ -145,6 +158,7 @@ export default function App() {
           onBrowse={() => setView('agents')}
           onHome={() => setView('home')}
           homeActive={view === 'home' && homeTab !== 'graph'}
+          onSettings={openAgentSettings}
           onTogglePin={(id, pinned) => {
             const a = agents.find((x) => x.id === id);
             if (a) void persistAgent({ ...a, pinned });
@@ -170,7 +184,7 @@ export default function App() {
               onRunWorkflow={runWorkflow}
             />
           </div>
-          <div className={view === 'manager' ? '' : 'hidden'}><ManagerView agents={agents} integrations={integrations} models={models} /></div>
+          <div className={view === 'manager' ? '' : 'hidden'}><ManagerView agents={agents} integrations={integrations} models={models} openConfigRequest={configRequest.id === leadAgent?.id ? configRequest.n : 0} /></div>
           <div className={view === 'tasks' ? '' : 'hidden'}><TasksView agents={agents} /></div>
           <div className={view === 'telegram' ? '' : 'hidden'}><TelegramView /></div>
           <div className={view === 'runs' ? '' : 'hidden'}>
@@ -197,7 +211,7 @@ export default function App() {
             />
           </div>
           {selectedAgent && (
-            <div className={view === 'agent' ? '' : 'hidden'}><AgentWindow key={selectedAgent.id} agent={selectedAgent} tools={tools} skills={skills} models={models} integrations={integrations} runs={runs} onBack={() => setView('agents')} onSave={persistAgent} onDelete={async (id) => { await deleteAgent(id); setSelectedAgentId(null); setView('agents'); }} onRun={handleRun} /></div>
+            <div className={view === 'agent' ? '' : 'hidden'}><AgentWindow key={selectedAgent.id} agent={selectedAgent} tools={tools} skills={skills} models={models} integrations={integrations} runs={runs} onBack={() => setView('agents')} onSave={persistAgent} onDelete={async (id) => { await deleteAgent(id); setSelectedAgentId(null); setView('agents'); }} onRun={handleRun} tabRequest={{ tab: configRequest.tab, n: configRequest.id === selectedAgent.id ? configRequest.n : 0 }} /></div>
           )}
         </main>
         {drawerForm && drawerForm.kind === 'tool' && (

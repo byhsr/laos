@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Home, LayoutGrid, MessageSquare, Pin, PinOff, Trash2 } from 'lucide-react';
+import { Home, LayoutGrid, MessageSquare, Pin, PinOff, Settings, Trash2 } from 'lucide-react';
 import type { Agent, View } from '../types';
 import { AgentAvatar } from './ui/AgentAvatar';
 import { Tooltip } from './ui/Tooltip';
@@ -9,10 +9,10 @@ import { navLabel, useNavLabels } from '../hooks/useNavLabels';
 // The sidebar is the agent chat list: the lead agent always holds the first slot,
 // pinned agents follow. Right-click a row for its actions. The workspace sections
 // live in the topbar.
-export function Sidebar({ agents, view, selectedAgentId, homeActive, onOpen, onBrowse, onHome, onTogglePin, onDelete, collapsed }: {
+export function Sidebar({ agents, view, selectedAgentId, homeActive, onOpen, onBrowse, onHome, onTogglePin, onSettings, onDelete, collapsed }: {
   agents: Agent[]; view: View; selectedAgentId: string | null; homeActive: boolean;
   onOpen: (id: string) => void; onBrowse: () => void; onHome: () => void;
-  onTogglePin: (id: string, pinned: boolean) => void; onDelete: (id: string) => Promise<void>;
+  onTogglePin: (id: string, pinned: boolean) => void; onSettings: (id: string) => void; onDelete: (id: string) => Promise<void>;
   collapsed: boolean;
 }) {
   const labels = useNavLabels((s) => s.labels);
@@ -38,6 +38,7 @@ export function Sidebar({ agents, view, selectedAgentId, homeActive, onOpen, onB
   // The lead agent can't be pinned or deleted.
   const menuItems = (a: Agent): MenuItem[] => [
     { key: 'open', label: 'Open chat', icon: <MessageSquare size={13} />, onSelect: () => onOpen(a.id) },
+    { key: 'settings', label: 'Settings', icon: <Settings size={13} />, onSelect: () => onSettings(a.id) },
     ...(a.isManager ? [] : [
       {
         key: 'pin',
