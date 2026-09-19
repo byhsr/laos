@@ -278,3 +278,15 @@ export async function runTask(requester: string, assignedAgent: string, input: s
 export async function cancelTask(id: string): Promise<void> {
   await invoke('cancel_task', { id });
 }
+
+// In-app updater. The check/install live in Rust; the UI renders its own prompt.
+export type UpdateInfo = { version: string; currentVersion: string; notes?: string | null; date?: string | null };
+export async function checkForUpdate(): Promise<UpdateInfo | null> {
+  try { return await invoke<UpdateInfo | null>('check_for_update'); } catch { return null; }
+}
+export async function installUpdate(): Promise<void> {
+  await invoke('install_update');
+}
+export async function restartApp(): Promise<void> {
+  await invoke('restart_app');
+}

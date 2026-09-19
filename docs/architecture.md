@@ -35,6 +35,7 @@ crosses `src/runtime.ts`. The backend has no knowledge of React; it returns plai
 | `manager.rs` | The "Laos" system agent: system prompt builder, non-streaming turn loop, `dispatch_manager_tool`, approvals. |
 | `memory.rs` | Conversations, rolling window, summarization, chat sessions, day context, `build_context_bundle`. |
 | `tools/` | `AgentTool` trait + implementations (`api.rs`, `filesystem.rs`, `integration.rs`, `web.rs`). |
+| `updater.rs` | In-app updater: checks the signed release manifest, installs an update, restarts. |
 | `workflows.rs` | Deterministic rule engine + LLM judge; linear workflow execution. |
 | `tasks.rs` | Task lifecycle (`pending → running → completed/failed/cancelled`) and the runs feed. |
 | `integrations.rs` | Integration catalog, credential masking/merge, connection tests, OAuth. |
@@ -65,6 +66,7 @@ Registered in `main.rs::invoke_handler`. The frontend wrapper for each lives in 
 | Tasks + runs | `list_all_tasks`, `get_task`, `run_task`, `cancel_task`, `list_runs` | `tasks.rs` |
 | Manager + chat | `manager_message`, `confirm_manager_tool`, `stream_chat` | `manager.rs`, `chat.rs` |
 | Memory + sessions | `get_conversation`, `clear_agent_memory`, `list_chat_sessions`, `get_chat_session`, `create_chat_session`, `delete_chat_session`, `rename_chat_session`, `close_session` | `memory.rs` |
+| Updater | `check_for_update`, `install_update`, `restart_app` | `updater.rs` |
 | Telegram | `list_telegram_logs`, `telegram_start_tunnel`, `telegram_register_webhook`, `telegram_register_custom_url`, `telegram_stop_tunnel`, `telegram_tunnel_status`, `telegram_webhook_health` | `telegram.rs` |
 
 Note: `execute_agent` (non-streaming) and `stream_chat` (streaming) are two different entry

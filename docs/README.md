@@ -51,6 +51,7 @@ src-tauri/                   Backend (Rust / Tauri v2)
   src/integrations.rs        Integration catalog, credential masking/merge, OAuth
   src/telegram.rs            Telegram tunnel, webhook receiver, long-poll loop
   src/tg_markdown.rs         Markdown → Telegram HTML subset
+  src/updater.rs             In-app updater: check manifest, install, restart
 
 docs/                        This documentation
 ```
@@ -87,7 +88,7 @@ restart the window on save. `tauri.conf.json` deliberately uses `npm run` (not `
 the same config works on Windows and on the CI runners.
 
 `.github/workflows/release.yml` builds installers for Windows, macOS (Intel + Apple Silicon)
-and Linux on any `v*` tag and attaches them to a GitHub Release:
+and Linux on any version tag (`v0.1.0` or `0.1.0`) and attaches them to a GitHub Release:
 
 ```
 git tag v0.1.0
@@ -95,6 +96,25 @@ git push origin v0.1.0
 ```
 
 macOS builds are unsigned, so the first launch needs right-click → Open.
+
+### Auto-update
+
+The app checks for a new release ~4s after launch and shows an in-app prompt
+(`components/ui/UpdatePrompt.tsx`) offering **Install & restart**.
+
+- Rust side: `src-tauri/src/updater.rs` (`check_for_update`, `install_update`, `restart_app`)
+  via `tauri-plugin-updater`. No JS updater package is used.
+- Manifest: `https://github.com/byhsr/laos/releases/latest/download/latest.json`.
+- **Required repo secrets:** `TAURI_SIGNING_PRIVATE_KEY` (the private key file's contents) and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. `createUpdaterArtifacts` makes both mandatory — without
+  them the bundle step fails, so add them before tagging.
+- The public key lives in `tauri.conf.json` (`plugins.updater.pubkey`). The matching private
+  key (`~/.tauri/laos.key`) is gitignored — never commit it.
+- macOS updates install only for a signed + notarized build, so Mac stays manual for now.
+
+To ship an update: bump `version` in `tauri.conf.json` (and `package.json`), then push a tag
+matching it. The updater compares the version in `tauri.conf.json`, **not** the tag name — a
+tag without a version bump produces a release no client will offer to install.
 
 ## Maintenance map
 
@@ -117,3 +137,4 @@ Find the row for what you're changing, update the listed code and doc together.
 | A Tauri command (add/rename/remove) | `src-tauri/src/main.rs` + the module, `src/runtime.ts` | [architecture.md](./architecture.md) |
 | A view, store, or nav entry | `src/App.tsx`, `src/components/views/*`, `src/hooks/*` | [architecture.md](./architecture.md) |
 | Personas | `src/assets/agents/*.json`, `src/components/ui/AgentAvatar.tsx` (`PERSONAS`) | [architecture.md](./architecture.md) |
+| Update check/install or the release manifest | `src-tauri/src/updater.rs`, `tauri.conf.json` (`plugins.updater`), `.github/workflows/release.yml` | [README.md](./README.md) |

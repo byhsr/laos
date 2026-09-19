@@ -33,6 +33,10 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# Updater signing keys — never commit these
+*.key
+*.key.pub
+
 # OS
 .DS_Store
 Thumbs.db

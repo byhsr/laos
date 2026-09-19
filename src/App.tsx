@@ -23,7 +23,9 @@ import { TasksView } from './components/views/TasksView';
 import { WorkshopView } from './components/views/WorkshopView';
 import { SkillFormDrawer } from './components/views/SkillsView';
 import { Toaster } from './components/ui/Toaster';
+import { UpdatePrompt } from './components/ui/UpdatePrompt';
 import { toast } from './hooks/useToast';
+import { checkForUpdate, type UpdateInfo } from './runtime';
 import { Plus } from 'lucide-react';
 
 export default function App() {
@@ -64,6 +66,14 @@ export default function App() {
   }, [loadAgents, loadModels, loadTools, loadSkills, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns]);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+
+  // Check for a new release shortly after launch — never blocks startup, and a
+  // failed/offline check is swallowed by checkForUpdate.
+  useEffect(() => {
+    const t = setTimeout(() => { checkForUpdate().then((u) => { if (u) setUpdate(u); }); }, 4000);
+    return () => clearTimeout(t);
+  }, []);
   const [view, setView] = useState<View>('home');
   const [homeTab, setHomeTab] = useState<HomeTab>('overview');
   const [drawerForm, setDrawerForm] = useState<DrawerForm>(null);
@@ -165,6 +175,7 @@ export default function App() {
         )}
       </div>
       <Toaster />
+      {update && <UpdatePrompt info={update} onDismiss={() => setUpdate(null)} />}
     </div>
   );
 }

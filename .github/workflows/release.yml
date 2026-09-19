@@ -1,12 +1,13 @@
 name: Release
 
 # Builds installers for Windows, macOS and Linux and attaches them to a GitHub
-# Release. Trigger by pushing a version tag:
+# Release. Trigger by pushing a version tag, with or without a leading "v":
 #   git tag v0.1.0 && git push origin v0.1.0
 on:
   push:
     tags:
       - 'v*'
+      - '[0-9]*'
 
 jobs:
   release:
@@ -71,6 +72,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing. Generate with `npm run tauri signer generate` and add both
+          # values as repository secrets, or the build produces no updater artifacts.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Local Agent OS ${{ github.ref_name }}'

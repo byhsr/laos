@@ -12,11 +12,13 @@ mod tasks;
 mod telegram;
 mod tg_markdown;
 mod tools;
+mod updater;
 mod workflows;
 
 fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
       let handle = app.handle().clone();
       // A tunnel from the previous session never survives a restart — clear its
@@ -79,6 +81,10 @@ fn main() {
       memory::delete_chat_session,
       memory::rename_chat_session,
       memory::close_session,
+      // Updater (in-app, Rust-side — no JS plugin packages needed)
+      updater::check_for_update,
+      updater::install_update,
+      updater::restart_app,
       // Telegram
       telegram::list_telegram_logs,
       telegram::telegram_start_tunnel,
