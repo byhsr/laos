@@ -93,3 +93,57 @@ export function ContextMenu({ items, title = 'More actions' }: { items: MenuItem
     </>
   );
 }
+
+// Same menu, opened at an arbitrary point (right-click) instead of a trigger
+// button. Clamped to the viewport once measured.
+export function ContextMenuAt({ items, x, y, onClose }: { items: MenuItem[]; x: number; y: number; onClose: () => void }) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) onClose(); };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onEsc); };
+  }, [onClose]);
+
+  useEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPos({
+      top: Math.max(8, Math.min(y, window.innerHeight - r.height - 8)),
+      left: Math.max(8, Math.min(x, window.innerWidth - r.width - 8)),
+    });
+  }, [x, y]);
+
+  if (items.length === 0) return null;
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      role="menu"
+      className="glass-strong fixed z-[200] min-w-[196px] animate-[dropdown-in_140ms_ease-out] rounded-xl border border-hairline p-1.5 shadow-float"
+      style={{ top: pos?.top ?? y, left: pos?.left ?? x, visibility: pos ? 'visible' : 'hidden' }}
+    >
+      {items.map((it) => (
+        <Fragment key={it.key}>
+          {it.dividerBefore && <div className="my-1 h-px bg-line" />}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={it.disabled}
+            className={`flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${it.danger ? 'text-[#f87171] hover:bg-[#f87171]/10' : 'text-text hover:bg-line'}`}
+            onClick={() => { onClose(); it.onSelect(); }}
+          >
+            {it.icon}
+            <span className="flex-1 truncate">{it.label}</span>
+            {it.active && <Check size={12} className="shrink-0 text-[var(--green)]" />}
+          </button>
+        </Fragment>
+      ))}
+    </div>,
+    document.body,
+  );
+}

@@ -2,16 +2,17 @@ import { useState } from 'react';
 
 // Immediate label for icon-only controls. Native `title` tooltips are slow and
 // inconsistent inside the webview, so the shell uses this instead.
-export function Tooltip({ label, children, side = 'bottom' }: {
+export function Tooltip({ label, children, side = 'bottom', className = 'inline-flex' }: {
   label: string;
   children: React.ReactNode;
   side?: 'bottom' | 'right';
+  className?: string;
 }) {
   const [show, setShow] = useState(false);
 
   return (
     <span
-      className="app-no-drag relative inline-flex"
+      className={`app-no-drag relative ${className}`}
       onMouseEnter={() => setShow(true)}
       onMouseLeave={() => setShow(false)}
       onFocus={() => setShow(true)}
