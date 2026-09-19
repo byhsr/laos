@@ -105,7 +105,8 @@ The app checks for a new release ~4s after launch and shows an in-app prompt
 
 - Rust side: `src-tauri/src/updater.rs` (`check_for_update`, `install_update`, `restart_app`)
   via `tauri-plugin-updater`. No JS updater package is used.
-- Manifest: `https://github.com/byhsr/laos/releases/latest/download/latest.json`.
+- Manifest: `https://github.com/byhsr/laos/releases/latest/download/latest.json`. The repo must
+  stay **public** — the app fetches this anonymously, so a private repo returns 404.
 - **Required repo secrets:** `TAURI_SIGNING_PRIVATE_KEY` (the private key file's contents) and
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. `createUpdaterArtifacts` makes both mandatory — without
   them the bundle step fails, so add them before tagging.
