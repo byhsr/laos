@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Blocks, Globe, Home, ListChecks, Maximize, Minimize2, Minus, PanelLeft, Plus, Send, Settings, UserCog, Workflow, X } from 'lucide-react';
+import { Blocks, Globe, Home, ListChecks, Maximize, Minimize2, Minus, PanelLeft, Plus, Send, Settings, Terminal, UserCog, Workflow, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { Agent, Run, View } from '../types';
 import { Vitals } from './Vitals';
 import { navLabel, useNavLabels, type NavKey } from '../hooks/useNavLabels';
+import { Tooltip } from './ui/Tooltip';
 
 // Every workspace section lives in the topbar; the sidebar is the agent chat list.
 const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
@@ -12,6 +13,7 @@ const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
   { key: 'workflows', view: 'workflows', icon: <Workflow size={12} /> },
   { key: 'tasks', view: 'tasks', icon: <ListChecks size={12} /> },
   { key: 'workshop', view: 'workshop', icon: <Blocks size={12} /> },
+  { key: 'runs', view: 'runs', icon: <Terminal size={12} /> },
   { key: 'telegram', view: 'telegram', icon: <Send size={12} /> },
   { key: 'settings', view: 'settings', icon: <Settings size={12} /> },
 ];
@@ -44,31 +46,38 @@ export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, 
     <div className="app-drag relative z-50 flex h-9 flex-none items-center justify-between gap-2 px-2 pt-1.5 select-none">
       {/* Left: shell toggle + every section + new agent */}
       <div className="glass flex min-w-0 items-center gap-0.5 rounded-lg p-1">
-        <button className={iconBtn()} onClick={onToggleSidebar} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-          <PanelLeft className="h-3 w-3" />
-        </button>
+        <Tooltip label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+          <button className={iconBtn()} onClick={onToggleSidebar}>
+            <PanelLeft className="h-3 w-3" />
+          </button>
+        </Tooltip>
         <span className="mx-0.5 h-3.5 w-px shrink-0 bg-hairline" />
         {NAV.map((n) => (
-          <button key={n.key} className={iconBtn(view === n.view)} onClick={() => setView(n.view)} title={navLabel(labels, n.key)}>
-            {n.icon}
-          </button>
+          <Tooltip key={n.key} label={navLabel(labels, n.key)}>
+            <button className={iconBtn(view === n.view)} onClick={() => setView(n.view)}>
+              {n.icon}
+            </button>
+          </Tooltip>
         ))}
         <span className="mx-0.5 h-3.5 w-px shrink-0 bg-hairline" />
-        <button className={iconBtn()} onClick={onNewAgent} title="New agent">
-          <Plus className="h-3 w-3" />
-        </button>
+        <Tooltip label="New agent">
+          <button className={iconBtn()} onClick={onNewAgent}>
+            <Plus className="h-3 w-3" />
+          </button>
+        </Tooltip>
       </div>
 
       {/* Right: graph, vitals, window controls — kept as separate floating clusters */}
       <div className="flex shrink-0 items-center gap-1.5">
         <div className="glass flex items-center gap-1 rounded-lg py-0.5 pr-1 pl-1">
-          <button
-            className={`app-no-drag grid h-5 w-5 shrink-0 cursor-pointer place-items-center rounded-md transition-colors duration-150 ${graphActive ? 'bg-white/10 text-text' : 'text-muted hover:bg-white/5 hover:text-text'}`}
-            onClick={onOpenGraph}
-            title="Graph"
-          >
-            <Globe className="h-3 w-3" />
-          </button>
+          <Tooltip label="Graph">
+            <button
+              className={`app-no-drag grid h-5 w-5 shrink-0 cursor-pointer place-items-center rounded-md transition-colors duration-150 ${graphActive ? 'bg-white/10 text-text' : 'text-muted hover:bg-white/5 hover:text-text'}`}
+              onClick={onOpenGraph}
+            >
+              <Globe className="h-3 w-3" />
+            </button>
+          </Tooltip>
           <Vitals agents={agents} runs={runs} />
         </div>
 

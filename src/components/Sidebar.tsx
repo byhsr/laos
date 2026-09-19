@@ -1,6 +1,7 @@
 import { Home, LayoutGrid } from 'lucide-react';
 import type { Agent, View } from '../types';
 import { AgentAvatar } from './ui/AgentAvatar';
+import { Tooltip } from './ui/Tooltip';
 
 // The sidebar is the agent chat list: click an agent to open its chat. Every
 // workspace section lives in the topbar instead.
@@ -22,8 +23,12 @@ export function Sidebar({ agents, view, selectedAgentId, onOpen, onBrowse, onHom
       <div className={`mb-2 flex shrink-0 items-center gap-1 ${collapsed ? 'justify-center' : 'justify-between px-1'}`}>
         {!collapsed && <span className="font-mono text-[10.5px] tracking-[1px] text-muted">AGENTS</span>}
         <div className="flex items-center gap-0.5">
-          <button className={headerBtn(view === 'home')} onClick={onHome} title="Home"><Home size={13} /></button>
-          <button className={headerBtn(false)} onClick={onBrowse} title="All agents"><LayoutGrid size={13} /></button>
+          <Tooltip label="Home" side="right">
+            <button className={headerBtn(view === 'home')} onClick={onHome}><Home size={13} /></button>
+          </Tooltip>
+          <Tooltip label="All agents" side="right">
+            <button className={headerBtn(false)} onClick={onBrowse}><LayoutGrid size={13} /></button>
+          </Tooltip>
         </div>
       </div>
 
@@ -32,10 +37,12 @@ export function Sidebar({ agents, view, selectedAgentId, onOpen, onBrowse, onHom
         {list.map((a) => {
           const active = view === 'agent' && selectedAgentId === a.id;
           return (
-            <button key={a.id} className={collapsed ? rowCollapsed(active) : row(active)} onClick={() => onOpen(a.id)} title={collapsed ? a.name : undefined}>
-              <AgentAvatar agent={a} size={collapsed ? 26 : 22} />
-              {!collapsed && <span className="min-w-0 truncate">{a.name}</span>}
-            </button>
+            <Tooltip key={a.id} label={a.name} side="right">
+              <button className={collapsed ? rowCollapsed(active) : row(active)} onClick={() => onOpen(a.id)}>
+                <AgentAvatar agent={a} size={collapsed ? 26 : 22} />
+                {!collapsed && <span className="min-w-0 truncate">{a.name}</span>}
+              </button>
+            </Tooltip>
           );
         })}
       </nav>
