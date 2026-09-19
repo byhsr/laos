@@ -13,6 +13,7 @@ mod tasks;
 mod telegram;
 mod tg_markdown;
 mod tools;
+mod tooltext;
 mod updater;
 mod workflows;
 

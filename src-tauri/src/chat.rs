@@ -8,20 +8,21 @@ use futures_util::StreamExt;
 use rusqlite::params;
 use tauri::{AppHandle, Manager};
 
-use crate::agents::{build_tools, tool_schemas};
+use crate::agents::{all_mcp_tools, build_tools, tool_schemas};
 use crate::db::db;
 use crate::http;
 use crate::manager::{
-  approvals, build_manager_system_prompt, dispatch_manager_tool, manager_tools,
-  requires_confirmation, Approval,
+  approvals, build_manager_system_prompt, manager_tools, requires_confirmation,
+  run_manager_tool, Approval,
 };
 use crate::memory::{
-  append_session_message, load_conversation, load_memory, save_conversation, summarize_old_turns,
-  MEMORY_SUMMARY_KEY, ROLLING_WINDOW,
+  append_session_message, build_day_context, load_conversation, load_memory, save_conversation,
+  summarize_old_turns, MEMORY_SUMMARY_KEY, ROLLING_WINDOW,
 };
 use crate::models::*;
 use crate::storage::stored_api_key;
 use crate::tools::{AgentTool, MAX_TOOL_ROUNDS};
+use crate::tooltext::{parse_text_tool_calls, ToolCallLeakFilter};
 
 // Streams a chat completion from the configured provider as token deltas.
 // Ollama uses NDJSON; Groq/OpenRouter use SSE `data:` lines. Context is a rolling
@@ -63,13 +64,25 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
 
   // Tools: the Manager gets its app-control tools; a regular agent gets its own.
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
-  let tools: Vec<Box<dyn AgentTool>> = if is_manager { manager_tools() } else { build_tools(&conn, &agent, &home)? };
+  let tools: Vec<Box<dyn AgentTool>> = if is_manager {
+    // The Manager keeps its app-control tools and also gets every imported MCP
+    // tool, so a configured MCP server is usable from the lead agent too.
+    let mut manager = manager_tools();
+    manager.extend(all_mcp_tools(&conn));
+    manager
+  } else {
+    build_tools(&conn, &agent, &home)?
+  };
 
   let system = if is_manager {
     build_manager_system_prompt(&conn, &full_memory)?
   } else {
+    // Compact long-term memory plus the time-based context (last chat summary,
+    // today, yesterday) go in on every turn, so the agent starts each call
+    // already aware of recent work.
+    let day_context = build_day_context(&conn, &agent.id).unwrap_or_default();
     let tool_note = if tools.is_empty() { String::new() } else { "\nYou have tools available: call one when it helps, wait for the result, then continue.".to_string() };
-    format!("You are {}. Objective: {}\n\n{full_memory}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
+    format!("You are {}. Objective: {}\n\n{full_memory}{day_context}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
 
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
@@ -94,6 +107,7 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   if !tools.is_empty() {
     let client = http::client();
     for _ in 0..MAX_TOOL_ROUNDS {
+      emit_status(&on_event, "Thinking…");
       let mut body = serde_json::json!({
         "model": key,
         "messages": messages,
@@ -124,7 +138,25 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
         };
         if !name.is_empty() { tool_calls.push((c["id"].as_str().unwrap_or("").to_string(), name, args)); }
       }
-      if tool_calls.is_empty() { break; }
+      if tool_calls.is_empty() {
+        // A text-protocol model (DeepSeek DSML) puts the call in `content` rather
+        // than `tool_calls`. Recover it so the call actually runs, instead of
+        // dropping it and streaming the raw markup into the chat.
+        let content = parsed["message"]["content"].as_str()
+          .or_else(|| parsed["choices"][0]["message"]["content"].as_str())
+          .unwrap_or("");
+        let (_, text_calls) = parse_text_tool_calls(content);
+        if text_calls.is_empty() { break; }
+        // Text-protocol models have no `tool` role or call ids: hand the model its
+        // own call back, then each result as a user turn.
+        messages.push(serde_json::json!({ "role": "assistant", "content": content }));
+        for call in text_calls {
+          emit_status(&on_event, &format!("Calling {}…", call.name));
+          let result = run_tool(&app, &tools, is_manager, &call.name, &call.args, &on_event).await?;
+          messages.push(serde_json::json!({ "role": "user", "content": format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, result) }));
+        }
+        continue;
+      }
 
       // Append the assistant tool-call message (correct shape for the provider),
       // then one tool result per call, carrying the call id (required by the
@@ -133,6 +165,7 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
       let assistant_msg = if assistant_msg.is_null() { parsed["choices"][0]["message"].clone() } else { assistant_msg };
       messages.push(assistant_msg);
       for (call_id, name, args) in tool_calls {
+        emit_status(&on_event, &format!("Calling {name}…"));
         let result = run_tool(&app, &tools, is_manager, &name, &args, &on_event).await?;
         let mut tool_msg = serde_json::json!({ "role": "tool", "content": result });
         if !call_id.is_empty() { tool_msg["tool_call_id"] = serde_json::json!(call_id); }
@@ -141,6 +174,7 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
     }
   }
 
+  emit_status(&on_event, "Writing…");
   let client = http::stream_client();
   let mut body = serde_json::json!({ "model": key, "messages": messages, "stream": true });
   if !is_ollama {
@@ -157,6 +191,9 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   let mut stream = response.bytes_stream();
   let mut buffer = String::new();
   let mut delta = String::new();
+  // Even the final (tool-less) stream can carry text-protocol markup; never let
+  // it reach the chat bubble.
+  let mut leak = ToolCallLeakFilter::new();
   let mut prompt_tokens = 0u64;
   let mut completion_tokens = 0u64;
   loop {
@@ -175,7 +212,10 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
       if line.is_empty() { continue; }
       if is_ollama {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-          if let Some(d) = v["message"]["content"].as_str() { delta.push_str(d); on_event.send(d.to_string()).map_err(|e| e.to_string())?; }
+          if let Some(d) = v["message"]["content"].as_str() {
+            let safe = leak.feed(d);
+            if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
+          }
           prompt_tokens = v["prompt_eval_count"].as_u64().unwrap_or(prompt_tokens);
           completion_tokens = v["eval_count"].as_u64().unwrap_or(completion_tokens);
         }
@@ -185,13 +225,20 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
         let Some(data) = line.strip_prefix("data:").map(|s| s.trim()) else { continue };
         if data == "[DONE]" { continue; }
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
-          if let Some(d) = v["choices"][0]["delta"]["content"].as_str() { delta.push_str(d); on_event.send(d.to_string()).map_err(|e| e.to_string())?; }
+          if let Some(d) = v["choices"][0]["delta"]["content"].as_str() {
+            let safe = leak.feed(d);
+            if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
+          }
           prompt_tokens = v["usage"]["prompt_tokens"].as_u64().unwrap_or(prompt_tokens);
           completion_tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or(completion_tokens);
         }
       }
     }
   }
+  // Flush whatever the leak filter was still holding back.
+  let tail = leak.finish();
+  if !tail.is_empty() { delta.push_str(&tail); on_event.send(tail).map_err(|e| e.to_string())?; }
+
   // Persist the run and the conversation.
   let run_id = format!("{}-{}", agent.id, chrono::Utc::now().timestamp_millis());
   let started = chrono::Utc::now().to_rfc3339();
@@ -211,6 +258,13 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   Ok(())
 }
 
+// A short human-readable step for the chat bubble while the reply is being
+// prepared. Tool rounds run before any token streams, so without this the UI can
+// only show a generic "typing" placeholder.
+fn emit_status(on_event: &tauri::ipc::Channel<String>, text: &str) {
+  let _ = on_event.send(serde_json::json!({ "type": "status", "text": text }).to_string());
+}
+
 // Runs a single tool call. State-changing tools go through the confirmation popup
 // first; everything else executes immediately.
 async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value, on_event: &tauri::ipc::Channel<String>) -> Result<String, String> {
@@ -218,6 +272,7 @@ async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: boo
     return Ok(execute_tool(app, tools, is_manager, name, args).await);
   }
   let request_id = format!("req-{}", chrono::Utc::now().timestamp_millis());
+  emit_status(on_event, "Waiting for your approval…");
   let event = serde_json::json!({ "type": "confirm", "requestId": request_id, "tool": name, "args": args });
   on_event.send(event.to_string()).map_err(|e| e.to_string())?;
   let deadline = Instant::now() + Duration::from_secs(120);
@@ -235,7 +290,9 @@ async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: boo
 
 async fn execute_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value) -> String {
   if is_manager {
-    dispatch_manager_tool(app, name, args).await.unwrap_or_else(|e| e)
+    // The Manager's own tools dispatch by name; the MCP tools it also holds run
+    // like any other agent tool.
+    run_manager_tool(app, tools, name, args).await.unwrap_or_else(|e| e)
   } else {
     match tools.iter().find(|t| t.name() == name) {
       Some(t) => t.run(args).await.unwrap_or_else(|e| format!("Error: {e}")),

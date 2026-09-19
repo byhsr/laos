@@ -35,10 +35,11 @@ Caps and helpers:
 
 | Source | Built by | Examples |
 | --- | --- | --- |
-| DB-configured tools (`tools` table) | `agents::build_tools` | `http_get`, `api`, `read_file`, `write_file` |
+| DB-configured tools (`tools` table) | `agents::build_tools` | `http_get`, `api`, `read_file`, `write_file`, `mcp` |
 | Integration actions | `agents::build_tools` (from `integration_definitions()`) | `notion_search`, `sheets_append`, `airtable_create_record` |
 | Host-filesystem tools | `agents::build_tools` when `host_fs` is granted | `search_files`, `read_file_any`, `run_command` |
 | Manager tools | `manager::manager_tools()` | `create_agent`, `run_workflow`, `delegate_task`, `recall_memory`, `knowledge_base` |
+| MCP tools for the Manager | `agents::all_mcp_tools`, merged into `manager_tools()` | every enabled `kind='mcp'` row (the Manager has no per-agent tool picker) |
 | Inline (tool-call loops) | `chat.rs`, `agents.rs`, `manager.rs` | the loop itself |
 
 ### DB tool kinds
@@ -51,6 +52,7 @@ Caps and helpers:
 | `api` | `tools/api.rs::ApiTool` | `network` |
 | `read_file` | `tools/filesystem.rs::ReadFileTool` | `files` |
 | `write_file` | `tools/filesystem.rs::WriteFileTool` | `files` |
+| `mcp` | `tools/mcp.rs::McpTool` | none — attaching it is the opt-in |
 
 Unknown or disabled tools are skipped. `ApiTool` supports a URL template with `{param}`
 placeholders, headers, an optional JSON body, and a manual parameter list that becomes the
@@ -65,6 +67,7 @@ LLM's argument schema; responses are pretty-printed JSON and clipped.
 network  → http_get, api, AND every integration action
 files    → read_file, write_file        (sandboxed to agents/<id>/files/)
 host_fs  → search_files, read_file_any, run_command   (escapes the sandbox)
+(none)   → mcp                          (attaching the MCP tool is the opt-in)
 ```
 
 Integration actions additionally require the integration row to be `enabled` **and**
@@ -76,11 +79,27 @@ outputs/`; `ReadFileTool` / `WriteFileTool` resolve `home/files/<name>` and reje
 that don't stay under `home`. `host_fs` tools deliberately escape this — `read_file_any`
 takes an absolute path, `run_command` runs through the system shell (`cmd /C` on Windows).
 
+## Text-protocol tool calls (`tooltext.rs`)
+
+Some models (DeepSeek V3.1 and friends) emit tool calls as **text** using special-token markup —
+`<｜DSML｜tool_calls><｜DSML｜invoke name="…">…` — instead of the provider's native `tool_calls`
+field. Left alone the call is dropped *and* the raw markup streams into the chat as if it were
+the reply.
+
+- `parse_text_tool_calls(content)` normalises the delimiters and recovers each `<invoke>` (with
+  its `<parameter>`s) so it can be executed. It returns the reply with the markup stripped.
+- Applied in every tool loop (`chat.rs`, `agents.rs`, `manager.rs`) when the provider returned no
+  native `tool_calls`. Results go back as a `<tool_result name="…">` **user** turn, because
+  text-protocol models have no `tool` role and no call ids.
+- `ToolCallLeakFilter` guards the streaming path: it holds back a small carry so markup split
+  across deltas is never emitted, and suppresses everything up to the closing marker.
+
 ## The tool-call lifecycle (streaming chat)
 
 `chat::stream_chat` is the path with confirmation support:
 
-1. **Advertise.** Tools = `manager_tools()` when `is_manager`, else `build_tools(...)`.
+1. **Advertise.** Tools = `manager_tools()` + `all_mcp_tools()` when `is_manager`, else
+   `build_tools(...)`.
    They are sent as `tools` on every round.
 2. **Call (non-streaming round).** `POST` with `stream: false`.
 3. **Parse.** Read tool calls from `message.tool_calls` (Ollama) **or**

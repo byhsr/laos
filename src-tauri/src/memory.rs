@@ -9,7 +9,7 @@ use crate::db::db;
 use crate::http;
 use crate::storage::stored_api_key;
 
-pub(crate) const ROLLING_WINDOW: usize = 12; // max messages (user+assistant) sent as context
+pub(crate) const ROLLING_WINDOW: usize = 4; // max messages (user+assistant) sent as context
 pub(crate) const MEMORY_SUMMARY_KEY: &str = "__summary__";
 const MEMORY_WATERMARK_KEY: &str = "__summary_upto__";
 // Cap on the transcript handed to the summarizer, so one call stays bounded.
@@ -275,18 +275,11 @@ pub async fn close_session(app: AppHandle, session_id: String, agent_id: String,
   Ok(())
 }
 
-// Assembles the full context bundle: memory facts, last chat summary, today's
-// context, yesterday's context. Injected before the rolling window each turn.
-pub(crate) fn build_context_bundle(conn: &Connection, agent_id: &str) -> Result<String, String> {
-  let facts = load_memory_facts(conn, agent_id);
+// Last chat's condensed summary + today's and yesterday's day context. This is
+// the time-based context, injected into every turn's system prompt so an agent
+// starts each chat already aware of recent work.
+pub(crate) fn build_day_context(conn: &Connection, agent_id: &str) -> Result<String, String> {
   let mut out = String::new();
-  if !facts.is_empty() {
-    out.push_str("## Long-term memory (facts learned about you):\n");
-    for (k, v) in &facts {
-      let label = k.strip_prefix("fact:").unwrap_or(k);
-      out.push_str(&format!("- {label}: {v}\n"));
-    }
-  }
   // Last chat's condensed summary.
   let last_chat: Option<String> = conn.query_row(
     "SELECT summary FROM chat_sessions WHERE agent_id=?1 AND summary != '' ORDER BY updated_at DESC LIMIT 1",
@@ -298,5 +291,20 @@ pub(crate) fn build_context_bundle(conn: &Connection, agent_id: &str) -> Result<
   // Yesterday's context.
   let yday: Option<String> = conn.query_row("SELECT summary FROM day_contexts WHERE agent_id=?1 AND day=?2", params![agent_id, yesterday_key()], |r| r.get(0)).ok();
   if let Some(s) = yday { if !s.is_empty() { out.push_str(&format!("\n## Yesterday's context:\n{s}\n")); } }
+  Ok(out)
+}
+
+// The full bundle for on-demand recall: long-term facts plus the day context.
+pub(crate) fn build_context_bundle(conn: &Connection, agent_id: &str) -> Result<String, String> {
+  let facts = load_memory_facts(conn, agent_id);
+  let mut out = String::new();
+  if !facts.is_empty() {
+    out.push_str("## Long-term memory (facts learned about you):\n");
+    for (k, v) in &facts {
+      let label = k.strip_prefix("fact:").unwrap_or(k);
+      out.push_str(&format!("- {label}: {v}\n"));
+    }
+  }
+  out.push_str(&build_day_context(conn, agent_id)?);
   Ok(out)
 }

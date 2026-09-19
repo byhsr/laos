@@ -5,8 +5,9 @@
 // remote-HTTP transport can be added here later without touching callers.
 
 use rusqlite::{params, Connection};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::AppHandle;
@@ -95,9 +96,39 @@ pub(crate) fn load_server(conn: &Connection, id: &str) -> Result<McpServer, Stri
   }
 }
 
+// A running MCP server plus the diagnostics needed to explain a failure: whether
+// the watchdog had to kill it, and whatever it wrote to stderr (which is where a
+// server reports a bad token or a missing module).
+pub(crate) struct Proc {
+  child: Arc<Mutex<Child>>,
+  timed_out: Arc<AtomicBool>,
+  stderr: Arc<Mutex<String>>,
+}
+
+impl Proc {
+  // Appends the timeout / stderr detail to an error so the reason is visible
+  // instead of a bare "the server closed the connection".
+  fn explain(&self, base: String) -> String {
+    let mut msg = base;
+    if self.timed_out.load(Ordering::SeqCst) {
+      msg.push_str(&format!("\nIt didn't respond within {}s — it may still be installing or starting up.", RPC_TIMEOUT.as_secs()));
+    }
+    // Let the stderr reader drain now the process is gone.
+    std::thread::sleep(Duration::from_millis(200));
+    if let Ok(err) = self.stderr.lock() {
+      let err = err.trim();
+      if !err.is_empty() {
+        let tail: String = err.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
+        msg.push_str(&format!("\nServer said: {}", tail.trim()));
+      }
+    }
+    msg
+  }
+}
+
 // Spawns the server with a watchdog that kills it after RPC_TIMEOUT. The handles
 // are taken out of the Child so reading never contends with the watchdog's lock.
-fn spawn(server: &McpServer) -> Result<(Arc<Mutex<Child>>, ChildStdin, BufReader<ChildStdout>), String> {
+fn spawn(server: &McpServer) -> Result<(Proc, ChildStdin, BufReader<ChildStdout>), String> {
   // On Windows a bare name only resolves to an .exe, so command shims like
   // `npx` (npx.cmd) or `uvx` need cmd /C — the same approach as run_command.
   #[cfg(windows)]
@@ -108,18 +139,35 @@ fn spawn(server: &McpServer) -> Result<(Arc<Mutex<Child>>, ChildStdin, BufReader
   };
   #[cfg(not(windows))]
   let mut cmd = Command::new(&server.command);
-  cmd.args(&server.args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+  cmd.args(&server.args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
   for (k, v) in &server.env { cmd.env(k, v); }
   let mut child = cmd.spawn().map_err(|e| format!("Could not start '{}': {e}", server.command))?;
   let stdin = child.stdin.take().ok_or("MCP server has no stdin")?;
   let stdout = child.stdout.take().ok_or("MCP server has no stdout")?;
+  let stderr = child.stderr.take();
   let child = Arc::new(Mutex::new(child));
+  let timed_out = Arc::new(AtomicBool::new(false));
+  let err_buf = Arc::new(Mutex::new(String::new()));
+  if let Some(mut handle) = stderr {
+    let buf = err_buf.clone();
+    std::thread::spawn(move || {
+      let mut text = String::new();
+      let _ = handle.read_to_string(&mut text);
+      if let Ok(mut b) = buf.lock() { *b = text; }
+    });
+  }
   let killer = child.clone();
+  let flag = timed_out.clone();
   std::thread::spawn(move || {
     std::thread::sleep(RPC_TIMEOUT);
-    if let Ok(mut c) = killer.lock() { let _ = c.kill(); }
+    if let Ok(mut c) = killer.lock() {
+      if c.try_wait().ok().flatten().is_none() {
+        flag.store(true, Ordering::SeqCst);
+        let _ = c.kill();
+      }
+    }
   });
-  Ok((child, stdin, BufReader::new(stdout)))
+  Ok((Proc { child, timed_out, stderr: err_buf }, stdin, BufReader::new(stdout)))
 }
 
 fn stop(child: &Arc<Mutex<Child>>) {
@@ -128,7 +176,7 @@ fn stop(child: &Arc<Mutex<Child>>) {
 
 // Writes one request and reads until its response id arrives, skipping
 // notifications and any unrelated traffic.
-fn request(stdin: &mut ChildStdin, reader: &mut BufReader<ChildStdout>, id: u64, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+fn request(proc: &Proc, stdin: &mut ChildStdin, reader: &mut BufReader<ChildStdout>, id: u64, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
   let mut msg = serde_json::json!({ "jsonrpc": "2.0", "id": id, "method": method });
   if !params.is_null() { msg["params"] = params; }
   let mut line = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
@@ -139,8 +187,8 @@ fn request(stdin: &mut ChildStdin, reader: &mut BufReader<ChildStdout>, id: u64,
   let mut buf = String::new();
   loop {
     buf.clear();
-    let n = reader.read_line(&mut buf).map_err(|e| format!("MCP read failed: {e}"))?;
-    if n == 0 { return Err(format!("The MCP server closed the connection during '{method}'.")); }
+    let n = reader.read_line(&mut buf).map_err(|e| proc.explain(format!("MCP read failed: {e}")))?;
+    if n == 0 { return Err(proc.explain(format!("The MCP server closed the connection during '{method}'."))); }
     let trimmed = buf.trim();
     if trimmed.is_empty() { continue; }
     let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
@@ -161,8 +209,8 @@ fn notify(stdin: &mut ChildStdin, method: &str) -> Result<(), String> {
 }
 
 // initialize + notifications/initialized — required before list or call.
-fn handshake(stdin: &mut ChildStdin, reader: &mut BufReader<ChildStdout>) -> Result<(), String> {
-  request(stdin, reader, 1, "initialize", serde_json::json!({
+fn handshake(proc: &Proc, stdin: &mut ChildStdin, reader: &mut BufReader<ChildStdout>) -> Result<(), String> {
+  request(proc, stdin, reader, 1, "initialize", serde_json::json!({
     "protocolVersion": PROTOCOL_VERSION,
     "capabilities": {},
     "clientInfo": { "name": "local-agent-os", "version": env!("CARGO_PKG_VERSION") },
@@ -172,10 +220,10 @@ fn handshake(stdin: &mut ChildStdin, reader: &mut BufReader<ChildStdout>) -> Res
 
 // Lists the tools a server advertises.
 pub(crate) fn list_tools(server: &McpServer) -> Result<Vec<McpToolInfo>, String> {
-  let (child, mut stdin, mut reader) = spawn(server)?;
+  let (proc, mut stdin, mut reader) = spawn(server)?;
   let result = (|| {
-    handshake(&mut stdin, &mut reader)?;
-    let res = request(&mut stdin, &mut reader, 2, "tools/list", serde_json::json!({}))?;
+    handshake(&proc, &mut stdin, &mut reader)?;
+    let res = request(&proc, &mut stdin, &mut reader, 2, "tools/list", serde_json::json!({}))?;
     let mut out = Vec::new();
     for t in res.get("tools").and_then(|t| t.as_array()).cloned().unwrap_or_default() {
       let name = t.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
@@ -188,16 +236,16 @@ pub(crate) fn list_tools(server: &McpServer) -> Result<Vec<McpToolInfo>, String>
     }
     Ok(out)
   })();
-  stop(&child);
+  stop(&proc.child);
   result
 }
 
 // Invokes a tool and flattens its content blocks into text.
 pub(crate) fn call_tool(server: &McpServer, tool: &str, arguments: serde_json::Value) -> Result<String, String> {
-  let (child, mut stdin, mut reader) = spawn(server)?;
+  let (proc, mut stdin, mut reader) = spawn(server)?;
   let result = (|| {
-    handshake(&mut stdin, &mut reader)?;
-    let res = request(&mut stdin, &mut reader, 2, "tools/call", serde_json::json!({ "name": tool, "arguments": arguments }))?;
+    handshake(&proc, &mut stdin, &mut reader)?;
+    let res = request(&proc, &mut stdin, &mut reader, 2, "tools/call", serde_json::json!({ "name": tool, "arguments": arguments }))?;
     let mut text = String::new();
     for block in res.get("content").and_then(|c| c.as_array()).cloned().unwrap_or_default() {
       match block.get("type").and_then(|t| t.as_str()) {
@@ -211,7 +259,7 @@ pub(crate) fn call_tool(server: &McpServer, tool: &str, arguments: serde_json::V
     }
     Ok(if text.trim().is_empty() { "The tool returned no content.".to_string() } else { text.trim().to_string() })
   })();
-  stop(&child);
+  stop(&proc.child);
   result
 }
 
@@ -284,22 +332,29 @@ pub fn test_mcp_server(app: AppHandle, id: String) -> Result<Vec<McpToolInfo>, S
 // be attached to agents like any other tool. Returns how many were imported.
 #[tauri::command]
 pub fn import_mcp_tools(app: AppHandle, id: String) -> Result<usize, String> {
-  let conn = db(&app)?;
+  let mut conn = db(&app)?;
   let server = load_server(&conn, &id)?;
   let tools = list_tools(&server)?;
+  let tx = conn.transaction().map_err(|e| e.to_string())?;
+  // A server's advertised tools can change between imports, so rebuild this
+  // server's rows: the registry never keeps advertising a tool that no longer
+  // exists. Ids are deterministic (`mcp:<serverId>:<toolName>`), so an agent
+  // that already attached one keeps a valid reference.
+  tx.execute("DELETE FROM tools WHERE kind='mcp' AND integration_id=?1", params![server.id]).map_err(|e| e.to_string())?;
   let mut count = 0;
   for t in &tools {
     let tool_id = format!("mcp:{}:{}", server.id, t.name);
     let config = serde_json::json!({
-      "serverId": server.id, "toolName": t.name,
+      "serverId": server.id, "serverName": server.name, "toolName": t.name,
       "description": t.description, "schema": t.schema,
     });
-    conn.execute(
+    tx.execute(
       "INSERT INTO tools (id, name, kind, integration_id, description, enabled, config_json) VALUES (?1,?2,'mcp',?3,?4,1,?5)
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, config_json=excluded.config_json",
       params![tool_id, t.name, server.id, t.description, serde_json::to_string(&config).map_err(|e| e.to_string())?],
     ).map_err(|e| e.to_string())?;
     count += 1;
   }
+  tx.commit().map_err(|e| e.to_string())?;
   Ok(count)
 }

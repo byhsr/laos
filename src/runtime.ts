@@ -9,6 +9,7 @@ export async function streamChat(
   onDelta: (d: string) => void,
   onConfirm?: (r: ManagerConfirmRequest) => void,
   sessionId?: string,
+  onStatus?: (s: string) => void,
 ): Promise<void> {
   const channel = new Channel<string>();
   channel.onmessage = (raw) => {
@@ -19,6 +20,11 @@ export async function streamChat(
         if (evt.type === 'confirm') {
           // Never let a control event fall through into the message log.
           onConfirm?.({ requestId: evt.requestId, tool: evt.tool, args: evt.args ?? {} });
+          return;
+        }
+        if (evt.type === 'status') {
+          // Live step for the pending bubble ("Thinking…", "Calling x…").
+          onStatus?.(String(evt.text ?? ''));
           return;
         }
       } catch { /* not a control event — treat as a delta */ }

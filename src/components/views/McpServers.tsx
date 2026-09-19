@@ -30,6 +30,8 @@ export function McpServers() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [found, setFound] = useState<Record<string, McpToolInfo[]>>({});
+  // Last failure per server, kept inline so a long stderr tail is readable.
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
   const load = async () => setServers(await listMcpServers());
@@ -40,7 +42,7 @@ export function McpServers() {
     if (!draft.command.trim()) { toast('An MCP server needs a command to run.', 'error'); return; }
     setSaving(true);
     try {
-      await saveMcpServer({
+      const id = await saveMcpServer({
         id: draft.id,
         name: draft.name,
         command: draft.command.trim(),
@@ -51,6 +53,9 @@ export function McpServers() {
       toast('MCP server saved', 'success');
       setDraft(null);
       await load();
+      // Register the server's tools straight away so they show up in every
+      // agent's Tools picker without a separate import click.
+      await syncTools(id);
     } catch (e) {
       toast(typeof e === 'string' ? e : 'Could not save the MCP server', 'error');
     } finally {
@@ -63,25 +68,31 @@ export function McpServers() {
     try {
       const tools = await testMcpServer(id);
       setFound((f) => ({ ...f, [id]: tools }));
+      setErrors((e) => ({ ...e, [id]: '' }));
       toast(`Server responded with ${tools.length} tool${tools.length === 1 ? '' : 's'}`, 'success');
     } catch (e) {
+      const msg = typeof e === 'string' ? e : 'The MCP server did not respond';
       setFound((f) => ({ ...f, [id]: [] }));
-      toast(typeof e === 'string' ? e : 'The MCP server did not respond', 'error');
+      setErrors((err) => ({ ...err, [id]: msg }));
+      toast(msg, 'error');
     } finally {
       setBusy(null);
     }
   };
 
-  const importTools = async (id: string) => {
+  // Imports (or re-syncs) a server's advertised tools and refreshes the registry
+  // so they appear in agent Tool pickers immediately.
+  const syncTools = async (id: string) => {
     setBusy(id);
     try {
       const n = await importMcpTools(id);
-      // Refresh the registry so the imported tools appear in the agent's TOOLS
-      // dropdown straight away instead of on the next app launch.
       await useToolsStore.getState().loadTools();
+      setErrors((e) => ({ ...e, [id]: '' }));
       toast(`Imported ${n} tool${n === 1 ? '' : 's'} — attach them in an agent's Tools list`, 'success');
     } catch (e) {
-      toast(typeof e === 'string' ? e : 'Import failed', 'error');
+      const msg = typeof e === 'string' ? e : 'Import failed';
+      setErrors((err) => ({ ...err, [id]: msg }));
+      toast(msg, 'error');
     } finally {
       setBusy(null);
     }
@@ -122,7 +133,7 @@ export function McpServers() {
                   <button title="Test connection" className="secondary grid h-8 w-8 place-items-center p-0" onClick={() => test(s.id)} disabled={busy === s.id}>
                     <RefreshCw size={12} className={busy === s.id ? 'animate-spin' : ''} />
                   </button>
-                  <button title="Import tools" className="secondary grid h-8 w-8 place-items-center p-0" onClick={() => importTools(s.id)} disabled={busy === s.id}>
+                  <button title="Sync tools" className="secondary grid h-8 w-8 place-items-center p-0" onClick={() => syncTools(s.id)} disabled={busy === s.id}>
                     <Upload size={12} />
                   </button>
                   <button title="Configure" className="secondary grid h-8 w-8 place-items-center p-0" onClick={() => setDraft({ id: s.id, name: s.name, command: s.command, args: (s.args ?? []).join(' '), env: envToLines(s.env), enabled: s.enabled })}>
@@ -143,6 +154,10 @@ export function McpServers() {
                     ))}
                 </div>
               )}
+
+              {errors[s.id] && (
+                <pre className="mt-3 max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-[#f87171]/30 bg-panel2 p-2.5 font-mono text-[11px] leading-[1.55] text-[#f87171]">{errors[s.id]}</pre>
+              )}
             </div>
           ))}
         </div>
@@ -158,7 +173,7 @@ export function McpServers() {
         >
           <div className="w-full rounded-[16px] border border-line bg-panel p-[22px]">
             <p className="text-[12px] leading-[1.6] text-muted" style={{ margin: '0 0 14px' }}>
-              Runs the server's command locally and speaks MCP over stdio. Secrets belong in ENV.
+              Runs the server's command locally and speaks MCP over stdio. Secrets belong in ENV. Saving imports its tools automatically.
             </p>
 
             <label className="mt-0 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">NAME</label>

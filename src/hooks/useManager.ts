@@ -18,6 +18,7 @@ type ManagerState = {
   messages: ChatEntry[]; // current view (active session)
   sessionIds: Record<string, string | null>; // per-agent active session
   busy: boolean;
+  status: string; // live step for the pending bubble ("Thinking…", "Calling x…")
   setCurrentAgent: (agentId: string | null) => void;
   newSession: (agentId: string, model: string) => Promise<void>;
   loadHistory: (agentId: string) => Promise<void>;
@@ -31,6 +32,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
   messages: [],
   sessionIds: {},
   busy: false,
+  status: '',
 
   setCurrentAgent: (agentId) => {
     const conv = get().conversations;
@@ -92,7 +94,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
         await renameChatSession(get().sessionIds[managerAgent.id]!, titleFrom(message));
       }
     }
-    set({ busy: true });
+    set({ busy: true, status: 'Thinking…' });
     const userEntry: ChatEntry = { role: 'user', content: message, time: new Date().toLocaleTimeString() };
     const agentId = managerAgent.id;
     // Seed an empty assistant bubble that grows as tokens stream in.
@@ -113,7 +115,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       }, (confirmReq) => {
         // Pop the confirmation dialog; the backend waits for the decision.
         useConfirmStore.getState().request(confirmReq);
-      }, get().sessionIds[managerAgent.id] ?? undefined);
+      }, get().sessionIds[managerAgent.id] ?? undefined, (s) => set({ status: s }));
       useRunsStore.getState().loadRuns();
     } catch (e) {
       const msg = typeof e === 'string' ? e : (e instanceof Error ? e.message : 'Manager failed to respond.');
@@ -123,7 +125,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
         return { conversations: { ...s.conversations, [agentId]: updated }, messages: updated };
       });
     } finally {
-      set({ busy: false });
+      set({ busy: false, status: '' });
     }
   },
 }));

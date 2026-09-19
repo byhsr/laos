@@ -16,6 +16,7 @@ use crate::tools::{
   AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool, ReadAnyFileTool, ReadFileTool,
   RunCommandTool, SearchFilesTool, WriteFileTool, MAX_TOOL_ROUNDS,
 };
+use crate::tooltext::parse_text_tool_calls;
 
 pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::path::Path) -> Result<Vec<Box<dyn AgentTool>>, String> {
   let mut tools: Vec<Box<dyn AgentTool>> = Vec::new();
@@ -56,21 +57,11 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
       }
       "read_file" if has_files => tools.push(Box::new(ReadFileTool { home: home.to_path_buf() })),
       "write_file" if has_files => tools.push(Box::new(WriteFileTool { home: home.to_path_buf() })),
-      // MCP tools spawn the configured server's command, so they sit behind the
-      // same `network` permission as the other API tools.
-      "mcp" if has_network => {
-        let server_id = str_cfg("serverId");
-        let tool_name = str_cfg("toolName");
-        if !server_id.is_empty() && !tool_name.is_empty() {
-          if let Ok(server) = mcp::load_server(conn, &server_id) {
-            tools.push(Box::new(McpTool {
-              server,
-              tool_name,
-              tool_description: str_cfg("description"),
-              schema: config.get("schema").cloned().unwrap_or_else(|| serde_json::json!({ "type": "object", "properties": {} })),
-            }));
-          }
-        }
+      // MCP tools spawn the configured server's command. A user who attached one
+      // has already opted into the capability — the old `network` gate silently
+      // dropped them, which is why MCPs appeared unusable in agents.
+      "mcp" => {
+        if let Some(tool) = mcp_tool_from_config(conn, &config) { tools.push(tool); }
       }
       _ => {}
     }
@@ -100,6 +91,40 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
     tools.push(Box::new(RunCommandTool));
   }
   Ok(tools)
+}
+
+// Builds one MCP tool from a registry row's config. None when the row is missing
+// its server/tool name or the server has since been deleted.
+fn mcp_tool_from_config(conn: &Connection, config: &serde_json::Value) -> Option<Box<dyn AgentTool>> {
+  let server_id = config.get("serverId").and_then(|v| v.as_str()).unwrap_or("");
+  let tool_name = config.get("toolName").and_then(|v| v.as_str()).unwrap_or("");
+  if server_id.is_empty() || tool_name.is_empty() { return None; }
+  let server = mcp::load_server(conn, server_id).ok()?;
+  Some(Box::new(McpTool {
+    server,
+    tool_name: tool_name.to_string(),
+    tool_description: config.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+    schema: config.get("schema").cloned().unwrap_or_else(|| serde_json::json!({ "type": "object", "properties": {} })),
+  }))
+}
+
+// Every enabled MCP tool in the registry. The Manager has no per-agent tool
+// picker, so it gets all of them — any configured MCP server is usable from it.
+pub(crate) fn all_mcp_tools(conn: &Connection) -> Vec<Box<dyn AgentTool>> {
+  let configs: Vec<serde_json::Value> = {
+    let mut out = Vec::new();
+    if let Ok(mut stmt) = conn.prepare("SELECT config_json FROM tools WHERE kind='mcp' AND enabled=1 ORDER BY name") {
+      if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+        for row in rows {
+          if let Ok(json) = row {
+            if let Ok(value) = serde_json::from_str(&json) { out.push(value); }
+          }
+        }
+      }
+    }
+    out
+  };
+  configs.iter().filter_map(|c| mcp_tool_from_config(conn, c)).collect()
 }
 
 pub(crate) fn tool_schemas(tools: &[Box<dyn AgentTool>]) -> Vec<serde_json::Value> {
@@ -165,8 +190,27 @@ async fn run_ollama_chat(model: &str, prompt: &str, agent: &AgentRequest, tools:
         messages.push(ChatMessage { role: "tool".into(), content: Some(result_str), tool_calls: None, tool_call_id: Some(call.id.clone()) });
       }
     } else {
-      let content = reply.content.unwrap_or_default();
-      return Ok((content, events, used_tools, prompt_tokens, completion_tokens));
+      // Text-protocol fallback: some models emit the call in `content` using
+      // special-token markup instead of `tool_calls` (see tooltext.rs).
+      let content = reply.content.clone().unwrap_or_default();
+      let (cleaned, text_calls) = parse_text_tool_calls(&content);
+      if text_calls.is_empty() {
+        return Ok((cleaned, events, used_tools, prompt_tokens, completion_tokens));
+      }
+      used_tools = true;
+      messages.push(ChatMessage { role: "assistant".into(), content: Some(content), tool_calls: None, tool_call_id: None });
+      for call in text_calls {
+        let result = match tools.iter().find(|t| t.name() == call.name) {
+          Some(t) => t.run(&call.args).await,
+          None => Err(format!("Unknown tool {}.", call.name)),
+        };
+        let (title, result_str) = match &result {
+          Ok(text) => (format!("Called {}", call.name), format!("{text}")),
+          Err(e) => (format!("Tool {} failed", call.name), format!("Error: {e}")),
+        };
+        events.push(ExecutionEvent { time: now(), kind: "tool".into(), title, detail: None });
+        messages.push(ChatMessage { role: "user".into(), content: Some(format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, result_str)), tool_calls: None, tool_call_id: None });
+      }
     }
   }
   Err("Tool loop exceeded the maximum number of rounds.".into())
@@ -200,7 +244,26 @@ async fn run_openai_tool_chat(url: &str, key: &str, model: &str, is_openrouter: 
     let calls = message["tool_calls"].as_array().cloned().unwrap_or_default();
     if calls.is_empty() {
       let content = message["content"].as_str().unwrap_or("").to_string();
-      return Ok((content, events, used_tools, prompt_tokens, completion_tokens));
+      let (cleaned, text_calls) = parse_text_tool_calls(&content);
+      if text_calls.is_empty() {
+        return Ok((cleaned, events, used_tools, prompt_tokens, completion_tokens));
+      }
+      // Text-protocol fallback (see tooltext.rs).
+      used_tools = true;
+      messages.push(message);
+      for call in text_calls {
+        let result = match tools.iter().find(|t| t.name() == call.name) {
+          Some(t) => t.run(&call.args).await,
+          None => Err(format!("Unknown tool {}.", call.name)),
+        };
+        let (title, result_str) = match &result {
+          Ok(text) => (format!("Called {}", call.name), format!("{text}")),
+          Err(e) => (format!("Tool {} failed", call.name), format!("Error: {e}")),
+        };
+        events.push(ExecutionEvent { time: now(), kind: "tool".into(), title, detail: None });
+        messages.push(serde_json::json!({ "role": "user", "content": format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, result_str) }));
+      }
+      continue;
     }
     used_tools = true;
     messages.push(message);

@@ -14,9 +14,23 @@ pub(crate) struct McpTool {
   pub(crate) schema: serde_json::Value,
 }
 
+// Providers only accept [a-zA-Z0-9_-] function names, but MCP servers advertise
+// names like "API.post-search". Sanitize the name the model sees, keep the real
+// name for the actual tools/call, and prefix with the server so two servers can
+// both expose e.g. "search" without colliding.
+fn sanitize(s: &str) -> String {
+  let mut out: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();
+  if out.is_empty() { out.push_str("tool"); }
+  out.truncate(56);
+  out
+}
+
 #[async_trait]
 impl AgentTool for McpTool {
-  fn name(&self) -> String { self.tool_name.clone() }
+  fn name(&self) -> String {
+    let name = format!("{}_{}", sanitize(&self.server.name), sanitize(&self.tool_name));
+    name.chars().take(64).collect()
+  }
 
   fn description(&self) -> String {
     if self.tool_description.trim().is_empty() {

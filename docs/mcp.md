@@ -21,9 +21,9 @@ object), `enabled`, `updated_at`.
 back (`merge_env`) — the same contract as integrations.
 
 Imported tools are ordinary rows in the existing `tools` table with `kind='mcp'`,
-`integration_id` = the server id, and `config_json` = `{serverId, toolName, description,
-schema}`. Because they're regular registry tools, agents attach them exactly like any other
-tool and `build_tools` needs only the `mcp` branch.
+`integration_id` = the server id, and `config_json` = `{serverId, serverName, toolName,
+description, schema}`. Because they're regular registry tools, agents attach them exactly like
+any other tool and `build_tools` needs only the `mcp` branch.
 
 ## Commands
 
@@ -33,14 +33,20 @@ tool and `build_tools` needs only the `mcp` branch.
 | `save_mcp_server(server)` | Upsert; returns the id (generated when empty). |
 | `delete_mcp_server(id)` | Removes the server **and** its imported tools. |
 | `test_mcp_server(id)` | Handshake + `tools/list`, returns the advertised tools. |
-| `import_mcp_tools(id)` | Upserts every advertised tool into `tools`; returns the count. |
+| `import_mcp_tools(id)` | Rebuilds the server's rows in `tools` (insert + prune stale); returns the count. |
 
 ## Flow
 
 1. **Add** a server — command, args, env.
 2. **Test** → `initialize` → `notifications/initialized` → `tools/list`.
-3. **Import** → each advertised tool becomes a `tools` row (`kind='mcp'`).
-4. **Attach** it to an agent in the agent's TOOLS list (needs the `network` permission).
+3. **Save** imports automatically — each advertised tool becomes a `tools` row (`kind='mcp'`).
+   The **Sync** button re-runs it on demand (after the server adds or changes tools).
+4. **Attach** it to an agent in the agent's Tools list. MCP tools group under their server in
+   the picker, and need no `network` permission — attaching one is the opt-in.
+
+> The Manager (Laos) has no per-agent tool picker, so it holds **every** enabled MCP tool
+> (`agents::all_mcp_tools`) alongside its own — any imported server is usable from it directly,
+> and its system prompt lists them.
 
 ## How a call works
 
@@ -58,6 +64,13 @@ tool and `build_tools` needs only the `mcp` branch.
 The round-trip is blocking, so `McpTool::run` runs it on `tokio::task::spawn_blocking` to
 avoid stalling the async runtime.
 
+## Tool names
+
+Providers only accept `[a-zA-Z0-9_-]` function names, but servers advertise names like
+`API.post-search`. `McpTool::name()` sanitizes the name the model sees and prefixes it with the
+server (`Notion_API-post-search`) so two servers can both expose e.g. `search` without
+colliding. The real advertised name is what goes over `tools/call`.
+
 ## Notion (token, no OAuth)
 
 Notion offers a hosted remote MCP server (`https://mcp.notion.com/mcp`) that is **OAuth**-only,
@@ -69,7 +82,7 @@ and an official local stdio server that takes an internal integration token:
 | args | `-y @notionhq/notion-mcp-server` |
 | env | `NOTION_TOKEN=ntn_…` (or legacy `secret_…`) |
 
-Then Test → Import. Requires Node/npx on the machine. Remember to **share the target Notion
+Then Save (tools import automatically). Requires Node/npx on the machine. Remember to **share the target Notion
 pages/databases with the integration** in Notion, or the token will see nothing.
 
 > `tools/list` succeeds even with an invalid token — Notion only validates it when a tool is
@@ -83,9 +96,10 @@ directly — `spawn()` wraps the command in `cmd /C` there (the same approach as
 
 ## Permission & trust
 
-MCP tools are gated behind the agent's **`network`** permission — the same gate as `http_get`
-and `api`. The agent controls only the tool *arguments*; it cannot change the command, which
-is fixed at configuration time. Still, adding a server means running a local command, so treat
+MCP tools are **not** gated behind a permission — attaching one to an agent is the opt-in.
+(They used to require `network`, which silently dropped them, so a configured MCP tool looked
+broken.) The agent controls only the tool *arguments*; it cannot change the command, which is
+fixed at configuration time. Still, adding a server means running a local command, so treat
 server config as trusted input.
 
 ## Limits

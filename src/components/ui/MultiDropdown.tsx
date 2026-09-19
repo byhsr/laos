@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronRight } from 'lucide-react';
 
 export function MultiDropdown({ values, options, onChange, placeholder }: {
-  values: string[]; options: { value: string; label: string }[]; onChange: (v: string[]) => void; placeholder?: string;
+  values: string[]; options: { value: string; label: string; group?: string }[]; onChange: (v: string[]) => void; placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -47,13 +47,19 @@ export function MultiDropdown({ values, options, onChange, placeholder }: {
       </button>
       {open && pos && createPortal(
         <div ref={menuRef} className="glass-strong fixed z-[200] grid max-h-[260px] animate-[dropdown-in_140ms_ease-out] gap-0.5 overflow-y-auto rounded-xl border border-hairline p-1 shadow-float" style={{ top: pos.top, left: pos.left, width: pos.width }}>
-          {options.map((o) => {
+          {options.map((o, i) => {
             const checked = values.includes(o.value);
+            // Options arrive pre-grouped, so a header is just the first row of
+            // each run of same-group options.
+            const header = o.group && o.group !== options[i - 1]?.group ? o.group : null;
             return (
-              <button key={o.value} type="button" className={`w-full cursor-pointer rounded-md border-0 px-2.5 py-1.5 text-left text-[12.5px] text-text transition-colors duration-150 ${checked ? 'bg-line font-semibold' : 'bg-transparent hover:bg-line'}`} onClick={() => toggle(o.value)}>
-                <span className={`mr-2 inline-grid h-3.5 w-3.5 place-items-center rounded-[4px] border border-mid text-[10px] ${checked ? 'border-[var(--green)] bg-[var(--green)] text-[#09090b]' : 'bg-transparent text-transparent'}`}>{checked ? '✓' : ''}</span>
-                {o.label}
-              </button>
+              <Fragment key={o.value}>
+                {header && <div className="px-2.5 pt-2 pb-1 font-mono text-[10px] tracking-[1px] text-muted uppercase">{header}</div>}
+                <button type="button" className={`w-full cursor-pointer rounded-md border-0 px-2.5 py-1.5 text-left text-[12.5px] text-text transition-colors duration-150 ${checked ? 'bg-line font-semibold' : 'bg-transparent hover:bg-line'}`} onClick={() => toggle(o.value)}>
+                  <span className={`mr-2 inline-grid h-3.5 w-3.5 place-items-center rounded-[4px] border border-mid text-[10px] ${checked ? 'border-[var(--green)] bg-[var(--green)] text-[#09090b]' : 'bg-transparent text-transparent'}`}>{checked ? '✓' : ''}</span>
+                  {o.label}
+                </button>
+              </Fragment>
             );
           })}
         </div>,

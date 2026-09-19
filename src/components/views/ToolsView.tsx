@@ -24,19 +24,24 @@ export function ToolsView({ tools, integrations, onAdd, onEdit, onDelete, embedd
       <div className="grid max-w-[900px] gap-3">
         {tools.map((t) => {
           const integration = integrations.find((i) => i.id === t.integrationId);
+          // MCP tools are managed by their server, so name the server and drop
+          // the generic Edit form (its kind has no MCP branch).
+          const source = t.kind === 'mcp'
+            ? `MCP · ${String(t.config.serverName ?? t.integrationId)}`
+            : `${t.kind.replace('_', ' ')} · ${integration?.name ?? t.integrationId}`;
           return (
             <div key={t.id} className="flex items-center gap-[15px] rounded-[16px] border border-line bg-panel p-[22px]">
               <span className="grid h-10 w-10 place-items-center rounded-lg bg-panel2 text-[20px] text-muted"><Wrench size={18} /></span>
               <div className="flex-1">
                 <b style={{ fontSize: 13 }}>{t.name}</b>
-                <span className="block text-[11px] text-muted">{t.kind.replace('_', ' ')} · {integration?.name ?? t.integrationId}{t.description ? ` · ${t.description}` : ''}</span>
+                <span className="block text-[11px] text-muted">{source}{t.description ? ` · ${t.description}` : ''}</span>
                 {t.kind === 'api' && (
                   <span className="mt-1 block font-mono text-[11px] text-muted">{t.config.method ?? 'GET'} {t.config.url ?? ''}</span>
                 )}
               </div>
               <span className="mr-[7px] text-[11px] text-muted"><i className={`mr-1.5 inline-block h-[7px] w-[7px] rounded-full ${t.enabled ? 'bg-[var(--green)]' : 'bg-[#f79009]'}`} />{t.enabled ? 'on' : 'off'}</span>
               <div style={{ display: 'flex', gap: 6 }}>
-                <button className="secondary" onClick={() => onEdit(t)}>Edit</button>
+                {t.kind !== 'mcp' && <button className="secondary" onClick={() => onEdit(t)}>Edit</button>}
                 <button className="secondary" onClick={() => onDelete(t.id)}>Delete</button>
               </div>
             </div>

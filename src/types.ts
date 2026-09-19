@@ -13,6 +13,7 @@ export type ToolConfig = {
   url?: string;
   body?: string;
   name?: string;
+  serverName?: string;
   params?: ToolParam[];
   headers?: { name: string; value: string }[];
 };

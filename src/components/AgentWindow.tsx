@@ -86,12 +86,22 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   const [viewingSession, setViewingSession] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
+  // Live step shown in the pending assistant bubble instead of a bare "typing".
+  const [status, setStatus] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState<Agent>(agent);
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
   const enabledTools = tools.filter((t) => t.enabled);
+  // MCP tools are grouped under their server so the picker reads by source
+  // instead of a flat wall of raw tool names. Ungrouped tools come first.
+  const toolOptions = [
+    ...enabledTools.filter((t) => t.kind !== 'mcp').map((t) => ({ value: t.id, label: t.name })),
+    ...enabledTools.filter((t) => t.kind === 'mcp')
+      .map((t) => ({ value: t.id, label: t.name, group: `MCP · ${String(t.config.serverName ?? t.integrationId)}` }))
+      .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label)),
+  ];
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const avatarRef = useRef<HTMLInputElement>(null);
@@ -156,7 +166,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
   const send = async (text: string) => {
     if (!text.trim() || running) return;
-    setRunning(true); setError(undefined);
+    setRunning(true); setError(undefined); setStatus('Thinking…');
     const userMsg: ChatEntry = { role: 'user', content: text, time: new Date().toLocaleTimeString() };
     const assistantMsg: ChatEntry = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
@@ -180,7 +190,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       }, (confirmReq) => {
         // Agent tools that need approval (e.g. run_command) pop the same panel.
         useConfirmStore.getState().request(confirmReq);
-      }, sid);
+      }, sid, setStatus);
       useRunsStore.getState().loadRuns();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -188,6 +198,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: `⚠️ ${message}` } : m)));
     } finally {
       setRunning(false);
+      setStatus('');
     }
   };
 
@@ -226,7 +237,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
   return (
     <div className="boxy flex h-full min-h-0 flex-col overflow-hidden">
-      <header className="flex flex-wrap items-center justify-between gap-2">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <button className="cursor-pointer border-0 bg-none p-0 font-mono text-[11px] uppercase tracking-[1px] text-muted hover:text-text" onClick={onBack}>Agents</button>
           <ChevronRight size={12} className="text-mid" />
@@ -246,7 +257,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       </header>
 
       {(tab === 'chat' || tab === 'runs') && !complete && (
-        <div className="mt-4 flex h-[calc(100vh-190px)] min-h-[420px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line bg-panel text-center">
+        <div className="mt-4 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line bg-panel text-center">
           <Lock size={20} className="text-muted" />
           <h3 style={{ margin: 0, fontSize: 14 }}>Finish setting up {agent.name}</h3>
           <button className="primary" onClick={() => setTab('config')}><Check size={13} />Go to config</button>
@@ -254,7 +265,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       )}
 
       {tab === 'chat' && (
-        <div className="relative flex h-[calc(100vh-120px)] min-h-[460px] flex-col">
+        <div className="relative flex min-h-0 flex-1 flex-col">
           {/* Chat history — full height, no box; the input overlays on top of it */}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="chat-log flex-1 scrollbar-thin scrollbar-color-mid overflow-y-auto px-4 pt-4 pb-24" ref={scrollRef}>
@@ -265,7 +276,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                       <Markdown>{m.content}</Markdown>
                     )}
                     {running && i === messages.length - 1 && m.role === 'assistant' && (
-                      m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming />
+                      m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming status={status} />
                     )}
                   </div>
                 </div>
@@ -294,7 +305,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       )}
 
       {tab === 'runs' && (
-        <div className="runs-console mt-4 h-[calc(100vh-190px)] min-h-[420px] overflow-y-auto rounded-lg border border-line bg-inset p-3.5 font-mono text-[12px] leading-[1.6]">
+        <div className="runs-console mt-4 min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-inset p-3.5 font-mono text-[12px] leading-[1.6]">
           {runs.filter((r) => r.agentId === agent.id).sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()).map((r) => {
             const isOpen = expandedRuns.has(r.id);
             const totalTokens = (r.promptTokens ?? 0) + (r.completionTokens ?? 0);
@@ -345,7 +356,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       )}
 
       {tab === 'history' && (
-        <div className="mt-4 max-h-[calc(100vh-280px)] overflow-y-auto rounded-lg border border-line bg-panel p-4">
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-panel p-4">
           {viewingSession ? (
             <div>
               <div className="mb-3 flex items-center justify-between">
@@ -384,7 +395,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       )}
 
       {tab === 'config' && (
-        <div className="config-grid mt-5 grid h-[calc(100vh-200px)] min-h-[440px] items-stretch gap-5" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
+        <div className="config-grid mt-5 grid min-h-0 flex-1 items-stretch gap-5" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
           {/* Prompt: a minimal outline, full height */}
           <textarea
             value={draft.objective}
@@ -434,7 +445,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               <label className={FIELD_LABEL}>Tools</label>
               <MultiDropdown
                 values={draft.toolIds}
-                options={enabledTools.map((t) => ({ value: t.id, label: t.name }))}
+                options={toolOptions}
                 onChange={(v) => setDraft({ ...draft, toolIds: v })}
                 placeholder="None attached"
               />

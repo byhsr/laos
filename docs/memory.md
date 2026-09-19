@@ -12,17 +12,17 @@ Related: [harness.md](./harness.md) (the summarization call), [data-model.md](./
 | Tier | Stored in | Injected per turn? | Purpose |
 | --- | --- | --- | --- |
 | **1. Rolling window** | `agent_conversations.messages` (JSON) | Yes — last `ROLLING_WINDOW` messages | Coherent recent conversation. |
-| **2. Long-term memory** | `memory` rows: `__summary__` + `fact:*` | Yes (summary + facts only) | The agent's evolving "brain". |
-| **3. Time-based context** | `chat_sessions.summary`, `day_contexts` | **No** — retrieved via `recall_memory` | Older chat/day summaries, on demand. |
+| **2. Long-term memory** | `memory` rows: `__summary__` + `fact:*` | Yes (summary + facts) | The agent's evolving "brain". |
+| **3. Time-based context** | `chat_sessions.summary`, `day_contexts` | Yes — `build_day_context` | Older chat/day summaries. |
 
-The split matters: force-injecting tier 3 into every prompt causes cross-chat
-hallucination, so it is deliberately retrieval-only.
+All three tiers are injected on every turn. `recall_memory` (Manager only) still returns the
+full bundle on demand.
 
 ## Constants & keys
 
 | Symbol | Value | Meaning |
 | --- | --- | --- |
-| `ROLLING_WINDOW` | 12 | Max messages (user + assistant) sent as context. |
+| `ROLLING_WINDOW` | 4 | Max messages (user + assistant) sent as context. |
 | `MEMORY_SUMMARY_KEY` | `__summary__` | The rolling conversation summary row. |
 | `MEMORY_WATERMARK_KEY` | `__summary_upto__` | Index of the last message already folded into the summary. |
 | `MAX_SUMMARY_INPUT_CHARS` | 6000 | Cap on the transcript handed to the summarizer. |
@@ -39,14 +39,16 @@ Per streaming turn (`chat.rs`):
 2. If history exceeds `ROLLING_WINDOW + 1`, spawn a **background** summarization (never in
    front of the reply the user is waiting for).
 3. `load_memory` → render `[Memory summary: …]` plus `- fact: value` lines into the system prompt.
-4. Take the last `ROLLING_WINDOW` messages as the window.
+4. `build_day_context` → append `## Last chat summary`, `## Today's context`, and
+   `## Yesterday's context` (whichever exist).
+5. Take the last `ROLLING_WINDOW` messages as the window.
 
-So the system prompt contains: agent objective + **memory summary + facts** + tool note.
-It does **not** contain day context or last-chat summaries.
+So the system prompt contains: agent objective + **memory summary + facts** + **day context** +
+tool note.
 
-> The non-streaming Manager path (`manager::manager_turn`) also injects the compact summary +
-> facts, matching `stream_chat`. Day/last-chat context stays retrieval-only via
-> `recall_memory`.
+> The Manager path (`build_manager_system_prompt`, used by both `stream_chat` and
+> `manager_turn`) injects the same summary + facts + day context. `recall_memory` still returns
+> the full bundle on demand.
 
 ## Summarization (`summarize_old_turns`)
 
@@ -67,7 +69,9 @@ Runs in a spawned task after a chat turn. Bounded work per pass via the watermar
 
 5. Upsert `__summary__` and one `fact:*` row per fact; save the watermark.
 
-The summarizer is one-shot, non-streaming, and tool-free (`SUMMARY_MAX_TOKENS = 400`).
+The summarizer is one-shot, non-streaming, and tool-free (`SUMMARY_MAX_TOKENS = 400`). With
+`ROLLING_WINDOW = 4`, turns leave the window quickly, so once a conversation passes ~3
+exchanges this fires on most turns.
 
 ## Chat sessions (bifurcated history)
 
@@ -97,32 +101,37 @@ Where each step is triggered:
 | Session write (`append_session_message`) | `chat::stream_chat` (needs `sessionId`) | AgentWindow and Manager both pass one |
 | History load | `loadHistory` — AgentWindow on mount, ManagerView on mount | per agent |
 | `close_session` (tier-3 summary + day-context fold) | `useManagerStore.newSession` (Manager) and `AgentWindow.newChat` (agent) | every agent + Manager |
-| `recall_memory` (reads tier 3) | `manager_tools()` | **Manager only** |
+| `recall_memory` (full context bundle) | `manager_tools()` | **Manager only** |
 | Reset | `useManagerStore.reset` → `clear_agent_memory` | per agent |
 
-All three tiers now run for every agent. Tier 3 is still only *read* by the Manager (via
-`recall_memory`), so a regular agent accumulates day context that isn't surfaced in chat.
+All three tiers now run for every agent, and all three are injected on every turn. The Manager
+additionally has `recall_memory` for pulling the full bundle on demand.
 
 ## Day context
 
 `day_contexts` is keyed `(agent_id, day)` where `day` is a local `YYYY-MM-DD` string
 (`today_key()` / `yesterday_key()`). A closed chat appends into today's row; days accumulate
-over time. It is only read back through `build_context_bundle`; it is written whenever
-`close_session` runs (see the invocation map above).
+over time. `build_day_context` reads today's/yesterday's rows back into every turn's system
+prompt; it is written whenever `close_session` runs (see the invocation map above).
 
-## Retrieval: `build_context_bundle` / `recall_memory`
+## Retrieval: `build_day_context` / `build_context_bundle`
 
-`build_context_bundle(conn, agent_id)` assembles, in order:
+Two builders, both in `memory.rs`:
+
+`build_day_context(conn, agent_id)` — the time-based half, injected into every turn:
+
+1. `## Last chat summary` — the newest non-empty `chat_sessions.summary`.
+2. `## Today's context` — today's `day_contexts` row.
+3. `## Yesterday's context` — yesterday's `day_contexts` row.
+
+`build_context_bundle(conn, agent_id)` — the full bundle, for on-demand recall:
 
 1. `## Long-term memory (facts learned about you)` — the `fact:*` rows.
-2. `## Last chat summary` — the newest non-empty `chat_sessions.summary`.
-3. `## Today's context` — today's `day_contexts` row.
-4. `## Yesterday's context` — yesterday's `day_contexts` row.
+2. everything `build_day_context` returns.
 
-The Manager's `recall_memory` tool returns this bundle as tool output (never injected into
-the conversation). It is meant to be called when the user asks "what have we done/talked
-about" or wants to continue prior work. `recall_memory` lives in `manager_tools()` only — a
-regular agent has no way to read the bundle.
+The Manager's `recall_memory` tool returns this full bundle as tool output, for when the user
+asks "what have we done/talked about" or wants to continue prior work. `recall_memory` lives in
+`manager_tools()` only.
 
 ## Clearing
 
@@ -134,15 +143,15 @@ regular agent has no way to read the bundle.
 
 | Path | Window | Summary + facts | Day / last-chat context |
 | --- | --- | --- | --- |
-| `stream_chat` | ✔ (last 12) | ✔ injected | ✖ (via `recall_memory`) |
-| `manager_turn` (command + Telegram) | ✖ (single message) | ✔ injected | ✖ (via `recall_memory`) |
+| `stream_chat` | ✔ (last 4) | ✔ injected | ✔ injected |
+| `manager_turn` (command + Telegram) | ✖ (single message) | ✔ injected | ✔ injected |
 | `run_agent_once` (one-shot / workflow / task) | ✖ | skills only | ✖ |
 
 ## Wiring notes
 
 - Sessions are keyed **per agent** (`useManagerStore.sessionIds`), so switching agents never
   attaches to another agent's session.
-- Only the Manager can *read* tier 3 (`recall_memory`); regular agents accumulate day context
-  but have no recall tool.
-- `manager_turn` (Telegram / `manager_message`) injects tier-2 facts + summary like the
-  streaming path; it still has no rolling window (it receives a single message).
+- Only the Manager has `recall_memory`; regular agents rely on the automatically injected day
+  context instead.
+- `manager_turn` (Telegram / `manager_message`) injects tier-2 facts + summary and the day
+  context like the streaming path; it still has no rolling window (it receives a single message).

@@ -6,15 +6,16 @@ use async_trait::async_trait;
 use rusqlite::{params, Connection};
 use tauri::{AppHandle, Manager};
 
-use crate::agents::{api_key_for, build_workspace_context, skills_prompt, tool_schemas};
+use crate::agents::{all_mcp_tools, api_key_for, build_workspace_context, skills_prompt, tool_schemas};
 use crate::db::{db, now};
 use crate::http;
 use crate::integrations::{integration_definitions, save_integration_config};
-use crate::memory::{build_context_bundle, load_memory, MEMORY_SUMMARY_KEY};
+use crate::memory::{build_context_bundle, build_day_context, load_memory, MEMORY_SUMMARY_KEY};
 use crate::models::*;
 use crate::storage::{manager_default_model, parse_json_vec, save_agent, save_workflow};
 use crate::tasks::{create_task, delegate_task, list_tasks, task_from_row};
 use crate::tools::{AgentTool, ReadAnyFileTool, RunCommandTool, SearchFilesTool, MAX_TOOL_ROUNDS};
+use crate::tooltext::parse_text_tool_calls;
 use crate::workflows::execute_workflow;
 
 struct ManagerListAgents;
@@ -138,12 +139,33 @@ pub(crate) fn manager_tools() -> Vec<Box<dyn AgentTool>> {
   ]
 }
 
+// True for the Manager's own tools — the ones whose `run` is a placeholder and
+// which dispatch_manager_tool executes by name.
+pub(crate) fn is_manager_builtin(name: &str) -> bool {
+  manager_tools().iter().any(|t| t.name() == name)
+}
+
+// Executes one Manager tool call. Its own tools dispatch by name; anything else
+// in `tools` — the imported MCP tools it also holds — runs as a normal AgentTool.
+pub(crate) async fn run_manager_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], name: &str, args: &serde_json::Value) -> Result<String, String> {
+  if !is_manager_builtin(name) {
+    if let Some(t) = tools.iter().find(|t| t.name() == name) {
+      return t.run(args).await;
+    }
+  }
+  dispatch_manager_tool(app, name, args).await
+}
+
 // Builds the Manager's system prompt by enumerating its actual tools, so its
 // capabilities are always in sync with the code and never need hand-writing.
 pub(crate) fn build_manager_system_prompt(conn: &Connection, memory_blob: &str) -> Result<String, String> {
   let context = build_workspace_context(conn)?;
   let mut tool_list = String::new();
   for t in manager_tools() {
+    tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
+  }
+  // Imported MCP tools are available to the Manager too, so list them as well.
+  for t in all_mcp_tools(conn) {
     tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
   }
   // Skills attached to the Manager itself (same mechanism as regular agents).
@@ -153,6 +175,12 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, memory_blob: &str) 
     .map(|s| parse_json_vec(&s))
     .unwrap_or_default();
   let skills = skills_prompt(conn, &skill_ids);
+  // Time-based context (last chat summary, today, yesterday) goes in on every
+  // turn; recall_memory still exposes the full bundle on demand.
+  let manager_id: String = conn
+    .query_row("SELECT id FROM agents WHERE is_manager=1 LIMIT 1", [], |r| r.get::<_, String>(0))
+    .unwrap_or_else(|_| "manager".to_string());
+  let day_context = build_day_context(conn, &manager_id).unwrap_or_default();
 
   Ok(format!(
     "You are the Manager of a real, running agent workspace application. You are NOT a simulated or virtual entity â€” you have real tools and real effects on the user's machine.\n\n\
@@ -165,7 +193,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, memory_blob: &str) 
      - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent â€” file access is just a permission value in the create_agent call.\n\
      - Never store secrets (API keys/tokens) without the user's explicit approval in the confirmation popup.\n\
      - Delegate domain work to agents rather than doing it inline.\n\n\
-     Workspace context:\n{context}\n\n{memory_blob}\n{skills}\
+     Workspace context:\n{context}\n\n{memory_blob}{day_context}\n{skills}\
      Return a concise, helpful reply to the user."
   ))
 }
@@ -244,8 +272,13 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   let context = build_manager_system_prompt(&conn, &memory_blob)?;
   let prompt = format!("{context}\n\nUser message: {message}");
 
-  // Manager tools execute against real backend functions.
-  let tools = manager_tools();
+  // Manager tools plus every imported MCP tool, so the Manager can use any
+  // configured MCP server (it has no per-agent tool picker).
+  let tools: Vec<Box<dyn AgentTool>> = {
+    let mut t = manager_tools();
+    t.extend(all_mcp_tools(&conn));
+    t
+  };
 
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&manager.id);
   let mut messages = vec![
@@ -300,7 +333,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
           // This path has no way to ask, so refuse rather than run it silently.
           Err("run_command needs your approval, which this channel can't ask for. Run it from the Manager chat in the app.".to_string())
         } else {
-          dispatch_manager_tool(app, &name, &args).await
+          run_manager_tool(app, &tools, &name, &args).await
         };
         let call_id = c["id"].as_str().unwrap_or("").to_string();
         messages.push(ChatMessage { role: "assistant".into(), content: None, tool_calls: Some(vec![ToolCall { id: call_id.clone(), kind: "function".into(), function: ToolCallFunction { name: name.clone(), arguments: args.clone() } }]), tool_call_id: None });
@@ -311,11 +344,27 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
       // (Groq/OpenRouter) put it at choices[0].message.content. Reading only the
       // first shape returned an empty reply, which Telegram then rejected as
       // "message text is empty".
-      final_output = parsed["message"]["content"].as_str()
+      let content = parsed["message"]["content"].as_str()
         .or_else(|| parsed["choices"][0]["message"]["content"].as_str())
         .unwrap_or("")
         .to_string();
-      break;
+      // Text-protocol fallback: a model that emits its call as markup in
+      // `content` never lands in `tool_calls`, so recover it and run it here
+      // instead of showing the raw markup (see tooltext.rs).
+      let (cleaned, text_calls) = parse_text_tool_calls(&content);
+      if text_calls.is_empty() {
+        final_output = cleaned;
+        break;
+      }
+      messages.push(ChatMessage { role: "assistant".into(), content: Some(content), tool_calls: None, tool_call_id: None });
+      for call in text_calls {
+        let result = if call.name == "run_command" {
+          Err("run_command needs your approval, which this channel can't ask for. Run it from the Manager chat in the app.".to_string())
+        } else {
+          run_manager_tool(app, &tools, &call.name, &call.args).await
+        };
+        messages.push(ChatMessage { role: "user".into(), content: Some(format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, result.map_err(|e| e.to_string())?)), tool_calls: None, tool_call_id: None });
+      }
     }
   }
   let _ = home;

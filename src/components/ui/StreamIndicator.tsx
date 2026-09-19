@@ -1,7 +1,19 @@
-// Animated "typing" indicator for streaming chat: three bouncing dots while
-// waiting for the first token, then a blinking caret once text is flowing.
-export function StreamIndicator({ streaming }: { streaming: boolean }) {
+// Streaming status for chat. While the reply is being prepared the bubble shows
+// the live step ("Thinking…", "Calling notion_search…") rather than a generic
+// typing placeholder; once tokens flow the caller swaps in a blinking caret.
+export function StreamIndicator({ streaming, status }: { streaming: boolean; status?: string }) {
   if (!streaming) return null;
+  if (status) {
+    return (
+      <span className="inline-flex items-center gap-2 text-[12px] text-muted">
+        <span className="relative flex h-1.5 w-1.5 shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-mid opacity-60" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-mid" />
+        </span>
+        {status}
+      </span>
+    );
+  }
   return (
     <span className="ml-1 inline-flex items-center gap-[3px] align-middle">
       {[0, 1, 2].map((i) => (
