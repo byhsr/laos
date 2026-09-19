@@ -235,6 +235,17 @@ export async function executeWorkflow(workflow: Workflow, input: string): Promis
   return await invoke<WorkflowRunResult>('execute_workflow', { workflow, input });
 }
 
+// Stored workflow runs — executions are persisted server-side, optionally per workflow.
+export type WorkflowRunRecord = {
+  id: string; workflowId: string; workflowName: string; startedAt: string; endedAt?: string | null;
+  status: string; input: string; finalOutput?: string | null;
+  steps: { nodeId: string; nodeLabel: string; output: string; promptTokens: number; completionTokens: number }[];
+  promptTokens: number; completionTokens: number;
+};
+export async function listWorkflowRuns(workflowId?: string): Promise<WorkflowRunRecord[]> {
+  try { return await invoke<WorkflowRunRecord[]>('list_workflow_runs', { workflowId: workflowId ?? null }); } catch { return []; }
+}
+
 export async function listIntegrations(): Promise<Integration[]> {
   try {
     return await invoke<Integration[]>('list_integrations');

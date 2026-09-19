@@ -409,6 +409,37 @@ fn cmp_f64(a: &serde_json::Value, b: &serde_json::Value) -> Option<std::cmp::Ord
 #[tauri::command]
 pub async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: String, api_key: Option<String>) -> Result<WorkflowExecution, String> {
   let conn = db(&app)?;
+  // Persist every execution (with its per-node steps) so results outlive the app
+  // session instead of being returned to the UI and discarded.
+  let run_id = format!("wfr-{}", chrono::Utc::now().timestamp_millis());
+  conn.execute(
+    "INSERT INTO workflow_runs (id, workflow_id, workflow_name, started_at, status, input, steps) VALUES (?1,?2,?3,?4,'running',?5,'[]')",
+    params![run_id, workflow.id, workflow.name, chrono::Utc::now().to_rfc3339(), input],
+  ).map_err(|e| e.to_string())?;
+  // The node loop owns its own connection, so this command holds no rusqlite
+  // borrow across the await (a Tauri command future must be Send).
+  match run_workflow_nodes(&app, &workflow, input, api_key).await {
+    Ok((steps, final_output, prompt_tokens, completion_tokens)) => {
+      conn.execute(
+        "UPDATE workflow_runs SET status='completed', ended_at=?1, final_output=?2, steps=?3, prompt_tokens=?4, completion_tokens=?5 WHERE id=?6",
+        params![chrono::Utc::now().to_rfc3339(), final_output, serde_json::to_string(&steps).unwrap_or_else(|_| "[]".to_string()), prompt_tokens as i64, completion_tokens as i64, run_id],
+      ).map_err(|e| e.to_string())?;
+      Ok(WorkflowExecution { steps, final_output, total_prompt_tokens: prompt_tokens, total_completion_tokens: completion_tokens })
+    }
+    Err(e) => {
+      let _ = conn.execute(
+        "UPDATE workflow_runs SET status='failed', ended_at=?1, final_output=?2 WHERE id=?3",
+        params![chrono::Utc::now().to_rfc3339(), e, run_id],
+      );
+      Err(e)
+    }
+  }
+}
+
+// Runs the workflow's nodes. Split from the command so no connection borrow is
+// held across an await in a Send future.
+async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: String, api_key: Option<String>) -> Result<(Vec<WorkflowStep>, String, u64, u64), String> {
+  let conn = db(app)?;
   let nodes: Vec<serde_json::Value> = workflow.nodes.as_array().cloned().unwrap_or_default();
   let edges: Vec<serde_json::Value> = workflow.edges.as_array().cloned().unwrap_or_default();
 
@@ -486,7 +517,7 @@ pub async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: S
             rows.next().transpose().map_err(|e| e.to_string())?
           };
           let (out, pt, ct) = match agent_opt {
-            Some(agent) => run_agent_once(&app, &agent, &current_input, api_key.as_deref(), &mut events).await?,
+            Some(agent) => run_agent_once(app, &agent, &current_input, api_key.as_deref(), &mut events).await?,
             None => (current_input.clone(), 0, 0),
           };
           total_prompt += pt; total_completion += ct;
@@ -497,7 +528,7 @@ pub async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: S
         // Try to parse the incoming text as JSON; if it is, rules run against
         // the parsed object, otherwise against the raw string.
         let value: serde_json::Value = serde_json::from_str(&current_input).unwrap_or(serde_json::Value::String(current_input.clone()));
-        let verdict = run_checker(&app, &config, &value, api_key.as_deref()).await?;
+        let verdict = run_checker(app, &config, &value, api_key.as_deref()).await?;
         // The verdict envelope becomes the input for downstream nodes.
         serde_json::to_string(&verdict).unwrap_or_else(|_| r#"{"pass":false,"reason":"serialize error"}"#.to_string())
       }
@@ -547,5 +578,38 @@ pub async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: S
   }
 
   let final_output = current_input;
-  Ok(WorkflowExecution { steps, final_output, total_prompt_tokens: total_prompt, total_completion_tokens: total_completion })
+  Ok((steps, final_output, total_prompt, total_completion))
+}
+
+fn workflow_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowRunRecord> {
+  let steps: String = row.get(8)?;
+  Ok(WorkflowRunRecord {
+    id: row.get(0)?, workflow_id: row.get(1)?, workflow_name: row.get(2)?,
+    started_at: row.get(3)?, ended_at: row.get(4)?, status: row.get(5)?,
+    input: row.get(6)?, final_output: row.get(7)?,
+    steps: serde_json::from_str(&steps).unwrap_or_else(|_| serde_json::json!([])),
+    prompt_tokens: row.get::<_, i64>(9)? as u64,
+    completion_tokens: row.get::<_, i64>(10)? as u64,
+  })
+}
+
+// Stored workflow runs, newest first, optionally filtered to a single workflow.
+#[tauri::command]
+pub fn list_workflow_runs(app: AppHandle, workflow_id: Option<String>) -> Result<Vec<WorkflowRunRecord>, String> {
+  let conn = db(&app)?;
+  const COLS: &str = "SELECT id, workflow_id, workflow_name, started_at, ended_at, status, input, final_output, steps, prompt_tokens, completion_tokens FROM workflow_runs";
+  let mut out = Vec::new();
+  match workflow_id.filter(|s| !s.is_empty()) {
+    Some(wf) => {
+      let mut stmt = conn.prepare(&format!("{COLS} WHERE workflow_id=?1 ORDER BY started_at DESC LIMIT 100")).map_err(|e| e.to_string())?;
+      let rows = stmt.query_map(params![wf], workflow_run_row).map_err(|e| e.to_string())?;
+      for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    }
+    None => {
+      let mut stmt = conn.prepare(&format!("{COLS} ORDER BY started_at DESC LIMIT 100")).map_err(|e| e.to_string())?;
+      let rows = stmt.query_map([], workflow_run_row).map_err(|e| e.to_string())?;
+      for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    }
+  }
+  Ok(out)
 }

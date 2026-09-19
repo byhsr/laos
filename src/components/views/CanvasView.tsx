@@ -3,6 +3,14 @@ import { ArrowLeft, Bot, Check, ChevronRight, GitBranch, Play, Plus, Repeat, Sav
 import type { Agent, Integration, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
 import { Dropdown } from '../ui/Dropdown';
 import { toast } from '../../hooks/useToast';
+import { listWorkflowRuns, type WorkflowRunRecord } from '../../runtime';
+
+// Safe timestamp formatting — DB values can be empty or malformed.
+const fmtWhen = (s?: string | null) => {
+  if (!s) return '';
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? '' : d.toLocaleString();
+};
 
 const NODE_TYPES: { type: WorkflowNodeType; label: string; icon: React.ReactNode; desc: string; color: string }[] = [
   { type: 'trigger', label: 'Trigger', icon: <Webhook size={13} />, desc: 'Workflow entry point', color: '#22c55e' },
@@ -169,6 +177,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<WorkflowRunResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [storedRuns, setStoredRuns] = useState<WorkflowRunRecord[]>([]);
   const [saving, setSaving] = useState(false);
   const [drag, setDrag] = useState<{ type: WorkflowNodeType } | null>(null);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
@@ -206,6 +215,23 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
 
   const openWorkflow = (w: Workflow) => {
     setCurrent(w); setRunResult(null); setRunError(null); setSelectedNodeId(null); setSelectedEdgeId(null); setPan({ x: 0, y: 0 });
+  };
+
+  // Load this workflow's persisted run history whenever the open workflow changes.
+  useEffect(() => {
+    if (!current?.id) { setStoredRuns([]); return; }
+    listWorkflowRuns(current.id).then(setStoredRuns);
+  }, [current?.id]);
+
+  // Replay a stored run in the results panel.
+  const showStoredRun = (r: WorkflowRunRecord) => {
+    setRunError(null);
+    setRunResult({
+      steps: r.steps,
+      finalOutput: r.finalOutput ?? '',
+      totalPromptTokens: r.promptTokens,
+      totalCompletionTokens: r.completionTokens,
+    });
   };
 
   const createNew = () => {
@@ -269,6 +295,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
     try {
       const result = await onRunWorkflow(current, runInput);
       setRunResult(result);
+      listWorkflowRuns(current.id).then(setStoredRuns);
       toast(`Workflow run complete — ${(result.totalPromptTokens + result.totalCompletionTokens).toLocaleString()} tokens`, 'success');
     } catch (e) {
       setRunError(e instanceof Error ? e.message : String(e));
@@ -718,6 +745,31 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
             })() : (
               <div className="text-center text-muted">
                 <p className="text-[12px] leading-1.6">Select a node to edit its config, or drag from a node's port to create a connection.</p>
+              </div>
+            )}
+            {storedRuns.length > 0 && (
+              <div className="mt-4 border-t border-line pt-3">
+                <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">PAST RUNS</span>
+                <div className="grid gap-1.5">
+                  {storedRuns.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => showStoredRun(r)}
+                      className="flex cursor-pointer items-center gap-2 rounded-[10px] border border-line bg-panel2 px-2.5 py-2 text-left hover:border-mid"
+                      title="View this run"
+                    >
+                      <span className={`shrink-0 ${r.status === 'completed' ? 'text-[#22c55e]' : r.status === 'running' ? 'text-[#facc15]' : 'text-[#f87171]'}`}>
+                        {r.status === 'completed' ? '✓' : r.status === 'running' ? '▸' : '✕'}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-mono text-[11px] text-mid">{fmtWhen(r.startedAt)}</span>
+                        <span className="block truncate text-[11px] text-muted">{r.input || 'no input'}</span>
+                      </span>
+                      <span className="shrink-0 font-mono text-[10px] text-muted">{(r.promptTokens + r.completionTokens).toLocaleString()} tok</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>

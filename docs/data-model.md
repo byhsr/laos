@@ -59,6 +59,13 @@ Written by `execute_agent` (agents.rs) and `stream_chat` (chat.rs); read by `lis
 
 `id` (PK), `name`, `nodes` (JSON), `edges` (JSON), `updated_at`.
 
+### `workflow_runs`
+
+`id` (PK, `wfr-<ms>`), `workflow_id`, `workflow_name`, `started_at`, `ended_at`, `status`
+(`running` / `completed` / `failed`), `input`, `final_output`, `steps` (JSON array of
+`{nodeId, nodeLabel, output, promptTokens, completionTokens}`), `prompt_tokens`,
+`completion_tokens`. Written by `workflows::execute_workflow`, read by `list_workflow_runs`.
+
 ### `integration_configs`
 
 `id` (PK), `name`, `provider`, `config_json`, `enabled`, `connected`, `updated_at`.
@@ -148,6 +155,7 @@ There is no version table — migrations are single-column `ALTER`s that are saf
 | `chat.rs` | `runs`, `agent_conversations`, `chat_sessions` + `chat_messages` |
 | `memory.rs` | `memory`, `agent_conversations`, `chat_sessions`, `day_contexts` |
 | `tasks.rs` | `tasks` |
+| `workflows.rs` | `workflow_runs` (each execution + its per-node steps) |
 | `integrations.rs` | `integration_configs` |
 | `telegram.rs` | `integration_configs` (telegram row), `telegram_logs` |
 
@@ -157,10 +165,11 @@ There is no version table — migrations are single-column `ALTER`s that are saf
 
 ## What is *not* persisted
 
-- **Workflow run results.** `execute_workflow` returns its steps and final output to the UI and
-  writes nothing; its agent nodes call `run_agent_once`, which never creates a `runs` row. Only
-  the workflow *definition* is stored, so a workflow execution leaves no history.
+- **Workflow agent-node runs are not rows in `runs`.** Each execution is stored once in
+  `workflow_runs` with its per-node steps; the individual nodes call `run_agent_once`, which
+  creates no `runs` row.
 - **Failed or cancelled chat turns.** `stream_chat` inserts the `runs` row only after the stream
-  completes; an error mid-stream records nothing.
+  completes; an error mid-stream records nothing. A workflow that errors is still recorded, as
+  `status='failed'`.
 - Per-agent `files/`, `memory/` and `runs/` folders are created as scaffolding but unused — only
   `outputs/<runId>.txt` (one-shot `execute_agent` runs) and `config.json` are actually written.

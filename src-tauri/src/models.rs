@@ -52,6 +52,17 @@ pub struct WorkflowStep { pub node_id: String, pub node_label: String, pub outpu
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowExecution { pub steps: Vec<WorkflowStep>, pub final_output: String, pub total_prompt_tokens: u64, pub total_completion_tokens: u64 }
 
+// A persisted workflow execution: the run row plus its per-node steps (as JSON,
+// matching how workflows.nodes/edges are stored).
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowRunRecord {
+  pub id: String, pub workflow_id: String, pub workflow_name: String,
+  pub started_at: String, pub ended_at: Option<String>, pub status: String,
+  pub input: String, pub final_output: Option<String>, pub steps: serde_json::Value,
+  pub prompt_tokens: u64, pub completion_tokens: u64,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct IntegrationRecord { pub id: String, pub name: String, pub provider: String, pub enabled: bool, pub connected: bool, pub config: serde_json::Value, pub actions: Vec<IntegrationAction> }

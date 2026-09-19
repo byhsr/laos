@@ -62,6 +62,7 @@ fn main() {
       // Agent + workflow execution
       agents::execute_agent,
       workflows::execute_workflow,
+      workflows::list_workflow_runs,
       // Tasks + runs
       tasks::list_all_tasks,
       tasks::get_task,
