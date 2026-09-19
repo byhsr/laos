@@ -1,6 +1,6 @@
 import { Workflow as WorkflowIcon } from 'lucide-react';
 import { useState } from 'react';
-import type { Agent, Integration, Run, Skill, Tool, Workflow } from '../../types';
+import type { Agent, Integration, Skill, Tool, Workflow } from '../../types';
 import { AgentAvatar } from '../ui/AgentAvatar';
 import { GraphView } from './GraphView';
 
@@ -10,15 +10,13 @@ export type HomeTab = 'overview' | 'graph';
 
 // No header: the section title, the Overview/Graph tabs and "New agent" all live
 // in the topbar (Graph is its own topbar button, + creates an agent).
-export function HomeView({ agents, tools, skills, integrations, runs, workflows, onOpen, onCreate, onOpenWorkflow, onSaveAgent, onSaveWorkflow, tab }: {
-  agents: Agent[]; tools: Tool[]; skills: Skill[]; integrations: Integration[]; runs: Run[]; workflows: Workflow[];
+export function HomeView({ agents, tools, skills, integrations, workflows, onOpen, onCreate, onOpenWorkflow, onSaveAgent, onSaveWorkflow, tab }: {
+  agents: Agent[]; tools: Tool[]; skills: Skill[]; integrations: Integration[]; workflows: Workflow[];
   onOpen: (id: string) => void; onCreate: () => void; onOpenWorkflow: (id: string) => void;
   onSaveAgent: (a: Agent) => Promise<void>; onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
   tab: HomeTab;
 }) {
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
-  const agentTokens = (id: string) => (runs ?? []).filter((r) => r.agentId === id).reduce((sum, r) => sum + (r.promptTokens ?? 0) + (r.completionTokens ?? 0), 0);
-  const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
   const visibleAgents = agents.filter((a) => !a.isManager);
   const [hoveredAgentId, setHoveredAgentId] = useState<string | null>(null);
 
@@ -36,7 +34,7 @@ export function HomeView({ agents, tools, skills, integrations, runs, workflows,
               <AgentAvatar agent={a} size={40} playing={hoveredAgentId === a.id} />
               <div className="min-w-0">
                 <b className="block truncate text-[13px]">{a.name}</b>
-                <em className="block truncate font-mono text-[10px] text-muted not-italic">{a.toolIds.map(toolName).join(' · ') || 'no tools'} · {fmt(agentTokens(a.id))} tok</em>
+                <em className="block truncate font-mono text-[10px] text-muted not-italic">{a.toolIds.map(toolName).join(' · ') || 'no tools'}</em>
               </div>
             </button>
           ))}
