@@ -75,20 +75,22 @@ export function Sidebar({ agents, view, selectedAgentId, homeActive, onOpen, onB
         {list.length === 0 && !collapsed && <p className="px-1 text-[11px] leading-1.6 text-muted">No agents yet — use + in the topbar.</p>}
         {list.map((a) => {
           const active = a.isManager ? view === 'manager' : (view === 'agent' && selectedAgentId === a.id);
-          return (
-            <Tooltip key={a.id} label={a.name} side="right" className="flex w-full">
-              <button
-                className={collapsed ? rowCollapsed(active) : row(active)}
-                onClick={() => onOpen(a.id)}
-                onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, agent: a }); }}
-                title={collapsed ? a.name : undefined}
-              >
-                <AgentAvatar agent={a} size={collapsed ? 26 : 22} />
-                {!collapsed && <span className="min-w-0 flex-1 truncate">{a.name}</span>}
-                {!collapsed && a.pinned && <Pin size={11} className="shrink-0 text-muted" />}
-              </button>
-            </Tooltip>
+          const button = (
+            <button
+              className={collapsed ? rowCollapsed(active) : row(active)}
+              onClick={() => onOpen(a.id)}
+              onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, agent: a }); }}
+            >
+              <AgentAvatar agent={a} size={collapsed ? 26 : 22} />
+              {!collapsed && <span className="min-w-0 flex-1 truncate">{a.name}</span>}
+              {!collapsed && a.pinned && <Pin size={11} className="shrink-0 text-muted" />}
+            </button>
           );
+          // The name is already on screen when expanded, so the tooltip would only
+          // hang outside the panel — collapsed rows are the ones that need it.
+          return collapsed
+            ? <Tooltip key={a.id} label={a.name} side="right" className="flex w-full">{button}</Tooltip>
+            : <div key={a.id} className="flex w-full">{button}</div>;
         })}
       </nav>
 
