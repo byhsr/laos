@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw, RotateCcw, Settings } from 'lucide-react';
+import { RefreshCw, RotateCcw, Settings, Sparkles } from 'lucide-react';
 import type { ModelConfig } from '../../types';
 import { ModelsView } from './ModelsView';
 import { UpdatePrompt } from '../ui/UpdatePrompt';
@@ -17,8 +17,9 @@ const TABS: { key: SettingsTab; label: string }[] = [
 const tabBtn = (active: boolean) =>
   `flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${active ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`;
 
-export function SettingsView({ models, onAddModel, onEditModel, onDeleteModel }: {
-  models: ModelConfig[]; onAddModel: () => void; onEditModel: (m: ModelConfig) => void; onDeleteModel: (id: string) => Promise<void>;
+export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditModel, onDeleteModel }: {
+  models: ModelConfig[]; onRerunOnboarding: () => void;
+  onAddModel: () => void; onEditModel: (m: ModelConfig) => void; onDeleteModel: (id: string) => Promise<void>;
 }) {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [version, setVersion] = useState('');
@@ -99,7 +100,10 @@ export function SettingsView({ models, onAddModel, onEditModel, onDeleteModel }:
               </label>
             ))}
           </div>
-          <button className="secondary mt-4" onClick={resetNavLabels}><RotateCcw size={12} />Reset names</button>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button className="secondary" onClick={resetNavLabels}><RotateCcw size={12} />Reset names</button>
+            <button className="secondary" onClick={onRerunOnboarding}><Sparkles size={12} />Re-run onboarding</button>
+          </div>
         </div>
       </div>
 

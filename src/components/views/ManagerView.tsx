@@ -281,7 +281,15 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           headerAction={<button className="primary" onClick={saveConfig}>Save</button>}
         >
           <div className="w-full rounded-[16px] border border-line bg-panel p-[22px]">
-            <label className="block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">MODEL</label>
+            <label className="block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">NAME</label>
+            <input
+              value={mgrDraft.name}
+              onChange={(e) => setMgrDraft({ ...mgrDraft, name: e.target.value })}
+              placeholder="Name your lead agent"
+              className="w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] text-text outline-none focus:border-mid"
+            />
+
+            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">MODEL</label>
             <Dropdown
               value={mgrDraft.model}
               options={models.map((m) => ({ value: m.id, label: m.label }))}

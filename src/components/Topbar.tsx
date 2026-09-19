@@ -17,10 +17,10 @@ const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
   { key: 'settings', view: 'settings', icon: <Settings size={12} /> },
 ];
 
-export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, agents, runs, onOpenGraph, graphActive }: {
+export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, agents, runs, managerName, onOpenGraph, graphActive }: {
   collapsed: boolean; onToggleSidebar: () => void;
   view: View; setView: (v: View) => void; onNewAgent: () => void;
-  agents: Agent[]; runs: Run[]; onOpenGraph: () => void; graphActive: boolean;
+  agents: Agent[]; runs: Run[]; managerName: string; onOpenGraph: () => void; graphActive: boolean;
 }) {
   const [maximized, setMaximized] = useState(false);
   const labels = useNavLabels((s) => s.labels);
@@ -57,7 +57,7 @@ export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, 
         </Tooltip>
         <span className="mx-0.5 h-3.5 w-px shrink-0 bg-hairline" />
         {NAV.map((n) => (
-          <Tooltip key={n.key} label={navLabel(labels, n.key)}>
+          <Tooltip key={n.key} label={n.view === 'manager' ? managerName : navLabel(labels, n.key)}>
             <button className={iconBtn(view === n.view)} onClick={() => setView(n.view)}>
               {n.icon}
             </button>

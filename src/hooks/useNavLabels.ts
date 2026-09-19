@@ -4,10 +4,11 @@ import { create } from 'zustand';
 // live in localStorage rather than the app database.
 export type NavKey = 'home' | 'graph' | 'manager' | 'workflows' | 'tasks' | 'workshop' | 'runs' | 'telegram' | 'settings';
 
+// Renameable navigation sections. The lead agent is deliberately absent: its
+// name is the agent record itself, edited in its own config.
 export const NAV_SECTIONS: { key: NavKey; label: string }[] = [
   { key: 'home', label: 'Home' },
   { key: 'graph', label: 'Graph' },
-  { key: 'manager', label: 'Laos' },
   { key: 'workflows', label: 'Workflows' },
   { key: 'tasks', label: 'Tasks' },
   { key: 'workshop', label: 'Workshop' },

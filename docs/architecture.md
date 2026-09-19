@@ -81,10 +81,17 @@ points into the same underlying model layer — see [harness.md](./harness.md).
 | Composition root | `App.tsx` | Wires stores + views. Views are kept mounted and CSS-hidden when inactive so in-flight streaming and per-agent state survive navigation. Drawer forms for tool/model/skill are hosted here. |
 | Backend bridge | `runtime.ts` | One typed wrapper per command. `streamChat` wraps a Tauri `Channel`; structured events arrive as JSON strings, token deltas as plain text. |
 | Stores | `hooks/useAgents.ts`, `useRuns.ts`, `useModels.ts`, `useTools.ts`, `useSkills.ts`, `useWorkflows.ts`, `useWorkspace.ts`, `useIntegrations.ts`, `useManager.ts`, `useTasks.ts`, `useConfirm.ts`, `useToast.ts` | One Zustand store per domain; loaded once on mount in `App.tsx`. |
-| Views | `components/views/*` | Home, Agents (browse), Canvas (workflows), Manager (Laos), Tasks, Runs, Telegram, Workshop (Skills/Tools/Integrations/Knowledge), Settings (General/Models), plus the agent window. |
-| Shell | `components/Topbar.tsx`, `components/Sidebar.tsx` | The topbar carries the workspace sections (Laos/Workflows/Tasks/Workshop/Runs/Telegram/Settings) + Graph + New agent + window controls; the sidebar is the **agent chat list**, plus Home and the agents browser. Section names are user-editable via `hooks/useNavLabels.ts` (localStorage). |
+| Views | `components/views/*` | Home, Agents (browse), Canvas (workflows), Manager (Laos), Tasks, Runs, Telegram, Workshop (Skills/Tools/Integrations/Knowledge), Settings (General/Models), the agent window, and first-run `Onboarding`. |
+| Shell | `components/Topbar.tsx`, `components/Sidebar.tsx` | The topbar carries the workspace sections + Graph + New agent + window controls; the sidebar is the **agent chat list**, where the **lead agent always holds the first slot** (never deletable — `delete_agent` refuses `is_manager=1`). Section names are user-editable via `hooks/useNavLabels.ts`; the lead's *own* name comes from its agent record. |
 | Primitives | `components/ui/*` | Drawer (resizable right panel), Dropdown/MultiDropdown (portaled), ConfirmDialog, Toaster, Tooltip (shell icon controls), AgentAvatar/PersonaPicker, ContextMenu. |
 | Personas | `assets/agents/*.json` + `components/ui/AgentAvatar.tsx` (`PERSONAS`) | Lottie files; add a file and register it in `PERSONAS`. |
+
+## Onboarding
+
+First run shows `components/Onboarding.tsx` (Welcome → Name + persona → Purpose → Model). It writes
+the answers onto the lead agent's record and drops you into its chat, then sets the
+`laos.onboarded` localStorage flag so it doesn't return. Settings → General → **Re-run onboarding**
+clears it again. It renders at `z-40` so the topbar (and its window controls) stay reachable.
 
 ## Dependency graph
 

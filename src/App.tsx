@@ -22,6 +22,7 @@ import { ManagerView } from './components/views/ManagerView';
 import { TasksView } from './components/views/TasksView';
 import { TelegramView } from './components/views/TelegramView';
 import { RunsConsole } from './components/views/RunsConsole';
+import { Onboarding, type OnboardingPatch } from './components/Onboarding';
 import { WorkshopView } from './components/views/WorkshopView';
 import { SkillFormDrawer } from './components/views/SkillsView';
 import { Toaster } from './components/ui/Toaster';
@@ -69,6 +70,7 @@ export default function App() {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(() => localStorage.getItem('laos.onboarded') !== '1');
 
   // Check for a new release shortly after launch — never blocks startup, and an
   // offline/failed check is ignored.
@@ -85,6 +87,22 @@ export default function App() {
   const [workflowToOpen, setWorkflowToOpen] = useState<string | null>(null);
 
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
+  const leadAgent = useMemo(() => agents.find((a) => a.isManager) ?? null, [agents]);
+
+  // Onboarding writes the answers onto the lead agent, then drops you into its chat.
+  const finishOnboarding = async (patch: OnboardingPatch) => {
+    if (leadAgent) {
+      await persistAgent({ ...leadAgent, name: patch.name, objective: patch.objective, persona: patch.persona, model: patch.model });
+    }
+    localStorage.setItem('laos.onboarded', '1');
+    setShowOnboarding(false);
+    setView('manager');
+  };
+
+  const dismissOnboarding = () => {
+    localStorage.setItem('laos.onboarded', '1');
+    setShowOnboarding(false);
+  };
 
   const openAgent = (id: string) => {
     // The Manager is a root-level view; opening it goes to the Manager tab.
@@ -114,6 +132,7 @@ export default function App() {
         onNewAgent={addAgent}
         agents={agents}
         runs={runs}
+        managerName={agents.find((a) => a.isManager)?.name ?? 'Manager'}
         onOpenGraph={() => { setView('home'); setHomeTab('graph'); }}
         graphActive={view === 'home' && homeTab === 'graph'}
       />
@@ -162,6 +181,7 @@ export default function App() {
           <div className={view === 'settings' ? '' : 'hidden'}>
             <SettingsView
               models={models}
+              onRerunOnboarding={() => setShowOnboarding(true)}
               onAddModel={() => setDrawerForm({ kind: 'model', editing: emptyModel(), isNew: true })}
               onEditModel={(m) => setDrawerForm({ kind: 'model', editing: m, isNew: false })}
               onDeleteModel={deleteModel}
@@ -194,6 +214,9 @@ export default function App() {
         )}
       </div>
       <Toaster />
+      {showOnboarding && leadAgent && (
+        <Onboarding manager={leadAgent} models={models} onFinish={finishOnboarding} onSkip={dismissOnboarding} />
+      )}
       {update && <UpdatePrompt info={update} onDismiss={() => setUpdate(null)} />}
     </div>
   );

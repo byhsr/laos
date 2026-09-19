@@ -11,7 +11,9 @@ export function Sidebar({ agents, view, selectedAgentId, homeActive, onOpen, onB
   onOpen: (id: string) => void; onBrowse: () => void; onHome: () => void; collapsed: boolean;
 }) {
   const labels = useNavLabels((s) => s.labels);
-  const list = agents.filter((a) => !a.isManager);
+  // The lead agent always takes the first slot and cannot be removed.
+  const lead = agents.find((a) => a.isManager) ?? null;
+  const list = lead ? [lead, ...agents.filter((a) => !a.isManager)] : agents;
   const headerBtn = (active: boolean) =>
     `grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded-md transition-colors duration-150 ${active ? 'bg-line text-text' : 'text-muted hover:bg-line hover:text-text'}`;
 
@@ -37,7 +39,7 @@ export function Sidebar({ agents, view, selectedAgentId, homeActive, onOpen, onB
       <nav className={`grid min-h-0 gap-1 overflow-y-auto ${collapsed ? 'justify-items-center' : ''}`}>
         {list.length === 0 && !collapsed && <p className="px-1 text-[11px] leading-1.6 text-muted">No agents yet — use + in the topbar.</p>}
         {list.map((a) => {
-          const active = view === 'agent' && selectedAgentId === a.id;
+          const active = a.isManager ? view === 'manager' : (view === 'agent' && selectedAgentId === a.id);
           return (
             <Tooltip key={a.id} label={a.name} side="right">
               <button className={collapsed ? rowCollapsed(active) : row(active)} onClick={() => onOpen(a.id)}>
