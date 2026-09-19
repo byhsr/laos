@@ -93,6 +93,7 @@ fn main() {
       updater::check_for_update,
       updater::install_update,
       updater::restart_app,
+      updater::app_version,
       // Telegram
       telegram::list_telegram_logs,
       telegram::telegram_start_tunnel,

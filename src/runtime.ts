@@ -313,11 +313,14 @@ export async function cancelTask(id: string): Promise<void> {
 // In-app updater. The check/install live in Rust; the UI renders its own prompt.
 export type UpdateInfo = { version: string; currentVersion: string; notes?: string | null; date?: string | null };
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
-  try { return await invoke<UpdateInfo | null>('check_for_update'); } catch { return null; }
+  return await invoke<UpdateInfo | null>('check_for_update');
 }
 export async function installUpdate(): Promise<void> {
   await invoke('install_update');
 }
 export async function restartApp(): Promise<void> {
   await invoke('restart_app');
+}
+export async function appVersion(): Promise<string> {
+  try { return await invoke<string>('app_version'); } catch { return ''; }
 }

@@ -205,8 +205,8 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
       {tab === 'chat' && (
         <div className="relative flex h-[calc(100vh-120px)] min-h-[460px] flex-col">
-          {/* Chat history box — full height, input overlays on top of it */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
+          {/* Chat history — full height, no box; the input overlays on top of it */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="chat-log flex-1 scrollbar-thin scrollbar-color-mid overflow-y-auto px-4 pt-4 pb-24" ref={scrollRef}>
               {messages.map((m, i) => (
                 <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} last:mb-0`}>
@@ -224,7 +224,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
           </div>
           {error && <p className="absolute bottom-[68px] left-4 text-[11px] text-[#f87171]" style={{ margin: 0 }}>{error}</p>}
           {/* Input overlays the chat, floating at the bottom */}
-          <div className="absolute right-0 bottom-0 left-0 flex items-end gap-3 rounded-b-[16px] bg-gradient-to-t from-[var(--panel)] via-[var(--panel)]/85 to-transparent p-3 pt-6">
+          <div className="absolute right-0 bottom-0 left-0 flex items-end gap-3 bg-gradient-to-t from-[var(--color-bg)] via-[var(--color-bg)]/85 to-transparent p-3 pt-6">
             <div className="absolute right-3 bottom-[calc(100%+8px)] left-3 z-[30]">
               <ConfirmDialog />
             </div>

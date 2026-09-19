@@ -166,7 +166,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
 
       {tab === 'chat' && (
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div ref={scrollRef} className="chat-log flex-1 scrollbar-thin scrollbar-color-mid overflow-y-auto px-4 pt-4 pb-24">
               {messages.map((m, i) => (
                 <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} last:mb-0`}>
@@ -182,7 +182,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
           </div>
 
           {/* Input overlays the chat, floating at the bottom */}
-          <div className="absolute right-0 bottom-0 left-0 flex items-end gap-3 rounded-b-[16px] bg-gradient-to-t from-[var(--panel)] via-[var(--panel)]/85 to-transparent p-3 pt-6">
+          <div className="absolute right-0 bottom-0 left-0 flex items-end gap-3 bg-gradient-to-t from-[var(--color-bg)] via-[var(--color-bg)]/85 to-transparent p-3 pt-6">
             <div className="absolute right-3 bottom-[calc(100%+8px)] left-3 z-[30]">
               <ConfirmDialog />
             </div>

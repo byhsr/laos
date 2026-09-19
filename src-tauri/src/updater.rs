@@ -50,3 +50,9 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
 pub fn restart_app(app: AppHandle) {
   app.restart();
 }
+
+// The running app's version, so Settings can show what's installed.
+#[tauri::command]
+pub fn app_version() -> String {
+  env!("CARGO_PKG_VERSION").to_string()
+}

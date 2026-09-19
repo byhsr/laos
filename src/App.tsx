@@ -68,10 +68,12 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
 
-  // Check for a new release shortly after launch — never blocks startup, and a
-  // failed/offline check is swallowed by checkForUpdate.
+  // Check for a new release shortly after launch — never blocks startup, and an
+  // offline/failed check is ignored.
   useEffect(() => {
-    const t = setTimeout(() => { checkForUpdate().then((u) => { if (u) setUpdate(u); }); }, 4000);
+    const t = setTimeout(() => {
+      checkForUpdate().then((u) => { if (u) setUpdate(u); }).catch(() => {});
+    }, 4000);
     return () => clearTimeout(t);
   }, []);
   const [view, setView] = useState<View>('home');

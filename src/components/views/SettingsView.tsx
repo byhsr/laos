@@ -1,7 +1,10 @@
-import { useState } from 'react';
-import { Settings } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { RefreshCw, Settings } from 'lucide-react';
 import type { ModelConfig } from '../../types';
 import { ModelsView } from './ModelsView';
+import { UpdatePrompt } from '../ui/UpdatePrompt';
+import { toast } from '../../hooks/useToast';
+import { appVersion, checkForUpdate, type UpdateInfo } from '../../runtime';
 
 type SettingsTab = 'general' | 'models';
 
@@ -17,6 +20,24 @@ export function SettingsView({ models, onAddModel, onEditModel, onDeleteModel }:
   models: ModelConfig[]; onAddModel: () => void; onEditModel: (m: ModelConfig) => void; onDeleteModel: (id: string) => Promise<void>;
 }) {
   const [tab, setTab] = useState<SettingsTab>('general');
+  const [version, setVersion] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [found, setFound] = useState<UpdateInfo | null>(null);
+
+  useEffect(() => { appVersion().then(setVersion); }, []);
+
+  const checkUpdates = async () => {
+    setChecking(true);
+    try {
+      const u = await checkForUpdate();
+      if (u) setFound(u);
+      else toast('You are on the latest version.', 'success');
+    } catch (e) {
+      toast(typeof e === 'string' ? e : 'Could not check for updates.', 'error');
+    } finally {
+      setChecking(false);
+    }
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -46,7 +67,19 @@ export function SettingsView({ models, onAddModel, onEditModel, onDeleteModel }:
           </div>
           <p className="text-[12px] text-muted">Everything runs locally — your agents, tools, and data stay on this machine.</p>
         </div>
+
+        <div className="mt-4 max-w-[700px] rounded-[16px] border border-line bg-panel p-[22px]">
+          <h3 className="mb-[5px] text-[14px]">Updates</h3>
+          <p className="mb-4 text-[12px] leading-[1.7] text-muted">
+            {version ? `Installed version ${version}. ` : ''}Signed builds update in place from GitHub Releases.
+          </p>
+          <button className="primary" onClick={checkUpdates} disabled={checking}>
+            <RefreshCw size={13} className={checking ? 'animate-spin' : ''} />{checking ? 'Checking…' : 'Check for updates'}
+          </button>
+        </div>
       </div>
+
+      {found && <UpdatePrompt info={found} onDismiss={() => setFound(null)} />}
 
       <div className={tab === 'models' ? '' : 'hidden'}>
         <ModelsView embedded models={models} onAdd={onAddModel} onEdit={onEditModel} onDelete={onDeleteModel} />
