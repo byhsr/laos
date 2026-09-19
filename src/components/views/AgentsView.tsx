@@ -1,14 +1,12 @@
 import { useState } from 'react';
 import { Bot, Plus, Trash2 } from 'lucide-react';
-import type { Agent, Tool } from '../../types';
+import type { Agent } from '../../types';
 import { AgentAvatar } from '../ui/AgentAvatar';
 import { DeleteConfirm } from '../ui/DeleteConfirm';
 
-export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
-  agents: Agent[]; tools: Tool[]; onOpen: (id: string) => void; onCreate: () => void; onDelete: (id: string) => void;
+export function AgentsView({ agents, onOpen, onCreate, onDelete }: {
+  agents: Agent[]; onOpen: (id: string) => void; onCreate: () => void; onDelete: (id: string) => void;
 }) {
-  const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
-  const isReady = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent' && !!a.model.trim() && !!a.objective.trim();
   const visible = agents.filter((a) => !a.isManager);
   const [confirmTarget, setConfirmTarget] = useState<Agent | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -45,12 +43,8 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
                 <Trash2 size={13} />
               </button>
               <AgentAvatar agent={a} playing={hoveredId === a.id} fluid />
-              <div className="px-3.5 pt-3 pb-4 text-center">
+              <div className="px-3.5 py-3">
                 <b className="block truncate text-[14px]">{a.name}</b>
-                <small className="mt-1.5 block min-h-[32px] text-[11px] leading-[1.6] text-muted">{a.objective || 'Not configured yet'}</small>
-                <em className="mt-3 block truncate font-mono text-[10px] text-muted not-italic">
-                  {isReady(a) ? a.toolIds.map(toolName).join(' · ') || 'no tools' : '⚙ needs setup'}
-                </em>
               </div>
             </div>
           ))}
