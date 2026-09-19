@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Blocks, Globe, ListChecks, Maximize, Minimize2, Minus, PanelLeft, Plus, Send, Settings, Terminal, UserCog, Workflow, X } from 'lucide-react';
+import { Blocks, Bot, Globe, Home, ListChecks, Maximize, Minimize2, Minus, PanelLeft, Plus, Send, Settings, Terminal, UserCog, Workflow, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { Agent, Run, View } from '../types';
 import { Vitals } from './Vitals';
 import { navLabel, useNavLabels, type NavKey } from '../hooks/useNavLabels';
 import { Tooltip } from './ui/Tooltip';
 
-// Workspace sections live in the topbar; Home sits in the sidebar with the agents.
+// Every section lives in the topbar; the sidebar is purely the agent chat list.
 const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
+  { key: 'home', view: 'home', icon: <Home size={12} /> },
   { key: 'manager', view: 'manager', icon: <UserCog size={12} /> },
+  { key: 'agents', view: 'agents', icon: <Bot size={12} /> },
   { key: 'workflows', view: 'workflows', icon: <Workflow size={12} /> },
   { key: 'tasks', view: 'tasks', icon: <ListChecks size={12} /> },
   { key: 'workshop', view: 'workshop', icon: <Blocks size={12} /> },

@@ -155,9 +155,6 @@ export default function App() {
           view={view}
           selectedAgentId={selectedAgentId}
           onOpen={openAgent}
-          onBrowse={() => setView('agents')}
-          onHome={() => setView('home')}
-          homeActive={view === 'home' && homeTab !== 'graph'}
           onSettings={openAgentSettings}
           onTogglePin={(id, pinned) => {
             const a = agents.find((x) => x.id === id);

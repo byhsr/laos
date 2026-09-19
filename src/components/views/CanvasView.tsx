@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Bot, Check, ChevronRight, GitBranch, Play, Plus, Repeat, Save, ShieldCheck, Trash2, Webhook, Workflow as WorkflowIcon, X } from 'lucide-react';
 import type { Agent, Integration, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
 import { Dropdown } from '../ui/Dropdown';
+import { DeleteConfirm } from '../ui/DeleteConfirm';
 import { toast } from '../../hooks/useToast';
 import { listWorkflowRuns, type WorkflowRunRecord } from '../../runtime';
 
@@ -189,7 +190,6 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
   const [panning, setPanning] = useState<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const [search, setSearch] = useState('');
   const [confirmTarget, setConfirmTarget] = useState<Workflow | null>(null);
-  const [typedName, setTypedName] = useState('');
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const update = (fn: (w: Workflow) => Workflow) => {
@@ -249,8 +249,8 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
     toast('Workflow deleted', 'success');
   };
 
-  const openConfirm = (w: Workflow) => { setConfirmTarget(w); setTypedName(''); };
-  const closeConfirm = () => { setConfirmTarget(null); setTypedName(''); };
+  const openConfirm = (w: Workflow) => setConfirmTarget(w);
+  const closeConfirm = () => setConfirmTarget(null);
 
   const addNode = (type: WorkflowNodeType, x: number, y: number) => {
     const meta = TYPE_META[type];
@@ -846,33 +846,12 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
       })()}
 
       {confirmTarget && (
-        <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60" onClick={closeConfirm}>
-          <div className="w-[380px] max-w-[92vw] rounded-[16px] border border-line bg-panel p-5 shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-1 flex items-center gap-2">
-              <Trash2 size={15} className="text-[#f87171]" />
-              <b className="text-[14px]">Delete "{confirmTarget.name}"?</b>
-            </div>
-            <p className="mb-4 text-[12px] leading-1.6 text-muted">This permanently removes the workflow and its connections. Type the workflow's name to confirm.</p>
-            <input
-              value={typedName}
-              onChange={(e) => setTypedName(e.target.value)}
-              placeholder={confirmTarget.name}
-              className="mb-4 w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[13px] text-text outline-none focus:border-mid"
-              autoFocus
-            />
-            <div className="flex justify-end gap-2">
-              <button className="secondary" onClick={closeConfirm}>Cancel</button>
-              <button
-                className="primary"
-                style={{ background: '#e11d48', color: '#fff' }}
-                disabled={typedName.trim() !== confirmTarget.name}
-                onClick={() => { deleteWorkflow(confirmTarget.id); closeConfirm(); }}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeleteConfirm
+          name={confirmTarget.name}
+          description="This permanently removes the workflow and its connections. Type the workflow's name to confirm."
+          onCancel={closeConfirm}
+          onConfirm={() => { deleteWorkflow(confirmTarget.id); closeConfirm(); }}
+        />
       )}
     </div>
   );

@@ -12,6 +12,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Drawer } from '../ui/Drawer';
 import { Dropdown } from '../ui/Dropdown';
 import { AgentAvatar, PersonaPicker } from '../ui/AgentAvatar';
+import { Checkbox } from '../ui/Checkbox';
 import { toast } from '../../hooks/useToast';
 import { deleteChatSession, getChatSession, listChatSessions } from '../../runtime';
 
@@ -340,16 +341,14 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
             />
 
             <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">PERMISSIONS</label>
-            <div className="mt-1.5 flex flex-wrap gap-3">
+            <div className="mt-1.5 -mx-2">
               {(['network', 'files', 'host_fs'] as const).map((p) => (
-                <label key={p} className="flex items-center gap-1.5 text-[12px]">
-                  <input
-                    type="checkbox"
-                    checked={mgrDraft.permissions.includes(p)}
-                    onChange={() => setMgrDraft({ ...mgrDraft, permissions: mgrDraft.permissions.includes(p) ? mgrDraft.permissions.filter((x) => x !== p) : [...mgrDraft.permissions, p] })}
-                  />
-                  {p}
-                </label>
+                <Checkbox
+                  key={p}
+                  checked={mgrDraft.permissions.includes(p)}
+                  onChange={(next) => setMgrDraft({ ...mgrDraft, permissions: next ? [...mgrDraft.permissions, p] : mgrDraft.permissions.filter((x) => x !== p) })}
+                  label={p}
+                />
               ))}
             </div>
 

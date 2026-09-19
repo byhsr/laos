@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Bot, Plus, Trash2 } from 'lucide-react';
 import type { Agent, Tool } from '../../types';
 import { AgentAvatar } from '../ui/AgentAvatar';
+import { DeleteConfirm } from '../ui/DeleteConfirm';
 
 export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
   agents: Agent[]; tools: Tool[]; onOpen: (id: string) => void; onCreate: () => void; onDelete: (id: string) => void;
@@ -10,11 +11,10 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
   const isReady = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent' && !!a.model.trim() && !!a.objective.trim();
   const visible = agents.filter((a) => !a.isManager);
   const [confirmTarget, setConfirmTarget] = useState<Agent | null>(null);
-  const [typedName, setTypedName] = useState('');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
-  const openConfirm = (a: Agent) => { setConfirmTarget(a); setTypedName(''); };
-  const closeConfirm = () => { setConfirmTarget(null); setTypedName(''); };
+  const openConfirm = (a: Agent) => setConfirmTarget(a);
+  const closeConfirm = () => setConfirmTarget(null);
 
   return (
     <>
@@ -58,33 +58,12 @@ export function AgentsView({ agents, tools, onOpen, onCreate, onDelete }: {
       )}
 
       {confirmTarget && (
-        <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60" onClick={closeConfirm}>
-          <div className="w-[380px] max-w-[92vw] rounded-[16px] border border-line bg-panel p-5 shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-1 flex items-center gap-2">
-              <Trash2 size={15} className="text-[#f87171]" />
-              <b className="text-[14px]">Delete "{confirmTarget.name}"?</b>
-            </div>
-            <p className="mb-4 text-[12px] leading-1.6 text-muted">This permanently removes the agent and its runs. Type the agent's name to confirm.</p>
-            <input
-              value={typedName}
-              onChange={(e) => setTypedName(e.target.value)}
-              placeholder={confirmTarget.name}
-              className="mb-4 w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[13px] text-text outline-none focus:border-mid"
-              autoFocus
-            />
-            <div className="flex justify-end gap-2">
-              <button className="secondary" onClick={closeConfirm}>Cancel</button>
-              <button
-                className="primary"
-                style={{ background: '#e11d48', color: '#fff' }}
-                disabled={typedName.trim() !== confirmTarget.name}
-                onClick={() => { onDelete(confirmTarget.id); closeConfirm(); }}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeleteConfirm
+          name={confirmTarget.name}
+          description="This permanently removes the agent and its configuration. Type the agent's name to confirm."
+          onCancel={closeConfirm}
+          onConfirm={() => { onDelete(confirmTarget.id); closeConfirm(); }}
+        />
       )}
     </>
   );

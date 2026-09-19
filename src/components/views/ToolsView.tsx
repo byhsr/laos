@@ -3,6 +3,7 @@ import { Check, Plus, Trash2, Wrench } from 'lucide-react';
 import type { Integration, Tool, ToolParam } from '../../types';
 import { Drawer } from '../ui/Drawer';
 import { Dropdown } from '../ui/Dropdown';
+import { Checkbox } from '../ui/Checkbox';
 
 export const TOOL_KINDS: { kind: string; integration: string; desc: string }[] = [
   { kind: 'api', integration: 'http', desc: 'Call any REST API with configured params' },
@@ -162,15 +163,19 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
                 <div key={i} className="rounded-[10px] border border-line bg-panel2 p-2.5">
                   <div className="flex flex-wrap gap-1.5">
                     <input value={p.name} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], name: e.target.value }; setParams(ps); }} placeholder="paramName" className={`${inputCls} min-w-[120px] flex-1`} />
-                    <select value={p.type} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], type: e.target.value }; setParams(ps); }} className={`${inputCls} w-28 shrink-0`}>
-                      {PARAM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
+                    <div className="w-28 shrink-0">
+                      <Dropdown value={p.type} options={PARAM_TYPES.map((t) => ({ value: t, label: t }))} onChange={(v) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], type: v }; setParams(ps); }} />
+                    </div>
                     <button className="secondary shrink-0" onClick={() => setParams((form.config.params ?? []).filter((_, j) => j !== i))}><Trash2 size={12} /></button>
                   </div>
                   <input value={p.description} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], description: e.target.value }; setParams(ps); }} placeholder="What is this param? The LLM uses this to fill it." className={`${inputCls} mt-1.5`} />
-                  <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted">
-                    <input type="checkbox" checked={p.required} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], required: e.target.checked }; setParams(ps); }} />Required
-                  </label>
+                  <div className="-mx-2 mt-1.5">
+                    <Checkbox
+                      checked={p.required}
+                      onChange={(next) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], required: next }; setParams(ps); }}
+                      label="Required"
+                    />
+                  </div>
                 </div>
               ))}
               <button className="secondary justify-self-start" onClick={() => setParams([...(form.config.params ?? []), { name: '', type: 'string', description: '', required: false }])}><Plus size={12} />Add parameter</button>
@@ -181,10 +186,8 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
         <label className={labelCls}>DESCRIPTION</label>
         <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} placeholder="When should the agent use this? What does it return?" className={`${inputCls} resize-y`} />
 
-        <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <label style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-            <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />Enabled
-          </label>
+        <div className="-mx-2 mt-3.5">
+          <Checkbox checked={form.enabled} onChange={(next) => setForm({ ...form, enabled: next })} label="Enabled" hint="available to agents" />
         </div>
 
         {error && <p style={{ fontSize: 11, color: '#f87171', margin: '10px 0 0' }}>{error}</p>}

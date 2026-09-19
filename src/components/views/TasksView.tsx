@@ -3,6 +3,7 @@ import { Play, Trash2 } from 'lucide-react';
 import type { Agent, Task } from '../../types';
 import { useTasksStore } from '../../hooks/useTasks';
 import { toast } from '../../hooks/useToast';
+import { Dropdown } from '../ui/Dropdown';
 
 const STATUS_COLOR: Record<string, string> = {
   pending: 'text-[#facc15]',
@@ -39,10 +40,13 @@ export function TasksView({ agents }: { agents: Agent[] }) {
 
       <div className="mb-5 max-w-[900px] rounded-[16px] border border-line bg-panel p-[22px]">
         <label className="mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">Assign to</label>
-        <select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="mb-3 w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] text-text outline-none focus:border-mid">
-          <option value="">Select agent…</option>
-          {agents.filter((a) => !a.isManager).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
+        <div className="mb-3">
+          <Dropdown
+            value={agentId}
+            options={[{ value: '', label: 'Select agent…' }, ...agents.filter((a) => !a.isManager).map((a) => ({ value: a.id, label: a.name }))]}
+            onChange={setAgentId}
+          />
+        </div>
         <label className="mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">Task</label>
         <textarea rows={2} value={input} onChange={(e) => setInput(e.target.value)} placeholder="What should the agent do?" className="mb-3 w-full resize-none rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] text-text outline-none placeholder:text-muted focus:border-mid" />
         <label className="mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">Context (optional)</label>

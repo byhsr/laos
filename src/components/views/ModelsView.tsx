@@ -3,6 +3,7 @@ import { Check } from 'lucide-react';
 import type { ModelConfig } from '../../types';
 import { Drawer } from '../ui/Drawer';
 import { Dropdown } from '../ui/Dropdown';
+import { Checkbox } from '../ui/Checkbox';
 
 export function ModelsView({ models, onAdd, onEdit, onDelete, embedded = false }: {
   models: ModelConfig[]; onAdd: () => void; onEdit: (m: ModelConfig) => void; onDelete: (id: string) => Promise<void>; embedded?: boolean;
@@ -97,10 +98,8 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
           </>
         )}
 
-        <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <label style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-            <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />Enabled
-          </label>
+        <div className="-mx-2 mt-3.5">
+          <Checkbox checked={form.enabled} onChange={(next) => setForm({ ...form, enabled: next })} label="Enabled" hint="available to agents" />
         </div>
 
         {error && <p style={{ fontSize: 11, color: '#f87171', margin: '10px 0 0' }}>{error}</p>}

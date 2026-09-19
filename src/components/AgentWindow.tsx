@@ -14,8 +14,19 @@ import { useConfirmStore } from '../hooks/useConfirm';
 import { useShallow } from 'zustand/react/shallow';
 import { StreamIndicator } from './ui/StreamIndicator';
 import { ConfirmDialog } from './ui/ConfirmDialog';
+import { DeleteConfirm } from './ui/DeleteConfirm';
+import { Checkbox } from './ui/Checkbox';
 
 const isComplete = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent' && !!a.model.trim() && !!a.objective.trim();
+
+// Config field styling lives in one place so every control matches.
+const FIELD_LABEL = 'mb-1.5 block text-[10.5px] font-semibold tracking-[0.09em] text-muted uppercase';
+const FIELD = 'w-full rounded-lg border border-line bg-panel2 px-3 py-2.5 text-[13px] text-text outline-none transition-colors placeholder:text-muted focus:border-mid';
+const PERMISSIONS = [
+  { key: 'network', label: 'Network', hint: 'http / api' },
+  { key: 'files', label: 'Files', hint: 'sandboxed' },
+  { key: 'host_fs', label: 'Host filesystem', hint: 'whole device' },
+] as const;
 
 // Safe date formatting — DB timestamps can be empty/malformed, and new Date('')
 // throws, which would blank the whole screen.
@@ -58,6 +69,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState<Agent>(agent);
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
@@ -191,7 +203,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     { key: 'config', label: 'Settings', icon: <Settings size={13} />, onSelect: () => setTab('config') },
     { key: 'new', label: 'New chat', icon: <MessageSquarePlus size={13} />, onSelect: () => { void newChat(); } },
     { key: 'reset', label: 'Reset memory', icon: <RotateCcw size={13} />, onSelect: () => { void resetMemory(); } },
-    { key: 'delete', label: 'Delete agent', icon: <Trash2 size={13} />, danger: true, onSelect: () => { void onDelete(agent.id); } },
+    { key: 'delete', label: 'Delete agent', icon: <Trash2 size={13} />, danger: true, onSelect: () => setConfirmDelete(true) },
   ];
 
   return (
@@ -354,86 +366,123 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       )}
 
       {tab === 'config' && (
-        <div className="config-grid mt-4 grid h-[calc(100vh-210px)] min-h-[420px] items-stretch gap-[22px]" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
-          <div className="config-main flex min-h-0 flex-col rounded-lg border border-line bg-panel p-[22px]">
-            <label className="block flex-none text-[11px] font-semibold text-muted">OBJECTIVE / PROMPT</label>
+        <div className="config-grid mt-5 grid h-[calc(100vh-200px)] min-h-[440px] items-stretch gap-5" style={{ gridTemplateColumns: 'minmax(0, 1fr) 340px' }}>
+          {/* Primary editor */}
+          <div className="config-main flex min-h-0 flex-col rounded-[16px] border border-line bg-panel p-6">
+            <label className={FIELD_LABEL}>Objective / prompt</label>
             <textarea
               value={draft.objective}
               onChange={(e) => setDraft({ ...draft, objective: e.target.value })}
               placeholder="Describe what this agent should do, its role, how it should behave, what format to return…"
-              className="prompt-editor mt-[7px] min-h-[300px] w-full flex-1 resize-none rounded-lg border border-line bg-panel2 px-4 py-3.5 font-sans text-[15px] leading-[1.7] text-text outline-none placeholder:text-muted focus:border-mid"
+              className="prompt-editor mt-2 min-h-[300px] w-full flex-1 resize-none rounded-lg border border-line bg-panel2 px-4 py-4 font-sans text-[15px] leading-[1.75] text-text outline-none transition-colors placeholder:text-muted focus:border-mid"
             />
           </div>
 
-          <div className="config-side self-start rounded-lg border border-line bg-panel p-[22px]">
-            <label className="block text-[11px] font-semibold text-muted">NAME</label>
-            <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} style={{ width: '100%', background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, padding: '9px 12px', color: 'var(--text)' }} />
-
-            <label className="mt-3.5 block text-[11px] font-semibold text-muted">MODEL</label>
-            <Dropdown
-              value={draft.model}
-              options={models.map((m) => ({ value: m.id, label: m.label }))}
-              onChange={(v) => setDraft({ ...draft, model: v })}
-            />
-
-            <label className="mt-3.5 block text-[11px] font-semibold text-muted">PERSONA</label>
-            <PersonaPicker value={draft.persona ?? 'ai-orb'} onChange={(v) => setDraft({ ...draft, persona: v })} />
-            <div className="mt-2 flex items-center gap-2">
-              <AgentAvatar agent={{ ...draft, persona: draft.persona ?? 'ai-orb' }} size={28} />
+          {/* Config rail */}
+          <div className="config-side flex max-h-full min-h-0 flex-col gap-5 overflow-y-auto rounded-[16px] border border-line bg-panel p-6">
+            <div>
+              <label className={FIELD_LABEL}>Name</label>
+              <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Agent name" className={FIELD} />
             </div>
 
-            <label className="mt-3.5 block text-[11px] font-semibold text-muted">AVATAR</label>
-            <div className="mt-1.5 flex items-center gap-2">
-              <input ref={avatarRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden" onChange={onPickAvatar} />
-              <button type="button" className="secondary" onClick={() => avatarRef.current?.click()}>Upload image</button>
-              {draft.avatar && (
-                <button type="button" className="secondary" onClick={() => setDraft({ ...draft, avatar: '' })}>Remove</button>
+            <div>
+              <label className={FIELD_LABEL}>Model</label>
+              <Dropdown
+                value={draft.model}
+                options={models.map((m) => ({ value: m.id, label: m.label }))}
+                onChange={(v) => setDraft({ ...draft, model: v })}
+              />
+            </div>
+
+            <div>
+              <label className={FIELD_LABEL}>Look</label>
+              <div className="flex items-center gap-3">
+                <AgentAvatar agent={{ ...draft, persona: draft.persona ?? 'ai-orb' }} size={40} playing />
+                <div className="min-w-0 flex-1">
+                  <PersonaPicker value={draft.persona ?? 'ai-orb'} onChange={(v) => setDraft({ ...draft, persona: v })} />
+                </div>
+              </div>
+              <div className="mt-2.5 flex items-center gap-2">
+                <input ref={avatarRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden" onChange={onPickAvatar} />
+                <button type="button" className="secondary" onClick={() => avatarRef.current?.click()}>Upload image</button>
+                {draft.avatar && (
+                  <button type="button" className="secondary" onClick={() => setDraft({ ...draft, avatar: '' })}>Remove</button>
+                )}
+              </div>
+              <p className="mt-2 text-[10.5px] leading-1.5 text-muted">PNG, JPEG, GIF or WebP up to 2 MB — overrides the persona.</p>
+            </div>
+
+            <div>
+              <label className={FIELD_LABEL}>Tools</label>
+              <MultiDropdown
+                values={draft.toolIds}
+                options={enabledTools.map((t) => ({ value: t.id, label: t.name }))}
+                onChange={(v) => setDraft({ ...draft, toolIds: v })}
+                placeholder="Select tools…"
+              />
+            </div>
+
+            <div>
+              <label className={FIELD_LABEL}>Skills</label>
+              <MultiDropdown
+                values={draft.skillIds ?? []}
+                options={skills.map((s) => ({ value: s.id, label: s.name }))}
+                onChange={(v) => setDraft({ ...draft, skillIds: v })}
+                placeholder="Select skills…"
+              />
+            </div>
+
+            <div>
+              <label className={FIELD_LABEL}>Integrations</label>
+              {integrations.filter((i) => i.connected).length === 0 ? (
+                <p className="px-2 py-1 text-[11.5px] leading-1.6 text-muted">None connected yet — add one in Workshop → Integrations.</p>
+              ) : (
+                <div className="-mx-2">
+                  {integrations.filter((i) => i.connected).map((i) => (
+                    <Checkbox
+                      key={i.id}
+                      checked={draft.integrations.includes(i.id)}
+                      onChange={(next) => setDraft({ ...draft, integrations: next ? [...draft.integrations, i.id] : draft.integrations.filter((x) => x !== i.id) })}
+                      label={i.name}
+                      hint={`${i.actions.length} actions`}
+                    />
+                  ))}
+                </div>
               )}
             </div>
-            <p className="mt-1.5 text-[10.5px] leading-1.5 text-muted">PNG, JPEG, GIF or WebP up to 2 MB. Overrides the persona.</p>
 
-            <label className="mt-3.5 block text-[11px] font-semibold text-muted">TOOLS</label>
-            <MultiDropdown
-              values={draft.toolIds}
-              options={enabledTools.map((t) => ({ value: t.id, label: t.name }))}
-              onChange={(v) => setDraft({ ...draft, toolIds: v })}
-              placeholder="Select tools…"
-            />
-
-            <label className="mt-3.5 block text-[11px] font-semibold text-muted">SKILLS</label>
-            <MultiDropdown
-              values={draft.skillIds ?? []}
-              options={skills.map((s) => ({ value: s.id, label: s.name }))}
-              onChange={(v) => setDraft({ ...draft, skillIds: v })}
-              placeholder="Select skills…"
-            />
-
-            <label className="mt-3.5 block text-[11px] font-semibold text-muted">INTEGRATIONS</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {integrations.filter((i) => i.connected).map((i) => (
-                <label key={i.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                  <input type="checkbox" checked={draft.integrations.includes(i.id)} onChange={() => setDraft({ ...draft, integrations: draft.integrations.includes(i.id) ? draft.integrations.filter((x) => x !== i.id) : [...draft.integrations, i.id] })} />
-                  {i.name}
-                  <span className="font-mono text-[10px] text-muted">({i.actions.length} actions)</span>
-                </label>
-              ))}
+            <div>
+              <label className={FIELD_LABEL}>Permissions</label>
+              <div className="-mx-2">
+                {PERMISSIONS.map((p) => (
+                  <Checkbox
+                    key={p.key}
+                    checked={draft.permissions.includes(p.key)}
+                    onChange={(next) => setDraft({ ...draft, permissions: next ? [...draft.permissions, p.key] : draft.permissions.filter((x) => x !== p.key) })}
+                    label={p.label}
+                    hint={p.hint}
+                  />
+                ))}
+              </div>
             </div>
 
-            <label className="mt-3.5 block text-[11px] font-semibold text-muted">PERMISSIONS</label>
-            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-              {(['network', 'files', 'host_fs'] as const).map((p) => (
-                <label key={p} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                  <input type="checkbox" checked={draft.permissions.includes(p)} onChange={() => setDraft({ ...draft, permissions: draft.permissions.includes(p) ? draft.permissions.filter((x) => x !== p) : [...draft.permissions, p] })} />{p}
-                </label>
-              ))}
+            <div className="mt-1 flex flex-col gap-2">
+              <button className="primary w-full" onClick={() => save(true)} disabled={!isComplete(draft)}>
+                <Check size={13} />Save &amp; start chatting
+              </button>
+              {error && <p className="text-[11px] leading-1.5 text-[#f87171]">{error}</p>}
             </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
-              <button className="primary" onClick={() => save(true)} disabled={!isComplete(draft)}><Check size={13} />Save &amp; start chatting</button>
-            </div>
-            {error && <p style={{ fontSize: 11, color: '#f87171', margin: '8px 0 0' }}>{error}</p>}
           </div>
         </div>
+      )}
+
+      {confirmDelete && (
+        <DeleteConfirm
+          name={agent.name}
+          description="This permanently removes the agent and its configuration. Type the agent's name to confirm."
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => { setConfirmDelete(false); void onDelete(agent.id); }}
+        />
       )}
     </div>
   );

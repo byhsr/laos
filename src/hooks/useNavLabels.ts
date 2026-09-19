@@ -2,13 +2,15 @@ import { create } from 'zustand';
 
 // User-renameable topbar sections. These are a per-machine UI preference, so they
 // live in localStorage rather than the app database.
-export type NavKey = 'home' | 'graph' | 'manager' | 'workflows' | 'tasks' | 'workshop' | 'runs' | 'telegram' | 'settings';
+export type NavKey = 'home' | 'graph' | 'manager' | 'agents' | 'workflows' | 'tasks' | 'workshop' | 'runs' | 'telegram' | 'settings';
 
 // Renameable navigation sections. The lead agent is deliberately absent: its
 // name is the agent record itself, edited in its own config.
 export const NAV_SECTIONS: { key: NavKey; label: string }[] = [
   { key: 'home', label: 'Home' },
   { key: 'graph', label: 'Graph' },
+  { key: 'manager', label: 'Laos' },
+  { key: 'agents', label: 'Agents' },
   { key: 'workflows', label: 'Workflows' },
   { key: 'tasks', label: 'Tasks' },
   { key: 'workshop', label: 'Workshop' },
