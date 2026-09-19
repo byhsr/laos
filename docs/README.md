@@ -58,8 +58,9 @@ docs/                        This documentation
 
 ## Dev harness
 
-Prerequisites: [Ollama](https://ollama.com) with `ollama pull qwen3:8b` for the default
-local model. Cloud providers (Groq / OpenRouter) need an API key saved in **Settings → Models**.
+Prerequisites: Node 22+ (see `.nvmrc`), [Ollama](https://ollama.com) with `ollama pull qwen3:8b`
+for the default local model. Cloud providers (Groq / OpenRouter) need an API key saved in
+**Settings → Models**.
 
 | Command | What it does |
 | --- | --- |
