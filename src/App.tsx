@@ -20,6 +20,7 @@ import { ModelFormDrawer } from './components/views/ModelsView';
 import { SettingsView } from './components/views/SettingsView';
 import { ManagerView } from './components/views/ManagerView';
 import { TasksView } from './components/views/TasksView';
+import { TelegramView } from './components/views/TelegramView';
 import { WorkshopView } from './components/views/WorkshopView';
 import { SkillFormDrawer } from './components/views/SkillsView';
 import { Toaster } from './components/ui/Toaster';
@@ -107,13 +108,23 @@ export default function App() {
       <Topbar
         collapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+        view={view}
+        setView={setView}
+        onNewAgent={addAgent}
         agents={agents}
         runs={runs}
         onOpenGraph={() => { setView('home'); setHomeTab('graph'); }}
         graphActive={view === 'home' && homeTab === 'graph'}
       />
       <div className="relative z-10 flex min-h-0 flex-1">
-        <Sidebar view={view} setView={setView} collapsed={sidebarCollapsed} />
+        <Sidebar
+          agents={agents}
+          view={view}
+          selectedAgentId={selectedAgentId}
+          onOpen={openAgent}
+          onBrowse={() => setView('agents')}
+          collapsed={sidebarCollapsed}
+        />
         <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-10 py-9">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
           <div className={`h-full ${view === 'home' ? '' : 'hidden'}`}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} runs={runs} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} onSaveAgent={persistAgent} onSaveWorkflow={saveWorkflow} tab={homeTab} onTabChange={setHomeTab} /></div>
@@ -130,6 +141,7 @@ export default function App() {
           </div>
           <div className={view === 'manager' ? '' : 'hidden'}><ManagerView agents={agents} integrations={integrations} models={models} /></div>
           <div className={view === 'tasks' ? '' : 'hidden'}><TasksView agents={agents} /></div>
+          <div className={view === 'telegram' ? '' : 'hidden'}><TelegramView /></div>
           <div className={view === 'workshop' ? '' : 'hidden'}>
             <WorkshopView
               skills={skills} tools={tools} integrations={integrations} runs={runs} agents={agents}

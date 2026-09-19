@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RefreshCw, RotateCcw, Send, Settings, Trash2 } from 'lucide-react';
+import { CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RotateCcw, Send, Settings, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from '../ui/ContextMenu';
 import type { Agent, Integration, ModelConfig, Task } from '../../types';
 import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
@@ -13,7 +13,7 @@ import { Drawer } from '../ui/Drawer';
 import { Dropdown } from '../ui/Dropdown';
 import { AgentAvatar, PersonaPicker } from '../ui/AgentAvatar';
 import { toast } from '../../hooks/useToast';
-import { deleteChatSession, getChatSession, listChatSessions, listTelegramLogs, type TelegramLogEntry } from '../../runtime';
+import { deleteChatSession, getChatSession, listChatSessions } from '../../runtime';
 
 const STATUS_COLOR: Record<string, string> = {
   pending: 'text-[#facc15]',
@@ -131,25 +131,11 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   };
 
   const activeTasks = tasks.filter((t) => t.status === 'pending' || t.status === 'running');
-  const [tab, setTab] = useState<'chat' | 'info' | 'telegram'>('chat');
-  const [telegramLogs, setTelegramLogs] = useState<TelegramLogEntry[]>([]);
-
-  const loadTelegramLogs = async () => {
-    setTelegramLogs(await listTelegramLogs());
-  };
-  useEffect(() => {
-    if (tab === 'telegram') {
-      loadTelegramLogs();
-      const iv = setInterval(loadTelegramLogs, 3000);
-      return () => clearInterval(iv);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab]);
+  const [tab, setTab] = useState<'chat' | 'info'>('chat');
 
   const menuItems: MenuItem[] = [
     { key: 'chat', label: 'Chat', icon: <MessageSquare size={13} />, active: tab === 'chat', onSelect: () => setTab('chat') },
     { key: 'info', label: 'Info', icon: <Info size={13} />, active: tab === 'info', onSelect: () => setTab('info') },
-    { key: 'telegram', label: 'Telegram', icon: <Send size={13} />, active: tab === 'telegram', onSelect: () => setTab('telegram') },
     { key: 'new', label: 'New chat', icon: <MessageSquarePlus size={13} />, dividerBefore: true, onSelect: () => {
       const m = agents.find((a) => a.id === managerId)?.model ?? models.find((x) => x.enabled)?.id ?? '';
       void newSession(managerId, m);
@@ -282,29 +268,6 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
               <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[11px]">/help</span>
               <CornerDownLeft size={12} className="mt-1 opacity-50" />
             </div>
-          </div>
-        </div>
-      )}
-
-      {tab === 'telegram' && (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="font-mono text-[11px] tracking-[1px] text-muted">TELEGRAM ACTIVITY</span>
-            <button className="secondary" onClick={loadTelegramLogs}><RefreshCw size={12} />Refresh</button>
-          </div>
-          <div className="runs-console flex-1 overflow-y-auto rounded-lg border border-line bg-inset p-3.5 font-mono text-[12px] leading-[1.6]">
-            {telegramLogs.length === 0 ? null : telegramLogs.map((l, i) => (
-              <div key={i} className="border-b border-[#1c1c1f] py-2 last:border-0">
-                <div className="flex items-center gap-3 text-[11px]">
-                  <span className={l.direction === 'in' ? 'text-[#38bdf8]' : 'text-[#22c55e]'}>{l.direction === 'in' ? '▸ IN' : '◂ OUT'}</span>
-                  <span className={`font-mono text-[11px] ${l.status === 'error' ? 'text-[#f87171]' : l.status === 'sent' ? 'text-[#22c55e]' : 'text-[#facc15]'}`}>{l.status}</span>
-                  <span className="ml-auto text-mid">{l.createdAt ? (() => { const d = new Date(l.createdAt); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString(); })() : ''}</span>
-                </div>
-                <div className="mt-1 text-[#d4d4d8]">in: {l.text}</div>
-                {l.reply && <div className="mt-0.5 text-[#a1a1aa]">out: {l.reply.length > 300 ? `${l.reply.slice(0, 300)}…` : l.reply}</div>}
-                {l.detail && <div className="mt-0.5 text-[#f87171]">detail: {l.detail}</div>}
-              </div>
-            ))}
           </div>
         </div>
       )}

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw, Settings } from 'lucide-react';
+import { RefreshCw, RotateCcw, Settings } from 'lucide-react';
 import type { ModelConfig } from '../../types';
 import { ModelsView } from './ModelsView';
 import { UpdatePrompt } from '../ui/UpdatePrompt';
 import { toast } from '../../hooks/useToast';
 import { appVersion, checkForUpdate, type UpdateInfo } from '../../runtime';
+import { NAV_SECTIONS, useNavLabels } from '../../hooks/useNavLabels';
 
 type SettingsTab = 'general' | 'models';
 
@@ -23,6 +24,10 @@ export function SettingsView({ models, onAddModel, onEditModel, onDeleteModel }:
   const [version, setVersion] = useState('');
   const [checking, setChecking] = useState(false);
   const [found, setFound] = useState<UpdateInfo | null>(null);
+
+  const navLabels = useNavLabels((s) => s.labels);
+  const setNavLabel = useNavLabels((s) => s.setLabel);
+  const resetNavLabels = useNavLabels((s) => s.reset);
 
   useEffect(() => { appVersion().then(setVersion); }, []);
 
@@ -76,6 +81,25 @@ export function SettingsView({ models, onAddModel, onEditModel, onDeleteModel }:
           <button className="primary" onClick={checkUpdates} disabled={checking}>
             <RefreshCw size={13} className={checking ? 'animate-spin' : ''} />{checking ? 'Checking…' : 'Check for updates'}
           </button>
+        </div>
+
+        <div className="mt-4 max-w-[700px] rounded-[16px] border border-line bg-panel p-[22px]">
+          <h3 className="mb-[5px] text-[14px]">Navigation</h3>
+          <p className="mb-4 text-[12px] leading-[1.7] text-muted">Rename the topbar sections. Leave a field blank to restore the default.</p>
+          <div className="grid gap-2">
+            {NAV_SECTIONS.map((s) => (
+              <label key={s.key} className="flex items-center gap-3">
+                <span className="w-[92px] shrink-0 font-mono text-[11px] uppercase tracking-[0.08em] text-muted">{s.label}</span>
+                <input
+                  value={navLabels[s.key] ?? ''}
+                  onChange={(e) => setNavLabel(s.key, e.target.value)}
+                  placeholder={s.label}
+                  className="min-w-0 flex-1 rounded-md border border-line bg-panel2 px-3 py-1.5 text-[12.5px] text-text outline-none focus:border-mid"
+                />
+              </label>
+            ))}
+          </div>
+          <button className="secondary mt-4" onClick={resetNavLabels}><RotateCcw size={12} />Reset names</button>
         </div>
       </div>
 
