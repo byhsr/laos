@@ -21,7 +21,7 @@ const isComplete = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent
 
 // Config field styling lives in one place so every control matches.
 const FIELD_LABEL = 'mb-1.5 block text-[10.5px] font-semibold tracking-[0.09em] text-muted uppercase';
-const FIELD = 'w-full rounded-lg border border-line bg-panel2 px-3 py-2.5 text-[13px] text-text outline-none transition-colors placeholder:text-muted focus:border-mid';
+const FIELD = 'w-full rounded-md border border-hairline bg-panel2 px-3 py-1.5 text-[12.5px] text-text outline-none transition-colors placeholder:text-muted focus:border-mid';
 const PERMISSIONS = [
   { key: 'network', label: 'Network', hint: 'http / api' },
   { key: 'files', label: 'Files', hint: 'sandboxed' },
@@ -384,20 +384,18 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       )}
 
       {tab === 'config' && (
-        <div className="config-grid mt-5 grid h-[calc(100vh-200px)] min-h-[440px] items-stretch gap-7" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
-          {/* The prompt is the work — give it the room */}
-          <div className="config-main flex min-h-0 flex-col rounded-[16px] border border-hairline bg-panel p-6">
-            <label className={FIELD_LABEL}>Objective / prompt</label>
-            <textarea
-              value={draft.objective}
-              onChange={(e) => setDraft({ ...draft, objective: e.target.value })}
-              placeholder="Describe what this agent should do, its role, how it should behave, what format to return…"
-              className="prompt-editor mt-2 min-h-[300px] w-full flex-1 resize-none rounded-lg border border-hairline bg-panel2 px-4 py-4 font-sans text-[15px] leading-[1.75] text-text outline-none transition-colors placeholder:text-muted focus:border-mid"
-            />
-          </div>
+        <div className="config-grid mt-5 grid h-[calc(100vh-200px)] min-h-[440px] items-stretch gap-5" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
+          {/* Prompt: a minimal outline, full height */}
+          <textarea
+            value={draft.objective}
+            onChange={(e) => setDraft({ ...draft, objective: e.target.value })}
+            placeholder="Prompt — describe what this agent should do, its role, how it should behave, what format to return…"
+            className="prompt-editor h-full w-full resize-none rounded-[16px] border border-hairline bg-transparent px-5 py-4 font-sans text-[15px] leading-[1.75] text-text outline-none transition-colors placeholder:text-muted focus:border-mid"
+          />
 
-          {/* Everything else stays quiet until asked for */}
-          <div className="config-side flex max-h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1">
+          {/* Sister panel: everything else, Save pinned to its bottom */}
+          <div className="config-side relative flex min-h-0 flex-col overflow-hidden rounded-[16px] border border-hairline bg-panel">
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto p-5">
             <div>
               <label className={FIELD_LABEL}>Name</label>
               <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Agent name" className={FIELD} />
@@ -453,7 +451,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               {integrations.filter((i) => i.connected).length === 0 ? (
                 <p className="px-2 py-1 text-[11.5px] leading-1.6 text-muted">None connected yet.</p>
               ) : (
-                <div className="-mx-2">
+                <div>
                   {integrations.filter((i) => i.connected).map((i) => (
                     <Checkbox
                       key={i.id}
@@ -468,7 +466,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             </Section>
 
             <Section title="Permissions" summary={draft.permissions.join(', ') || 'none'}>
-              <div className="-mx-2">
+              <div>
                 {PERMISSIONS.map((p) => (
                   <Checkbox
                     key={p.key}
@@ -481,7 +479,11 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               </div>
             </Section>
 
-            <div className="mt-auto flex items-center gap-3 border-t border-hairline pt-4">
+              {error && <p className="text-[11px] leading-1.5 text-[#f87171]">{error}</p>}
+            </div>
+
+            {/* The save bar sits at the panel's bottom; content scrolls beneath it */}
+            <div className="absolute right-0 bottom-0 left-0 flex items-center gap-3 border-t border-hairline bg-panel px-5 py-3.5">
               <button
                 className="primary"
                 onClick={() => save(true)}
@@ -493,7 +495,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                 <span className="font-mono text-[10.5px] text-muted">unsaved</span>
               )}
             </div>
-            {error && <p className="text-[11px] leading-1.5 text-[#f87171]">{error}</p>}
           </div>
         </div>
       )}

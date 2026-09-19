@@ -39,19 +39,19 @@ export function MultiDropdown({ values, options, onChange, placeholder }: {
 
   return (
     <div className="relative" ref={ref}>
-      <button type="button" className="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border border-hairline bg-panel2 px-3.5 py-2.5 text-left text-[13px] text-text transition-colors duration-150 hover:border-mid" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-hairline bg-panel2 px-3 py-1.5 text-left text-[12.5px] text-text transition-colors duration-150 hover:border-mid" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span className="overflow-hidden text-ellipsis whitespace-nowrap">
           {selected.length === 0 ? (placeholder ?? 'Select…') : selected.map((s) => s.label).join(', ')}
         </span>
         <ChevronRight size={13} className="rotate-90 text-muted transition-transform duration-150 group-aria-expanded:-rotate-90" />
       </button>
       {open && pos && createPortal(
-        <div ref={menuRef} className="glass-strong fixed z-[200] grid max-h-[260px] animate-[dropdown-in_140ms_ease-out] gap-1 overflow-y-auto rounded-2xl border border-hairline p-1.5 shadow-float" style={{ top: pos.top, left: pos.left, width: pos.width }}>
+        <div ref={menuRef} className="glass-strong fixed z-[200] grid max-h-[260px] animate-[dropdown-in_140ms_ease-out] gap-0.5 overflow-y-auto rounded-xl border border-hairline p-1 shadow-float" style={{ top: pos.top, left: pos.left, width: pos.width }}>
           {options.map((o) => {
             const checked = values.includes(o.value);
             return (
-              <button key={o.value} type="button" className={`w-full cursor-pointer rounded-lg border-0 px-3 py-2.5 text-left text-[13px] text-text transition-colors duration-150 ${checked ? 'bg-line font-semibold' : 'bg-transparent hover:bg-line'}`} onClick={() => toggle(o.value)}>
-                <span className={`mr-2 inline-grid h-4 w-4 place-items-center rounded-md border border-mid text-[11px] ${checked ? 'border-[var(--green)] bg-[var(--green)] text-[#09090b]' : 'bg-transparent text-transparent'}`}>{checked ? '✓' : ''}</span>
+              <button key={o.value} type="button" className={`w-full cursor-pointer rounded-md border-0 px-2.5 py-1.5 text-left text-[12.5px] text-text transition-colors duration-150 ${checked ? 'bg-line font-semibold' : 'bg-transparent hover:bg-line'}`} onClick={() => toggle(o.value)}>
+                <span className={`mr-2 inline-grid h-3.5 w-3.5 place-items-center rounded-[4px] border border-mid text-[10px] ${checked ? 'border-[var(--green)] bg-[var(--green)] text-[#09090b]' : 'bg-transparent text-transparent'}`}>{checked ? '✓' : ''}</span>
                 {o.label}
               </button>
             );

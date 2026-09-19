@@ -149,6 +149,21 @@ main::-webkit-scrollbar-thumb:hover { background: var(--color-mid); border: 3px 
 @keyframes step-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ---------------------------------------------------------------------------
+   Focus treatment
+   The app carries its own subtle affordances, so the browser's focus ring (and
+   the focus border tint on fields) reads as noise. Suppressed here rather than
+   in every component.
+--------------------------------------------------------------------------- */
+input:focus, textarea:focus, select:focus, button:focus, a:focus, [tabindex]:focus,
+input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--color-hairline) !important;
+}
+
+/* ---------------------------------------------------------------------------
    Markdown-rendered LLM responses
 --------------------------------------------------------------------------- */
 .markdown-body > *:first-child { margin-top: 0; }
