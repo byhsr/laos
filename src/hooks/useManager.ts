@@ -16,7 +16,7 @@ type ManagerState = {
   currentAgentId: string | null;
   conversations: Record<string, ChatEntry[]>; // per-agent history, never destroyed on switch
   messages: ChatEntry[]; // current view (active session)
-  sessionId: string | null;
+  sessionIds: Record<string, string | null>; // per-agent active session
   busy: boolean;
   setCurrentAgent: (agentId: string | null) => void;
   newSession: (agentId: string, model: string) => Promise<void>;
@@ -29,7 +29,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
   currentAgentId: null,
   conversations: {},
   messages: [],
-  sessionId: null,
+  sessionIds: {},
   busy: false,
 
   setCurrentAgent: (agentId) => {
@@ -53,7 +53,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       const conv = { ...s.conversations, [agentId]: entries };
       return {
         conversations: conv,
-        sessionId: s.currentAgentId === agentId || agentId === 'manager' ? sessionId : s.sessionId,
+        sessionIds: { ...s.sessionIds, [agentId]: sessionId },
         messages: (s.currentAgentId === agentId || agentId === 'manager') ? entries : s.messages,
       };
     });
@@ -63,33 +63,33 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     await clearAgentMemory(agentId);
     set((s) => {
       const conv = { ...s.conversations, [agentId]: [] };
-      return { conversations: conv, messages: s.currentAgentId === agentId ? [] : s.messages, sessionId: null };
+      return { conversations: conv, messages: s.currentAgentId === agentId ? [] : s.messages, sessionIds: { ...s.sessionIds, [agentId]: null } };
     });
   },
 
   newSession: async (agentId, model) => {
     // Fire-and-forget summarize the old session (don't block the UI — New chat
     // must feel instant). Create the new session and clear the view immediately.
-    const cur = get().sessionId;
+    const cur = get().sessionIds[agentId];
     if (cur) { void closeSession(cur, agentId, model); }
     const sess = await createChatSession(agentId, 'Chat');
     set((s) => {
       const conv = { ...s.conversations, [agentId]: [] };
-      return { conversations: conv, sessionId: sess.id, messages: [] };
+      return { conversations: conv, sessionIds: { ...s.sessionIds, [agentId]: sess.id }, messages: [] };
     });
   },
 
   send: async (message, managerAgent) => {
     // Lazily create a session on the first message so every chat is recorded,
     // titled by the first user message.
-    if (!get().sessionId) {
+    if (!get().sessionIds[managerAgent.id]) {
       const sess = await createChatSession(managerAgent.id, titleFrom(message));
-      set({ sessionId: sess.id });
+      set((s) => ({ sessionIds: { ...s.sessionIds, [managerAgent.id]: sess.id } }));
     } else {
       // If this is the first real message in a default-titled session, name it.
       const conv = get().conversations[managerAgent.id] ?? [];
       if (conv.filter((m) => m.role === 'user').length === 0) {
-        await renameChatSession(get().sessionId!, titleFrom(message));
+        await renameChatSession(get().sessionIds[managerAgent.id]!, titleFrom(message));
       }
     }
     set({ busy: true });
@@ -113,7 +113,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       }, (confirmReq) => {
         // Pop the confirmation dialog; the backend waits for the decision.
         useConfirmStore.getState().request(confirmReq);
-      }, get().sessionId ?? undefined);
+      }, get().sessionIds[managerAgent.id] ?? undefined);
       useRunsStore.getState().loadRuns();
     } catch (e) {
       const msg = typeof e === 'string' ? e : (e instanceof Error ? e.message : 'Manager failed to respond.');

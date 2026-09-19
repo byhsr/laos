@@ -7,11 +7,13 @@ import { MultiDropdown } from './ui/MultiDropdown';
 import { AgentAvatar, PersonaPicker } from './ui/AgentAvatar';
 import { Markdown } from './ui/Markdown';
 import { toast } from '../hooks/useToast';
-import { listChatSessions, getChatSession, createChatSession, deleteChatSession, streamChat } from '../runtime';
+import { listChatSessions, getChatSession, createChatSession, deleteChatSession, closeSession, streamChat } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
 import { useManagerStore, type ChatEntry } from '../hooks/useManager';
+import { useConfirmStore } from '../hooks/useConfirm';
 import { useShallow } from 'zustand/react/shallow';
 import { StreamIndicator } from './ui/StreamIndicator';
+import { ConfirmDialog } from './ui/ConfirmDialog';
 
 const isComplete = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent' && !!a.model.trim() && !!a.objective.trim();
 
@@ -115,19 +117,21 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     const agentToRun = agent;
     // Ensure a chat session exists so this agent's messages are recorded and
     // the visible chat stays session-scoped.
-    const { sessionId } = useManagerStore.getState();
-    let sid = sessionId;
+    let sid = useManagerStore.getState().sessionIds[agent.id];
     if (!sid) {
       const sess = await createChatSession(agent.id, 'Chat');
       sid = sess.id;
-      useManagerStore.setState({ sessionId: sid });
+      useManagerStore.setState((s) => ({ sessionIds: { ...s.sessionIds, [agent.id]: sid } }));
     }
     let buffer = '';
     try {
       await streamChat(agentToRun, text, false, (delta) => {
         buffer += delta;
         setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: buffer } : m)));
-      }, undefined, sid);
+      }, (confirmReq) => {
+        // Agent tools that need approval (e.g. run_command) pop the same panel.
+        useConfirmStore.getState().request(confirmReq);
+      }, sid);
       useRunsStore.getState().loadRuns();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -149,8 +153,11 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   const statusColor = (s: string) => s === 'running' ? 'text-[#facc15]' : s === 'completed' ? 'text-[#22c55e]' : 'text-[#f87171]';
 
   const newChat = async () => {
+    // Close the outgoing session so it gets summarized into day context.
+    const cur = useManagerStore.getState().sessionIds[agent.id];
+    if (cur) { void closeSession(cur, agent.id, agent.model); }
     const sess = await createChatSession(agent.id, 'Chat');
-    useManagerStore.setState({ sessionId: sess.id });
+    useManagerStore.setState((s) => ({ sessionIds: { ...s.sessionIds, [agent.id]: sess.id } }));
     setMessages(() => []);
     setViewingSession(null);
     setTab('chat');
@@ -218,6 +225,9 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
           {error && <p className="absolute bottom-[68px] left-4 text-[11px] text-[#f87171]" style={{ margin: 0 }}>{error}</p>}
           {/* Input overlays the chat, floating at the bottom */}
           <div className="absolute right-0 bottom-0 left-0 flex items-end gap-3 rounded-b-[16px] bg-gradient-to-t from-[var(--panel)] via-[var(--panel)]/85 to-transparent p-3 pt-6">
+            <div className="absolute right-3 bottom-[calc(100%+8px)] left-3 z-[30]">
+              <ConfirmDialog />
+            </div>
             <textarea
               ref={inputRef}
               rows={1} placeholder={`Message ${agent.name}…`}

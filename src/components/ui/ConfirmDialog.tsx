@@ -7,6 +7,7 @@ const TOOL_LABELS: Record<string, string> = {
   create_workflow: 'Create workflow', update_workflow: 'Update workflow', delete_workflow: 'Delete workflow',
   run_workflow: 'Run workflow', configure_integration: 'Configure integration',
   create_task: 'Run task', cancel_task: 'Cancel task', delegate_task: 'Delegate task',
+  run_command: 'Run command',
 };
 
 // Inline confirmation panel, rendered above the chat input (not a center modal).
@@ -29,7 +30,7 @@ export function ConfirmDialog() {
     <div className="glass-strong animate-[dropdown-in_160ms_ease-out] rounded-2xl border border-[#facc15]/35 p-4 shadow-float">
       <div className="mb-2 flex items-center gap-2">
         <ShieldAlert size={15} className="text-[#facc15]" />
-        <b className="text-[13px]">Laos wants to {title}</b>
+        <b className="text-[13px]">Confirm: {title}</b>
       </div>
       <div className="mb-3 grid gap-2">
         {entries.length === 0 && <p className="text-[12px] text-muted">No parameters.</p>}

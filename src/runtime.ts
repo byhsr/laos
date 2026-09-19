@@ -16,11 +16,12 @@ export async function streamChat(
     if (raw.startsWith('{')) {
       try {
         const evt = JSON.parse(raw);
-        if (evt.type === 'confirm' && onConfirm) {
-          onConfirm({ requestId: evt.requestId, tool: evt.tool, args: evt.args ?? {} });
+        if (evt.type === 'confirm') {
+          // Never let a control event fall through into the message log.
+          onConfirm?.({ requestId: evt.requestId, tool: evt.tool, args: evt.args ?? {} });
           return;
         }
-      } catch { /* fall through to delta */ }
+      } catch { /* not a control event — treat as a delta */ }
     }
     onDelta(raw);
   };

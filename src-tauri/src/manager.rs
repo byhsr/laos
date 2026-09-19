@@ -10,7 +10,7 @@ use crate::agents::{api_key_for, build_workspace_context, skills_prompt, tool_sc
 use crate::db::{db, now};
 use crate::http;
 use crate::integrations::{integration_definitions, save_integration_config};
-use crate::memory::build_context_bundle;
+use crate::memory::{build_context_bundle, load_memory, MEMORY_SUMMARY_KEY};
 use crate::models::*;
 use crate::storage::{manager_default_model, parse_json_vec, save_agent, save_workflow};
 use crate::tasks::{create_task, delegate_task, list_tasks, task_from_row};
@@ -229,7 +229,19 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     }
   }
 
-  let context = build_manager_system_prompt(&conn, "")?;
+  // Inject the Manager's compact long-term memory (tier 2), matching the
+  // streaming path. Day/last-chat context stays retrieval-only (recall_memory)
+  // so it never leaks across chats.
+  let memory = load_memory(&conn, &manager.id);
+  let mut memory_blob = String::new();
+  for (k, v) in &memory {
+    if k == MEMORY_SUMMARY_KEY {
+      memory_blob.push_str(&format!("[Memory summary: {v}]\n"));
+    } else if let Some(fact) = k.strip_prefix("fact:") {
+      memory_blob.push_str(&format!("- {fact}: {v}\n"));
+    }
+  }
+  let context = build_manager_system_prompt(&conn, &memory_blob)?;
   let prompt = format!("{context}\n\nUser message: {message}");
 
   // Manager tools execute against real backend functions.
@@ -280,276 +292,15 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
       for c in calls_arr {
         let name = c["function"]["name"].as_str().unwrap_or("").to_string();
         let args: serde_json::Value = c["function"]["arguments"].as_str().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_else(|| serde_json::json!({}));
-        let result = match name.as_str() {
-          "list_agents" => {
-            let mut out = String::new();
-            let mut stmt = conn.prepare("SELECT id, name, description, objective, model, integrations FROM agents WHERE is_manager=0 ORDER BY name").map_err(|e| e.to_string())?;
-            let rows = stmt.query_map([], |row| {
-              let integrations: String = row.get(5)?;
-              Ok(format!("- {} (id: {}): {}. Model: {}. Integrations: {}", row.get::<_, String>(1)?, row.get::<_, String>(0)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, integrations))
-            }).map_err(|e| e.to_string())?;
-            for row in rows { out.push_str(&row.map_err(|e| e.to_string())?); out.push('\n'); }
-            Ok(if out.is_empty() { "No agents yet.".into() } else { out })
-          }
-          "list_tasks" => {
-            let tasks = list_tasks(&conn)?;
-            Ok(if tasks.is_empty() { "No tasks.".into() } else { tasks.iter().map(|t| format!("- {} â†’ {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect::<Vec<_>>().join("\n") })
-          }
-          "get_task_status" => {
-            let task_id = args.get("taskId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let mut stmt = conn.prepare("SELECT id, requester, assigned_agent, status, input, context, result, created_at, completed_at FROM tasks WHERE id=?1").map_err(|e| e.to_string())?;
-            let mut rows = stmt.query_map(params![task_id], task_from_row).map_err(|e| e.to_string())?;
-            match rows.next().transpose().map_err(|e| e.to_string())? {
-              Some(t) => Ok(format!("{} â†’ {}: {} â€” result: {}", t.id, t.assigned_agent, t.status, t.result.unwrap_or_default())),
-              None => Ok(format!("Task {task_id} not found.")),
-            }
-          }
-          "delegate_task" => {
-            let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if agent_id.is_empty() || task.is_empty() { return Err("delegate_task requires agentId and task.".into()); }
-            let task_id = create_task(&conn, "manager", &agent_id, &task, &context)?;
-            match delegate_task(app, &task_id, &agent_id, &task, &context).await {
-              Ok(out) => Ok(format!("Task {task_id} completed. Result:\n{out}")),
-              Err(e) => Ok(format!("Task {task_id} failed: {e}")),
-            }
-          }
-          "switch_agent" => {
-            let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            Ok(format!("Switching conversation to agent {agent_id}. The user can now talk to that agent directly."))
-          }
-          "create_agent" => {
-            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let objective = args.get("objective").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let model = args.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if name.is_empty() || objective.is_empty() || model.is_empty() { return Err("create_agent requires name, objective and model.".into()); }
-            let arr = |k: &str| args.get(k).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect::<Vec<_>>()).unwrap_or_default();
-            let id = format!("agent-{}", chrono::Utc::now().timestamp_millis());
-            let agent = AgentRecord {
-              id: id.clone(), name: name.clone(), objective, model,
-              tool_ids: arr("toolIds"), integrations: arr("integrations"), memory: true, skill_ids: arr("skillIds"),
-              permissions: arr("permissions").into_iter().filter(|p| p == "network" || p == "files").collect(),
-              home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(), persona: "ai-orb".into(),
-            };
-            save_agent(app.clone(), agent)?;
-            Ok(format!("Created agent '{name}' (id: {id})."))
-          }
-          "update_agent" => {
-            let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if agent_id.is_empty() { return Err("update_agent requires agentId.".into()); }
-            let existing = {
-              let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona, skill_ids FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
-              let mut rows = stmt.query_map(params![agent_id], |row| {
-                let tool_ids: String = row.get(4)?;
-                let integrations: String = row.get(5)?;
-                let permissions: String = row.get(7)?;
-                let skill_ids: String = row.get(15)?;
-                Ok(AgentRecord {
-                  id: row.get(0)?, name: row.get(1)?, objective: row.get(2)?, model: row.get(3)?,
-                  tool_ids: parse_json_vec(&tool_ids), integrations: parse_json_vec(&integrations),
-                  memory: row.get::<_, i64>(6)? != 0, permissions: parse_json_vec(&permissions),
-                  home_path: row.get(8)?, color: row.get(9)?, x: row.get(10)?, y: row.get(11)?,
-                  is_manager: row.get::<_, i64>(12)? != 0, description: row.get(13)?, persona: row.get(14)?,
-                  skill_ids: parse_json_vec(&skill_ids),
-                })
-              }).map_err(|e| e.to_string())?;
-              rows.next().transpose().map_err(|e| e.to_string())?
-            };
-            let Some(mut a) = existing else { return Err(format!("Agent {agent_id} not found.")); };
-            if let Some(v) = args.get("name").and_then(|v| v.as_str()) { a.name = v.to_string(); }
-            if let Some(v) = args.get("objective").and_then(|v| v.as_str()) { a.objective = v.to_string(); }
-            if let Some(v) = args.get("model").and_then(|v| v.as_str()) { a.model = v.to_string(); }
-            if let Some(v) = args.get("toolIds").and_then(|v| v.as_array()) { a.tool_ids = v.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(); }
-            if let Some(v) = args.get("integrations").and_then(|v| v.as_array()) { a.integrations = v.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(); }
-            if let Some(v) = args.get("permissions").and_then(|v| v.as_array()) { a.permissions = v.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(); }
-            save_agent(app.clone(), a)?;
-            Ok(format!("Updated agent {agent_id}."))
-          }
-          "delete_agent" => {
-            let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            conn.execute("DELETE FROM agents WHERE id=?1 AND is_manager=0", params![agent_id]).map_err(|e| e.to_string())?;
-            Ok(format!("Deleted agent {agent_id}."))
-          }
-          "create_workflow" => {
-            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("Untitled workflow").to_string();
-            let nodes = args.get("nodes").and_then(|v| v.as_str()).and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()).unwrap_or(serde_json::json!([]));
-            let edges = args.get("edges").and_then(|v| v.as_str()).and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()).unwrap_or(serde_json::json!([]));
-            let wf = WorkflowRecord { id: format!("wf-{}", chrono::Utc::now().timestamp_millis()), name, nodes, edges, updated_at: now() };
-            save_workflow(app.clone(), wf.clone())?;
-            Ok(format!("Created workflow '{}' (id: {}).", wf.name, wf.id))
-          }
-          "list_workflows" => {
-            let wfs = {
-              let mut stmt = conn.prepare("SELECT id, name, nodes, edges, updated_at FROM workflows ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
-              let rows = stmt.query_map([], |row| Ok(format!("- {} (id: {})", row.get::<_, String>(1)?, row.get::<_, String>(0)?))).map_err(|e| e.to_string())?;
-              let mut out = Vec::new();
-              for r in rows { out.push(r.map_err(|e| e.to_string())?); }
-              out
-            };
-            Ok(if wfs.is_empty() { "No workflows.".into() } else { wfs.join("\n") })
-          }
-          "search_workflows" => {
-            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let like = format!("%{}%", query);
-            let wfs = {
-              let mut stmt = conn.prepare("SELECT id, name, nodes, edges, updated_at FROM workflows WHERE name LIKE ?1 ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
-              let rows = stmt.query_map(params![like], |row| Ok(format!("- {} (id: {})", row.get::<_, String>(1)?, row.get::<_, String>(0)?))).map_err(|e| e.to_string())?;
-              let mut out = Vec::new();
-              for r in rows { out.push(r.map_err(|e| e.to_string())?); }
-              out
-            };
-            Ok(if wfs.is_empty() { format!("No workflows matching \"{}\".", query) } else { wfs.join("\n") })
-          }
-          "update_workflow" => {
-            let wf_id = args.get("workflowId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let nodes = args.get("nodes").and_then(|v| v.as_str()).and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()).unwrap_or(serde_json::json!([]));
-            let edges = args.get("edges").and_then(|v| v.as_str()).and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()).unwrap_or(serde_json::json!([]));
-            let existing = {
-              let mut stmt = conn.prepare("SELECT name FROM workflows WHERE id=?1").map_err(|e| e.to_string())?;
-              let mut rows = stmt.query_map(params![wf_id], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
-              rows.next().transpose().map_err(|e| e.to_string())?
-            };
-            let Some(name) = existing else { return Err(format!("Workflow {wf_id} not found.")); };
-            save_workflow(app.clone(), WorkflowRecord { id: wf_id.clone(), name, nodes, edges, updated_at: now() })?;
-            Ok(format!("Updated workflow {wf_id}."))
-          }
-          "delete_workflow" => {
-            let wf_id = args.get("workflowId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            conn.execute("DELETE FROM workflows WHERE id=?1", params![wf_id]).map_err(|e| e.to_string())?;
-            Ok(format!("Deleted workflow {wf_id}."))
-          }
-          "run_workflow" => {
-            let wf_id = args.get("workflowId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let input = args.get("input").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let wf = {
-              let mut stmt = conn.prepare("SELECT id, name, nodes, edges, updated_at FROM workflows WHERE id=?1").map_err(|e| e.to_string())?;
-              let mut rows = stmt.query_map(params![wf_id], |row| {
-                let nodes: String = row.get(2)?;
-                let edges: String = row.get(3)?;
-                Ok(WorkflowRecord {
-                  id: row.get(0)?, name: row.get(1)?,
-                  nodes: serde_json::from_str(&nodes).unwrap_or_else(|_| serde_json::json!([])),
-                  edges: serde_json::from_str(&edges).unwrap_or_else(|_| serde_json::json!([])),
-                  updated_at: row.get(4)?,
-                })
-              }).map_err(|e| e.to_string())?;
-              rows.next().transpose().map_err(|e| e.to_string())?
-            };
-            let Some(wf) = wf else { return Err(format!("Workflow {wf_id} not found.")); };
-            let exec = execute_workflow(app.clone(), wf, input, None).await?;
-            Ok(format!("Workflow ran. Steps: {}; final output: {}", exec.steps.len(), exec.final_output))
-          }
-          "configure_integration" => {
-            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let config = args.get("config").cloned().unwrap_or(serde_json::json!({}));
-            save_integration_config(app.clone(), id.clone(), config)?;
-            Ok(format!("Configured integration '{id}'. It may need a test to confirm the connection."))
-          }
-          "list_integrations" => {
-            let defs = integration_definitions();
-            let mut out = Vec::new();
-            for d in defs {
-              let mut stmt = conn.prepare("SELECT enabled, connected FROM integration_configs WHERE id=?1").map_err(|e| e.to_string())?;
-              let mut rows = stmt.query_map(params![d.id], |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0))).map_err(|e| e.to_string())?;
-              let (enabled, connected) = rows.next().transpose().map_err(|e| e.to_string())?.unwrap_or((false, false));
-              out.push(format!("- {} (id: {}): enabled={} connected={}", d.name, d.id, enabled, connected));
-            }
-            Ok(out.join("\n"))
-          }
-          "test_integration" => {
-            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            Ok(format!("Testing integration {id}... use the Integrations tab to see the result."))
-          }
-          "create_task" => {
-            let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let input = args.get("input").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if agent_id.is_empty() || input.is_empty() { return Err("create_task requires agentId and input.".into()); }
-            let task_id = create_task(&conn, "manager", &agent_id, &input, &context)?;
-            match delegate_task(&app, &task_id, &agent_id, &input, &context).await {
-              Ok(out) => Ok(format!("Task {task_id} completed. Result:\n{out}")),
-              Err(e) => Ok(format!("Task {task_id} failed: {e}")),
-            }
-          }
-          "cancel_task" => {
-            let task_id = args.get("taskId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            conn.execute("UPDATE tasks SET status='cancelled', completed_at=?1 WHERE id=?2", params![chrono::Utc::now().to_rfc3339(), task_id]).map_err(|e| e.to_string())?;
-            Ok(format!("Cancelled task {task_id}."))
-          }
-          "list_models" => {
-            let mut stmt = conn.prepare("SELECT id, provider, label FROM model_configs ORDER BY id").map_err(|e| e.to_string())?;
-            let rows = stmt.query_map([], |row| Ok(format!("- {} ({})", row.get::<_, String>(2)?, row.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
-            let mut out = Vec::new();
-            for r in rows { out.push(r.map_err(|e| e.to_string())?); }
-            Ok(if out.is_empty() { "No models configured.".into() } else { out.join("\n") })
-          }
-          "list_tools" => {
-            let mut stmt = conn.prepare("SELECT name, kind FROM tools WHERE enabled=1 ORDER BY name").map_err(|e| e.to_string())?;
-            let rows = stmt.query_map([], |row| Ok(format!("- {} ({})", row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
-            let mut out = Vec::new();
-            for r in rows { out.push(r.map_err(|e| e.to_string())?); }
-            Ok(if out.is_empty() { "No tools configured.".into() } else { out.join("\n") })
-          }
-          "get_workspace_status" => {
-            let agents_n: i64 = conn.query_row("SELECT COUNT(*) FROM agents WHERE is_manager=0", [], |r| r.get(0)).unwrap_or(0);
-            let tasks_n: i64 = conn.query_row("SELECT COUNT(*) FROM tasks WHERE status IN ('pending','running')", [], |r| r.get(0)).unwrap_or(0);
-            let runs_n: i64 = conn.query_row("SELECT COUNT(*) FROM runs", [], |r| r.get(0)).unwrap_or(0);
-            let conn_n: i64 = conn.query_row("SELECT COUNT(*) FROM integration_configs WHERE connected=1", [], |r| r.get(0)).unwrap_or(0);
-            Ok(format!("Agents: {agents_n}. Connected integrations: {conn_n}. Active tasks: {tasks_n}. Total runs: {runs_n}."))
-          }
-          "recall_memory" => {
-            let manager_id = {
-              let mut stmt = conn.prepare("SELECT id FROM agents WHERE is_manager=1 LIMIT 1").map_err(|e| e.to_string())?;
-              let mut rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
-              rows.next().transpose().map_err(|e| e.to_string())?.unwrap_or_else(|| "manager".to_string())
-            };
-            let bundle = build_context_bundle(&conn, &manager_id).unwrap_or_default();
-            Ok(if bundle.trim().is_empty() { "No stored memory yet.".to_string() } else { bundle })
-          }
-          "knowledge_base" => {
-            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list").to_string();
-            let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            match action.as_str() {
-              "list" => {
-                let mut stmt = conn.prepare("SELECT id, title, updated_at FROM knowledge_docs ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
-                let rows = stmt.query_map([], |row| Ok(format!("- {} (id: {})", row.get::<_, String>(1)?, row.get::<_, String>(0)?))).map_err(|e| e.to_string())?;
-                let mut out = Vec::new();
-                for r in rows { out.push(r.map_err(|e| e.to_string())?); }
-                Ok(if out.is_empty() { "Knowledge base is empty.".into() } else { out.join("\n") })
-              }
-              "search" => {
-                let like = format!("%{}%", title);
-                let mut stmt = conn.prepare("SELECT id, title, content FROM knowledge_docs WHERE title LIKE ?1 OR content LIKE ?1 ORDER BY updated_at DESC LIMIT 5").map_err(|e| e.to_string())?;
-                let rows = stmt.query_map(params![like], |row| Ok(format!("- {} (id: {}): {}", row.get::<_, String>(1)?, row.get::<_, String>(0)?, row.get::<_, String>(2)?.chars().take(150).collect::<String>()))).map_err(|e| e.to_string())?;
-                let mut out = Vec::new();
-                for r in rows { out.push(r.map_err(|e| e.to_string())?); }
-                Ok(if out.is_empty() { format!("No docs matching \"{title}\".") } else { out.join("\n") })
-              }
-              "get" => {
-                let mut stmt = conn.prepare("SELECT id, title, content FROM knowledge_docs WHERE id=?1 OR title=?1").map_err(|e| e.to_string())?;
-                let mut rows = stmt.query_map(params![if id.is_empty() { title.clone() } else { id.clone() }], |row| Ok(format!("# {}\n\n{}", row.get::<_, String>(1)?, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
-                match rows.next().transpose().map_err(|e| e.to_string())? {
-                  Some(v) => Ok(v),
-                  None => Ok(format!("No knowledge base doc found for \"{}\".", if id.is_empty() { title } else { id })),
-                }
-              }
-              "save" => {
-                if title.is_empty() { return Err("knowledge_base save requires a title.".into()); }
-                let doc_id = if id.is_empty() { format!("kb-{}", chrono::Utc::now().timestamp_millis()) } else { id };
-                conn.execute(
-                  "INSERT INTO knowledge_docs (id, title, content, tags, updated_at) VALUES (?1,?2,?3,'[]',?4)
-                   ON CONFLICT(id) DO UPDATE SET title=excluded.title, content=excluded.content, updated_at=excluded.updated_at",
-                  params![doc_id, title, content, chrono::Utc::now().to_rfc3339()],
-                ).map_err(|e| e.to_string())?;
-                Ok(format!("Saved knowledge base doc \"{title}\" (id: {doc_id})."))
-              }
-              _ => Err(format!("Unknown knowledge_base action {action}.")),
-            }
-          }
-          _ => Err(format!("Unknown manager tool {name}.")),
+        // One dispatcher for every path. This used to be a second,
+        // hand-maintained copy of the tool logic, and the two drifted apart —
+        // a tool could be offered to the model and then come back "unknown".
+        let result = if name == "run_command" {
+          // Shell execution is gated behind a confirmation popup in the app.
+          // This path has no way to ask, so refuse rather than run it silently.
+          Err("run_command needs your approval, which this channel can't ask for. Run it from the Manager chat in the app.".to_string())
+        } else {
+          dispatch_manager_tool(app, &name, &args).await
         };
         let call_id = c["id"].as_str().unwrap_or("").to_string();
         messages.push(ChatMessage { role: "assistant".into(), content: None, tool_calls: Some(vec![ToolCall { id: call_id.clone(), kind: "function".into(), function: ToolCallFunction { name: name.clone(), arguments: args.clone() } }]), tool_call_id: None });
@@ -640,6 +391,37 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       conn.execute("DELETE FROM agents WHERE id=?1 AND is_manager=0", params![agent_id]).map_err(|e| e.to_string())?;
       Ok(format!("Deleted agent {agent_id}."))
     }
+    "update_agent" => {
+      let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      if agent_id.is_empty() { return Err("update_agent requires agentId.".into()); }
+      let existing = {
+        let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona, skill_ids FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
+        let mut rows = stmt.query_map(params![agent_id], |row| {
+          let tool_ids: String = row.get(4)?;
+          let integrations: String = row.get(5)?;
+          let permissions: String = row.get(7)?;
+          let skill_ids: String = row.get(15)?;
+          Ok(AgentRecord {
+            id: row.get(0)?, name: row.get(1)?, objective: row.get(2)?, model: row.get(3)?,
+            tool_ids: parse_json_vec(&tool_ids), integrations: parse_json_vec(&integrations),
+            memory: row.get::<_, i64>(6)? != 0, permissions: parse_json_vec(&permissions),
+            home_path: row.get(8)?, color: row.get(9)?, x: row.get(10)?, y: row.get(11)?,
+            is_manager: row.get::<_, i64>(12)? != 0, description: row.get(13)?, persona: row.get(14)?,
+            skill_ids: parse_json_vec(&skill_ids),
+          })
+        }).map_err(|e| e.to_string())?;
+        rows.next().transpose().map_err(|e| e.to_string())?
+      };
+      let Some(mut a) = existing else { return Err(format!("Agent {agent_id} not found.")); };
+      if let Some(v) = args.get("name").and_then(|v| v.as_str()) { a.name = v.to_string(); }
+      if let Some(v) = args.get("objective").and_then(|v| v.as_str()) { a.objective = v.to_string(); }
+      if let Some(v) = args.get("model").and_then(|v| v.as_str()) { a.model = v.to_string(); }
+      if let Some(v) = args.get("toolIds").and_then(|v| v.as_array()) { a.tool_ids = v.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(); }
+      if let Some(v) = args.get("integrations").and_then(|v| v.as_array()) { a.integrations = v.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(); }
+      if let Some(v) = args.get("permissions").and_then(|v| v.as_array()) { a.permissions = v.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(); }
+      save_agent(app.clone(), a)?;
+      Ok(format!("Updated agent {agent_id}."))
+    }
     "list_workflows" => {
       let mut stmt = conn.prepare("SELECT id, name FROM workflows ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
       let rows = stmt.query_map([], |row| Ok(format!("- {} (id: {})", row.get::<_, String>(1)?, row.get::<_, String>(0)?))).map_err(|e| e.to_string())?;
@@ -655,6 +437,40 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       let mut out = Vec::new();
       for r in rows { out.push(r.map_err(|e| e.to_string())?); }
       Ok(if out.is_empty() { format!("No workflows matching \"{}\".", query) } else { out.join("\n") })
+    }
+    "update_workflow" => {
+      let wf_id = args.get("workflowId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let nodes = args.get("nodes").and_then(|v| v.as_str()).and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()).unwrap_or(serde_json::json!([]));
+      let edges = args.get("edges").and_then(|v| v.as_str()).and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()).unwrap_or(serde_json::json!([]));
+      let existing = {
+        let mut stmt = conn.prepare("SELECT name FROM workflows WHERE id=?1").map_err(|e| e.to_string())?;
+        let mut rows = stmt.query_map(params![wf_id], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.next().transpose().map_err(|e| e.to_string())?
+      };
+      let Some(name) = existing else { return Err(format!("Workflow {wf_id} not found.")); };
+      save_workflow(app.clone(), WorkflowRecord { id: wf_id.clone(), name, nodes, edges, updated_at: now() })?;
+      Ok(format!("Updated workflow {wf_id}."))
+    }
+    "run_workflow" => {
+      let wf_id = args.get("workflowId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let input = args.get("input").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let wf = {
+        let mut stmt = conn.prepare("SELECT id, name, nodes, edges, updated_at FROM workflows WHERE id=?1").map_err(|e| e.to_string())?;
+        let mut rows = stmt.query_map(params![wf_id], |row| {
+          let nodes: String = row.get(2)?;
+          let edges: String = row.get(3)?;
+          Ok(WorkflowRecord {
+            id: row.get(0)?, name: row.get(1)?,
+            nodes: serde_json::from_str(&nodes).unwrap_or_else(|_| serde_json::json!([])),
+            edges: serde_json::from_str(&edges).unwrap_or_else(|_| serde_json::json!([])),
+            updated_at: row.get(4)?,
+          })
+        }).map_err(|e| e.to_string())?;
+        rows.next().transpose().map_err(|e| e.to_string())?
+      };
+      let Some(wf) = wf else { return Err(format!("Workflow {wf_id} not found.")); };
+      let exec = execute_workflow(app.clone(), wf, input, None).await?;
+      Ok(format!("Workflow ran. Steps: {}; final output: {}", exec.steps.len(), exec.final_output))
     }
     "create_workflow" => {
       let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("Untitled workflow").to_string();
@@ -686,6 +502,10 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       }
       Ok(out.join("\n"))
     }
+    "test_integration" => {
+      let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      Ok(format!("Testing integration {id}... use the Integrations tab to see the result."))
+    }
     "cancel_task" => {
       let task_id = args.get("taskId").and_then(|v| v.as_str()).unwrap_or("").to_string();
       conn.execute("UPDATE tasks SET status='cancelled', completed_at=?1 WHERE id=?2", params![chrono::Utc::now().to_rfc3339(), task_id]).map_err(|e| e.to_string())?;
@@ -697,6 +517,13 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       let mut out = Vec::new();
       for r in rows { out.push(r.map_err(|e| e.to_string())?); }
       Ok(if out.is_empty() { "No models configured.".into() } else { out.join("\n") })
+    }
+    "list_tools" => {
+      let mut stmt = conn.prepare("SELECT name, kind FROM tools WHERE enabled=1 ORDER BY name").map_err(|e| e.to_string())?;
+      let rows = stmt.query_map([], |row| Ok(format!("- {} ({})", row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+      let mut out = Vec::new();
+      for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+      Ok(if out.is_empty() { "No tools configured.".into() } else { out.join("\n") })
     }
     "get_workspace_status" => {
       let agents_n: i64 = conn.query_row("SELECT COUNT(*) FROM agents WHERE is_manager=0", [], |r| r.get(0)).unwrap_or(0);
@@ -787,14 +614,11 @@ pub(crate) fn requires_confirmation(tool: &str) -> bool {
 
 #[tauri::command]
 pub async fn confirm_manager_tool(app: AppHandle, request_id: String, approved: bool, args: Option<serde_json::Value>, tool: String) -> Result<Option<String>, String> {
-  // Record the decision; if approved, execute the tool now and return the result.
+  // Record the user's decision only. chat::run_tool performs the single
+  // execution once the approval is observed — executing here as well would run
+  // every approved tool twice.
+  let _ = (&app, &tool);
   let edited = args.unwrap_or_else(|| serde_json::json!({}));
-  if approved {
-    let result = dispatch_manager_tool(&app, &tool, &edited).await?;
-    approvals().lock().map_err(|e| e.to_string())?.insert(request_id.clone(), Approval { approved: true, edited_args: edited });
-    Ok(Some(result))
-  } else {
-    approvals().lock().map_err(|e| e.to_string())?.insert(request_id.clone(), Approval { approved: false, edited_args: edited });
-    Ok(None)
-  }
+  approvals().lock().map_err(|e| e.to_string())?.insert(request_id, Approval { approved, edited_args: edited });
+  Ok(None)
 }

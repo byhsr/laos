@@ -45,7 +45,7 @@ export function ManagerView({ agents, integrations, models }: { agents: Agent[];
   const [sessions, setSessions] = useState<{ id: string; title: string; createdAt: string; updatedAt: string }[]>([]);
   const [viewingSession, setViewingSession] = useState<string | null>(null);
   const [viewMsgs, setViewMsgs] = useState<ChatEntry[]>([]);
-  const sessionId = useManagerStore((s) => s.sessionId);
+  const sessionId = useManagerStore((s) => s.sessionIds[managerId] ?? null);
   const persistAgent = useAgentsStore((s) => s.persistAgent);
 
   const openConfig = () => {
