@@ -20,6 +20,10 @@ export type ToolConfig = {
 export type Tool = { id: string; name: string; kind: string; integrationId: string; description: string; enabled: boolean; config: ToolConfig };
 export type Skill = { id: string; name: string; description: string; content: string };
 
+// A local Whisper model offered for voice dictation. `downloaded` reflects the
+// model file already being present in the app data directory.
+export type DictationModel = { id: string; label: string; sizeBytes: number; englishOnly: boolean; downloaded: boolean };
+
 export type WorkflowNodeType = 'agent' | 'subagent' | 'loop' | 'checker' | 'integration' | 'gate' | 'trigger';
 export type WorkflowNode = {
   id: string; type: WorkflowNodeType; agentId?: string; toolId?: string; label: string; x: number; y: number;

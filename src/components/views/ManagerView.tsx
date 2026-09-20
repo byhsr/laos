@@ -13,6 +13,7 @@ import { Drawer } from '../ui/Drawer';
 import { Dropdown } from '../ui/Dropdown';
 import { AgentAvatar, PersonaPicker } from '../ui/AgentAvatar';
 import { Checkbox } from '../ui/Checkbox';
+import { MicButton } from '../ui/MicButton';
 import { toast } from '../../hooks/useToast';
 import { deleteChatSession, getChatSession, listChatSessions } from '../../runtime';
 
@@ -137,6 +138,21 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
     e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
   };
 
+  // Dictated text is appended to whatever is already typed. Setting state
+  // directly bypasses onInputChange, so the box is re-measured by hand.
+  const appendTranscript = (text: string) => {
+    const spoken = text.trim();
+    if (!spoken) return;
+    setInput((prev) => (prev.trim() ? `${prev.trim()} ${spoken}` : spoken));
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+      el.focus();
+    });
+  };
+
   const submit = async () => {
     if (!input.trim() || busy) return;
     const text = input.trim();
@@ -204,6 +220,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
               placeholder={`Message ${leadName}…  (/agents, /tasks, /switch, /help)`}
               style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--color-hairline)', borderRadius: 16, padding: '12px 16px', color: 'var(--text)', resize: 'none', minHeight: 44, maxHeight: 160, boxShadow: 'var(--shadow-soft)', outline: 'none' }}
             />
+            <MicButton onTranscript={appendTranscript} disabled={busy} />
             <button className="primary" onClick={submit} disabled={busy || !input.trim()} title="Send"><Send size={14} /></button>
           </div>
         </div>

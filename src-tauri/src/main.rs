@@ -2,6 +2,7 @@
 mod agents;
 mod chat;
 mod db;
+mod dictation;
 mod http;
 mod integrations;
 mod manager;
@@ -95,6 +96,14 @@ fn main() {
       updater::install_update,
       updater::restart_app,
       updater::app_version,
+      // Dictation (local Whisper speech-to-text)
+      dictation::dictation_models,
+      dictation::dictation_download_model,
+      dictation::dictation_delete_model,
+      dictation::dictation_available,
+      dictation::dictation_start,
+      dictation::dictation_stop,
+      dictation::dictation_cancel,
       // Telegram
       telegram::list_telegram_logs,
       telegram::telegram_start_tunnel,

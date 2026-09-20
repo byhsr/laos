@@ -40,6 +40,7 @@ src/                         Frontend (React)
 src-tauri/                   Backend (Rust / Tauri v2)
   src/main.rs                Entry point: declares modules, spawns background tasks, registers commands
   src/db.rs                  SQLite connection + idempotent schema/migrations
+  src/dictation.rs           Local Whisper speech-to-text: mic capture, model download, transcription
   src/storage.rs             CRUD commands + Manager bootstrap
   src/http.rs                Shared provider HTTP client, retry, timeouts, request defaults
   src/agents.rs              One-shot agent execution + toolset assembly
@@ -64,6 +65,10 @@ Prerequisites: Node 22+ (see `.nvmrc`), [Ollama](https://ollama.com) with `ollam
 for the default local model. Cloud providers (Groq / OpenRouter) need an API key saved in
 **Settings → Models**.
 
+The Rust backend also needs a C++ toolchain, because voice dictation compiles whisper.cpp:
+**CMake**, **libclang/LLVM** (set `LIBCLANG_PATH` if bindgen cannot find it), and a C/C++
+compiler. On Linux install `libasound2-dev` as well — `cpal` needs ALSA for microphone capture.
+
 | Command | What it does |
 | --- | --- |
 | `npm run tauri dev` | Full desktop app (frontend + Rust backend). This is the real app. |
@@ -81,8 +86,9 @@ Ports and paths:
 | 14789 | Local Telegram webhook receiver |
 | 14852 | OAuth loopback redirect (`http://127.0.0.1:14852/callback`) |
 
-Data lives under the Tauri app data dir: `local-agent-os.sqlite3` plus
-`agents/<agentId>/{files,memory,runs,outputs}` and a generated `config.json` per agent.
+Data lives under the Tauri app data dir: `local-agent-os.sqlite3`, plus
+`agents/<agentId>/{files,memory,runs,outputs}` and a generated `config.json` per agent, plus
+`models/ggml-*.bin` for any speech models downloaded for dictation.
 
 ### Live development vs. releases
 

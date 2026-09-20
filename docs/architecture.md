@@ -27,6 +27,7 @@ crosses `src/runtime.ts`. The backend has no knowledge of React; it returns plai
 | --- | --- |
 | `main.rs` | Declares modules, spawns the 3 background tasks, registers every `#[tauri::command]`. |
 | `db.rs` | Opens `local-agent-os.sqlite3`, runs idempotent `CREATE TABLE IF NOT EXISTS` + column migrations. Exposes `db(app)` and `now()`. |
+| `dictation.rs` | Local speech-to-text: `cpal` microphone capture, on-demand Whisper model download into `<app_data_dir>/models`, whisper.cpp transcription via `whisper-rs`. |
 | `models.rs` | Shared `serde` record/DTO types only (no logic). |
 | `storage.rs` | CRUD commands for knowledge docs, models, tools, skills, agents, workflows; Manager bootstrap; `stored_api_key`, `manager_default_model`. |
 | `http.rs` | The shared provider HTTP layer: clients, timeouts, retry/backoff, request defaults. |
@@ -52,8 +53,9 @@ crosses `src/runtime.ts`. The backend has no knowledge of React; it returns plai
 3. `telegram::telegram_webhook_server(handle, 14789)` — the local webhook receiver.
 
 Every command builds its own SQLite connection via `db(&app)` (no shared pool). In-memory
-state is deliberately tiny: `manager::PENDING_APPROVALS`, and `telegram`'s
-`TELEGRAM_TUNNEL_URL` / `TELEGRAM_TURN_LOCK` / `SEEN_UPDATES`.
+state is deliberately tiny: `manager::PENDING_APPROVALS`, `telegram`'s
+`TELEGRAM_TUNNEL_URL` / `TELEGRAM_TURN_LOCK` / `SEEN_UPDATES`, and `dictation`'s `SESSION`
+(the live capture) / `CONTEXT` (the loaded Whisper model).
 
 ## Tauri command surface
 
@@ -70,6 +72,7 @@ Registered in `main.rs::invoke_handler`. The frontend wrapper for each lives in 
 | Memory + sessions | `get_conversation`, `clear_agent_memory`, `list_chat_sessions`, `get_chat_session`, `create_chat_session`, `delete_chat_session`, `rename_chat_session`, `close_session` | `memory.rs` |
 | Updater | `check_for_update`, `install_update`, `restart_app` | `updater.rs` |
 | Telegram | `list_telegram_logs`, `telegram_start_tunnel`, `telegram_register_webhook`, `telegram_register_custom_url`, `telegram_stop_tunnel`, `telegram_tunnel_status`, `telegram_webhook_health` | `telegram.rs` |
+| Dictation | `dictation_models`, `dictation_download_model`, `dictation_delete_model`, `dictation_available`, `dictation_start`, `dictation_stop`, `dictation_cancel` | `dictation.rs` |
 
 Note: `execute_agent` (non-streaming) and `stream_chat` (streaming) are two different entry
 points into the same underlying model layer — see [harness.md](./harness.md).
@@ -80,10 +83,10 @@ points into the same underlying model layer — see [harness.md](./harness.md).
 | --- | --- | --- |
 | Composition root | `App.tsx` | Wires stores + views. Views are kept mounted and CSS-hidden when inactive so in-flight streaming and per-agent state survive navigation. Drawer forms for tool/model/skill are hosted here. |
 | Backend bridge | `runtime.ts` | One typed wrapper per command. `streamChat` wraps a Tauri `Channel`; structured events arrive as JSON strings, token deltas as plain text. |
-| Stores | `hooks/useAgents.ts`, `useRuns.ts`, `useModels.ts`, `useTools.ts`, `useSkills.ts`, `useWorkflows.ts`, `useWorkspace.ts`, `useIntegrations.ts`, `useManager.ts`, `useTasks.ts`, `useConfirm.ts`, `useToast.ts` | One Zustand store per domain; loaded once on mount in `App.tsx`. |
+| Stores | `hooks/useAgents.ts`, `useRuns.ts`, `useModels.ts`, `useTools.ts`, `useSkills.ts`, `useWorkflows.ts`, `useWorkspace.ts`, `useIntegrations.ts`, `useManager.ts`, `useTasks.ts`, `useConfirm.ts`, `useToast.ts`, `useDictation.ts` | One Zustand store per domain; loaded once on mount in `App.tsx`. |
 | Views | `components/views/*` | Home, Agents (browse), Canvas (workflows), Manager (Laos), Tasks, Runs, Telegram, Workshop (Skills/Tools/Integrations/Knowledge), Settings (General/Models), the agent window, and first-run `Onboarding`. |
 | Shell | `components/Topbar.tsx`, `components/Sidebar.tsx` | The topbar carries **every** section (Home, Laos, Agents, Workflows, Tasks, Workshop, Runs, Telegram, Settings) + Graph + New agent + window controls; the sidebar is purely the **agent chat list** — lead agent first (never deletable), then pinned, then the rest. Rows are full width with **right-click** for open chat / settings / pin / delete (delete needs the name typed). Section names are user-editable via `hooks/useNavLabels.ts`; the lead's *own* name comes from its agent record. |
-| Primitives | `components/ui/*` | Drawer (resizable right panel), Dropdown/MultiDropdown (portaled), Checkbox, ConfirmDialog, DeleteConfirm (app-wide typed-name gate), Tooltip (shell icon controls), ContextMenu/ContextMenuAt, `agentMenu.tsx` (the shared agent menu), AgentAvatar/PersonaPicker, Toaster. |
+| Primitives | `components/ui/*` | Drawer (resizable right panel), Dropdown/MultiDropdown (portaled), Checkbox, ConfirmDialog, DeleteConfirm (app-wide typed-name gate), Tooltip (shell icon controls), ContextMenu/ContextMenuAt, `agentMenu.tsx` (the shared agent menu), AgentAvatar/PersonaPicker, MicButton (composer dictation), Toaster. |
 | Personas | `assets/agents/*.json` + `components/ui/AgentAvatar.tsx` (`PERSONAS`) | Lottie files; add a file and register it in `PERSONAS`. |
 
 ## Onboarding
@@ -96,10 +99,10 @@ clears it again. It renders at `z-40` so the topbar (and its window controls) st
 ## Dependency graph
 
 ```
-main.rs ──registers──▶ storage, integrations, agents, workflows, tasks, manager, chat, memory, telegram
+main.rs ──registers──▶ storage, integrations, agents, workflows, tasks, manager, chat, memory, telegram, dictation
 
 db.rs       ◀── everyone
-http.rs     ◀── agents, chat, memory, manager, workflows, integrations, telegram
+http.rs     ◀── agents, chat, memory, manager, workflows, integrations, telegram, dictation
 storage.rs  ◀── agents, chat, memory, manager, tasks, workflows
 models.rs   ◀── all modules needing DTOs
 integrations◀── agents, manager, workflows

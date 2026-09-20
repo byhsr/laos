@@ -62,7 +62,33 @@ jobs:
             file \
             libxdo-dev \
             libssl-dev \
-            libayatana-appindicator3-dev
+            libayatana-appindicator3-dev \
+            libasound2-dev \
+            pkg-config \
+            cmake \
+            clang \
+            libclang-dev
+
+      # whisper.cpp is compiled by whisper-rs through CMake, and bindgen needs
+      # libclang. Both are native on macOS/Windows runners except for LLVM on
+      # Windows, which is installed but not on PATH.
+      - name: Point bindgen at LLVM
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
+
+      # The macOS matrix cross-builds x86_64 from an arm64 runner, so CMake has
+      # to be told which architecture whisper.cpp should target.
+      - name: Configure macOS architecture
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          case "${{ matrix.args }}" in
+            *aarch64*) arch=arm64 ;;
+            *)         arch=x86_64 ;;
+          esac
+          echo "CMAKE_OSX_ARCHITECTURES=$arch" >> "$GITHUB_ENV"
+          echo "whisper.cpp will target $arch"
 
       - name: Install frontend dependencies
         run: npm ci

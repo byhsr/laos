@@ -20,5 +20,9 @@ async-trait = "0.1.92"
 futures-util = "0.3"
 regex = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "net", "time", "sync"] }
+cpal = "0.18"
+# Local speech-to-text. Compiles whisper.cpp through CMake and generates bindings
+# with bindgen, so every build machine needs cmake, a C++ compiler, and libclang.
+whisper-rs = "0.16"
 # Parser only — the built-in HTML writer and CLI are not used.
 pulldown-cmark = { version = "0.13.4", default-features = false }
