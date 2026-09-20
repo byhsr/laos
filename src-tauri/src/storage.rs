@@ -96,9 +96,9 @@ pub fn delete_knowledge_doc(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn list_model_configs(app: AppHandle) -> Result<Vec<ModelConfigRecord>, String> {
   let conn = db(&app)?;
-  let mut stmt = conn.prepare("SELECT id, provider, label, model, host, api_key, enabled FROM model_configs ORDER BY id").map_err(|e| e.to_string())?;
+  let mut stmt = conn.prepare("SELECT id, provider, label, model, host, api_key, enabled, reasoning FROM model_configs ORDER BY id").map_err(|e| e.to_string())?;
   let rows = stmt.query_map([], |row| Ok(ModelConfigRecord {
-    id: row.get(0)?, provider: row.get(1)?, label: row.get(2)?, model: row.get(3)?, host: row.get(4)?, api_key: row.get(5)?, enabled: row.get::<_, i64>(6)? != 0,
+    id: row.get(0)?, provider: row.get(1)?, label: row.get(2)?, model: row.get(3)?, host: row.get(4)?, api_key: row.get(5)?, enabled: row.get::<_, i64>(6)? != 0, reasoning: row.get(7)?,
   })).map_err(|e| e.to_string())?;
   let mut out = Vec::new();
   for row in rows { out.push(row.map_err(|e| e.to_string())?); }
@@ -109,9 +109,9 @@ pub fn list_model_configs(app: AppHandle) -> Result<Vec<ModelConfigRecord>, Stri
 pub fn save_model_config(app: AppHandle, config: ModelConfigRecord) -> Result<(), String> {
   let conn = db(&app)?;
   conn.execute(
-    "INSERT INTO model_configs (id, provider, label, model, host, api_key, enabled) VALUES (?1,?2,?3,?4,?5,?6,?7)
-     ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, label=excluded.label, model=excluded.model, host=excluded.host, api_key=excluded.api_key, enabled=excluded.enabled",
-    params![config.id, config.provider, config.label, config.model, config.host, config.api_key, if config.enabled { 1 } else { 0 }],
+    "INSERT INTO model_configs (id, provider, label, model, host, api_key, enabled, reasoning) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+     ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, label=excluded.label, model=excluded.model, host=excluded.host, api_key=excluded.api_key, enabled=excluded.enabled, reasoning=excluded.reasoning",
+    params![config.id, config.provider, config.label, config.model, config.host, config.api_key, if config.enabled { 1 } else { 0 }, config.reasoning],
   ).map_err(|e| e.to_string())?;
   Ok(())
 }
@@ -121,17 +121,6 @@ pub fn delete_model_config(app: AppHandle, id: String) -> Result<(), String> {
   let conn = db(&app)?;
   conn.execute("DELETE FROM model_configs WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
   Ok(())
-}
-
-pub(crate) fn stored_api_key(conn: &Connection, model_id: &str) -> Result<Option<String>, String> {
-  let mut stmt = conn.prepare("SELECT api_key FROM model_configs WHERE id=?1 AND api_key IS NOT NULL AND api_key != ''").map_err(|e| e.to_string())?;
-  let mut rows = stmt.query_map(params![model_id], |row| row.get::<_, Option<String>>(0)).map_err(|e| e.to_string())?;
-  match rows.next() {
-    Some(Ok(Some(key))) => Ok(Some(key)),
-    Some(Ok(None)) => Ok(None),
-    Some(Err(e)) => Err(e.to_string()),
-    None => Ok(None),
-  }
 }
 
 #[tauri::command]

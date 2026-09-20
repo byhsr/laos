@@ -18,7 +18,11 @@ pub struct ExecutionEvent { pub time: String, #[serde(rename = "type")] pub kind
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct ModelConfigRecord { pub id: String, pub provider: String, pub label: String, pub model: String, pub host: Option<String>, pub api_key: Option<String>, pub enabled: bool }
+pub struct ModelConfigRecord { pub id: String, pub provider: String, pub label: String, pub model: String, pub host: Option<String>, pub api_key: Option<String>, pub enabled: bool, pub reasoning: String }
+
+// Reasoning control for a model. 'auto' sends nothing at all to the provider, so
+// models with no reasoning support are never sent a parameter they would reject.
+pub fn default_reasoning() -> String { "auto".to_string() }
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -95,9 +99,8 @@ pub struct IntegrationAction { pub name: String, pub description: String }
 #[serde(rename_all = "camelCase")]
 pub struct TaskRecord { pub id: String, pub requester: String, pub assigned_agent: String, pub status: String, pub input: String, pub context: String, pub result: Option<String>, pub created_at: String, pub completed_at: Option<String> }
 
-// Ollama chat (tool-calling) request/response
-#[derive(Serialize)]
-pub struct ChatRequest { pub model: String, pub messages: Vec<ChatMessage>, pub tools: Option<Vec<serde_json::Value>>, pub stream: bool }
+// Ollama chat response shape. Requests are built as JSON in the provider layer so
+// reasoning/options can be attached uniformly.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ChatMessage { pub role: String, pub content: Option<String>, #[serde(skip_serializing_if = "Option::is_none")] pub tool_calls: Option<Vec<ToolCall>>, #[serde(skip_serializing_if = "Option::is_none")] pub tool_call_id: Option<String> }
 #[derive(Serialize, Deserialize, Clone)]

@@ -10,7 +10,7 @@ use crate::http;
 use crate::integrations::integration_definitions;
 use crate::mcp;
 use crate::models::*;
-use crate::storage::stored_api_key;
+use crate::provider;
 use crate::tasks::list_tasks;
 use crate::tools::{
   AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool, ReadAnyFileTool, ReadFileTool,
@@ -152,7 +152,7 @@ pub(crate) fn skills_prompt(conn: &Connection, skill_ids: &[String]) -> String {
 }
 
 // Returns (final_text, events, used_tools, prompt_tokens, completion_tokens).
-async fn run_ollama_chat(model: &str, prompt: &str, agent: &AgentRequest, tools: &[Box<dyn AgentTool>]) -> Result<(String, Vec<ExecutionEvent>, bool, u64, u64), String> {
+async fn run_ollama_chat(resolved: &provider::Resolved, prompt: &str, agent: &AgentRequest, tools: &[Box<dyn AgentTool>]) -> Result<(String, Vec<ExecutionEvent>, bool, u64, u64), String> {
   let mut events = Vec::new();
   let mut messages = vec![
     ChatMessage { role: "system".into(), content: Some(format!("You are {}. Objective: {}\n\nUse tools when you need current or external information. Call a tool, wait for its result, then continue. Cite URLs you use.", agent.name, agent.objective)), tool_calls: None, tool_call_id: None },
@@ -163,9 +163,14 @@ async fn run_ollama_chat(model: &str, prompt: &str, agent: &AgentRequest, tools:
   let mut prompt_tokens = 0u64;
   let mut completion_tokens = 0u64;
   for _round in 0..MAX_TOOL_ROUNDS {
-    let body = ChatRequest { model: model.into(), messages: messages.clone(), tools: Some(tool_schemas(tools)), stream: false };
-    let response = client.post("http://127.0.0.1:11434/api/chat").json(&body).send().await.map_err(|e| format!("Could not reach Ollama. Start it at http://127.0.0.1:11434 ({e})"))?;
-    if !response.status().is_success() { return Err(format!("Ollama returned {}", response.status())); }
+    // Built as JSON rather than the typed ChatRequest so the provider layer can
+    // drop reasoning parameters in one place if Ollama rejects them.
+    let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "tools": tool_schemas(tools), "stream": false });
+    let budget = provider::apply_reasoning(&mut body, resolved, http::CHAT_MAX_TOKENS);
+    provider::apply_ollama_options(&mut body, budget);
+    let response = http::send_model_request(&client, resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS)
+      .await
+      .map_err(|e| format!("Could not reach Ollama. Start it at {} ({e})", resolved.base))?;
     let parsed: ChatResponse = response.json().await.map_err(|e| format!("Could not parse Ollama tool response: {e}"))?;
     prompt_tokens += parsed.prompt_eval_count;
     completion_tokens += parsed.eval_count;
@@ -219,7 +224,7 @@ async fn run_ollama_chat(model: &str, prompt: &str, agent: &AgentRequest, tools:
 // Provider-agnostic tool-calling loop for the OpenAI-compatible endpoints
 // (OpenRouter / Groq). Mirrors run_ollama_chat but speaks the OpenAI shape:
 // arguments arrive as a JSON string, and each tool result must carry its call id.
-async fn run_openai_tool_chat(url: &str, key: &str, model: &str, is_openrouter: bool, prompt: &str, agent: &AgentRequest, tools: &[Box<dyn AgentTool>]) -> Result<(String, Vec<ExecutionEvent>, bool, u64, u64), String> {
+async fn run_openai_tool_chat(resolved: &provider::Resolved, prompt: &str, agent: &AgentRequest, tools: &[Box<dyn AgentTool>]) -> Result<(String, Vec<ExecutionEvent>, bool, u64, u64), String> {
   let mut events = Vec::new();
   let mut messages = vec![
     serde_json::json!({ "role": "system", "content": format!("You are {}. Objective: {}\n\nUse tools when you need current or external information. Call a tool, wait for its result, then continue. Cite URLs you use.", agent.name, agent.objective) }),
@@ -230,13 +235,10 @@ async fn run_openai_tool_chat(url: &str, key: &str, model: &str, is_openrouter: 
   let mut prompt_tokens = 0u64;
   let mut completion_tokens = 0u64;
   for _round in 0..MAX_TOOL_ROUNDS {
-    let mut body = serde_json::json!({ "model": model, "messages": messages, "tools": tool_schemas(tools), "stream": false });
-    http::apply_openai_defaults(&mut body, is_openrouter, http::CHAT_MAX_TOKENS);
-    let response = http::send_with_retry(|| {
-      let mut req = client.post(url).header("Authorization", format!("Bearer {key}")).json(&body);
-      if is_openrouter { req = req.header("HTTP-Referer", "https://local-agent-os.app").header("X-Title", "Local Agent OS"); }
-      req
-    }, http::MODEL_ATTEMPTS).await?;
+    let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "tools": tool_schemas(tools), "stream": false });
+    let budget = provider::apply_reasoning(&mut body, resolved, http::CHAT_MAX_TOKENS);
+    http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
+    let response = http::send_model_request(&client, resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
     let parsed: serde_json::Value = response.json().await.map_err(|e| format!("Could not parse the tool response: {e}"))?;
     prompt_tokens += parsed["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
     completion_tokens += parsed["usage"]["completion_tokens"].as_u64().unwrap_or(0);
@@ -303,79 +305,59 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
   } else {
     format!("You are {}. Objective: {}\n{skills}\nTask: {}\n\nReturn a helpful, direct answer.", agent.name, agent.objective, input)
   };
-  if let Some(model) = agent.model.strip_prefix("ollama:") {
-    let tools = build_tools(&conn, agent, &home)?;
-    if !tools.is_empty() {
-      events.push(ExecutionEvent { time: now(), kind: "thought".into(), title: "Asking Ollama".into(), detail: Some(format!("{model} with {} tool(s)", tools.len())) });
-      let (output, tool_events, _, pt, ct) = run_ollama_chat(model, &prompt, agent, &tools).await?;
-      events.extend(tool_events);
-      Ok((output, pt, ct))
+  let resolved = provider::resolve(&conn, &agent.model, api_key)?;
+  let label = match resolved.kind {
+    provider::Kind::Ollama => "Ollama",
+    provider::Kind::Groq => "Groq",
+    provider::Kind::OpenRouter => "OpenRouter",
+  };
+  let tools = build_tools(&conn, agent, &home)?;
+  events.push(ExecutionEvent {
+    time: now(),
+    kind: "thought".into(),
+    title: format!("Asking {label}"),
+    detail: Some(if tools.is_empty() { resolved.model.clone() } else { format!("{} with {} tool(s)", resolved.model, tools.len()) }),
+  });
+
+  if !tools.is_empty() {
+    let (output, tool_events, _, pt, ct) = if resolved.kind == provider::Kind::Ollama {
+      run_ollama_chat(&resolved, &prompt, agent, &tools).await?
     } else {
-      events.push(ExecutionEvent { time: now(), kind: "thought".into(), title: "Asking Ollama".into(), detail: Some(model.into()) });
-      let response = http::stream_client().post("http://127.0.0.1:11434/api/generate").json(&serde_json::json!({"model":model,"prompt":prompt,"stream":false})).send().await.map_err(|e| format!("Could not reach Ollama. Start it at http://127.0.0.1:11434 ({e})"))?;
-      if !response.status().is_success() { return Err(format!("Ollama returned {}", response.status())); }
-      let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-      let output = json["response"].as_str().unwrap_or("No response from Ollama.").to_string();
-      let pt = json["prompt_eval_count"].as_u64().unwrap_or(0);
-      let ct = json["eval_count"].as_u64().unwrap_or(0);
-      events.push(ExecutionEvent { time: now(), kind: "result".into(), title: "Generated final result".into(), detail: None });
-      Ok((output, pt, ct))
-    }
-  } else if let Some(model) = agent.model.strip_prefix("openrouter:") {
-    let key = api_key
-      .filter(|k| !k.trim().is_empty())
-      .map(|k| k.to_string())
-      .or(stored_api_key(&conn, &agent.model).ok().flatten())
-      .ok_or("OpenRouter requires an API key. Add it in Models first.")?;
-    let tools = build_tools(&conn, agent, &home)?;
-    events.push(ExecutionEvent { time: now(), kind: "thought".into(), title: "Asking OpenRouter".into(), detail: Some(if tools.is_empty() { model.into() } else { format!("{model} with {} tool(s)", tools.len()) }) });
-    if !tools.is_empty() {
-      let (output, tool_events, _, pt, ct) = run_openai_tool_chat("https://openrouter.ai/api/v1/chat/completions", &key, model, true, &prompt, agent, &tools).await?;
-      events.extend(tool_events);
-      return Ok((output, pt, ct));
-    }
-    let mut body = serde_json::json!({"model":model,"messages":[{"role":"user","content":prompt}]});
-    http::apply_openai_defaults(&mut body, true, http::CHAT_MAX_TOKENS);
-    let response = http::send_with_retry(|| {
-      http::client().post("https://openrouter.ai/api/v1/chat/completions")
-        .header("Authorization", format!("Bearer {key}"))
-        .header("HTTP-Referer", "https://local-agent-os.app")
-        .header("X-Title", "Local Agent OS")
-        .json(&body)
-    }, http::MODEL_ATTEMPTS).await?;
+      run_openai_tool_chat(&resolved, &prompt, agent, &tools).await?
+    };
+    events.extend(tool_events);
+    return Ok((output, pt, ct));
+  }
+
+  // No tools to offer, so this is a single call. Ollama answers those on its
+  // dedicated generate endpoint rather than the chat one.
+  let (output, pt, ct) = if resolved.kind == provider::Kind::Ollama {
+    let mut body = serde_json::json!({ "model": resolved.model, "prompt": prompt, "stream": false });
+    let budget = provider::apply_reasoning(&mut body, &resolved, http::CHAT_MAX_TOKENS);
+    provider::apply_ollama_options(&mut body, budget);
+    let response = http::send_model_request(&http::stream_client(), &resolved, &resolved.generate_url(), &body, http::MODEL_ATTEMPTS)
+      .await
+      .map_err(|e| format!("Could not reach Ollama. Start it at {} ({e})", resolved.base))?;
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-    let output = json["choices"][0]["message"]["content"].as_str().unwrap_or("OpenRouter returned no text.").to_string();
-    let pt = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
-    let ct = json["usage"]["completion_tokens"].as_u64().unwrap_or(0);
-    events.push(ExecutionEvent { time: now(), kind: "result".into(), title: "Generated final result".into(), detail: None });
-    Ok((output, pt, ct))
-  } else if let Some(model) = agent.model.strip_prefix("groq:") {
-    let key = api_key
-      .filter(|k| !k.trim().is_empty())
-      .map(|k| k.to_string())
-      .or(stored_api_key(&conn, &agent.model).ok().flatten())
-      .ok_or("Groq requires an API key. Add it in Models first.")?;
-    let tools = build_tools(&conn, agent, &home)?;
-    events.push(ExecutionEvent { time: now(), kind: "thought".into(), title: "Asking Groq".into(), detail: Some(if tools.is_empty() { model.into() } else { format!("{model} with {} tool(s)", tools.len()) }) });
-    if !tools.is_empty() {
-      let (output, tool_events, _, pt, ct) = run_openai_tool_chat("https://api.groq.com/openai/v1/chat/completions", &key, model, false, &prompt, agent, &tools).await?;
-      events.extend(tool_events);
-      return Ok((output, pt, ct));
-    }
-    let mut body = serde_json::json!({"model":model,"messages":[{"role":"user","content":prompt}]});
-    http::apply_openai_defaults(&mut body, false, http::CHAT_MAX_TOKENS);
-    let response = http::send_with_retry(|| {
-      http::client().post("https://api.groq.com/openai/v1/chat/completions")
-        .header("Authorization", format!("Bearer {key}"))
-        .json(&body)
-    }, http::MODEL_ATTEMPTS).await?;
+    (
+      json["response"].as_str().unwrap_or("No response from Ollama.").to_string(),
+      json["prompt_eval_count"].as_u64().unwrap_or(0),
+      json["eval_count"].as_u64().unwrap_or(0),
+    )
+  } else {
+    let mut body = serde_json::json!({ "model": resolved.model, "messages": [{ "role": "user", "content": prompt }] });
+    let budget = provider::apply_reasoning(&mut body, &resolved, http::CHAT_MAX_TOKENS);
+    http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
+    let response = http::send_model_request(&http::client(), &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-    let output = json["choices"][0]["message"]["content"].as_str().unwrap_or("Groq returned no text.").to_string();
-    let pt = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
-    let ct = json["usage"]["completion_tokens"].as_u64().unwrap_or(0);
-    events.push(ExecutionEvent { time: now(), kind: "result".into(), title: "Generated final result".into(), detail: None });
-    Ok((output, pt, ct))
-  } else { Err("Unknown model provider. Select Ollama, OpenRouter or Groq in the agent Model tab.".into()) }
+    (
+      json["choices"][0]["message"]["content"].as_str().unwrap_or("The provider returned no text.").to_string(),
+      json["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
+      json["usage"]["completion_tokens"].as_u64().unwrap_or(0),
+    )
+  };
+  events.push(ExecutionEvent { time: now(), kind: "result".into(), title: "Generated final result".into(), detail: None });
+  Ok((output, pt, ct))
 }
 
 // Builds the Manager's workspace context: agents, integrations, active tasks.
@@ -435,8 +417,4 @@ pub async fn execute_agent(app: AppHandle, agent: AgentRequest, input: String, a
   fs::write(home.join("outputs").join(format!("{run_id}.txt")), &output).map_err(|e| e.to_string())?;
   conn.execute("UPDATE runs SET status='completed', output=?1, prompt_tokens=?2, completion_tokens=?3 WHERE id=?4", params![output, prompt_tokens, completion_tokens, run_id]).map_err(|e| e.to_string())?;
   Ok(Execution { output, events, run_id, prompt_tokens, completion_tokens })
-}
-
-pub(crate) fn api_key_for(conn: &Connection, model: &str) -> Result<String, String> {
-  stored_api_key(conn, model).ok().flatten().filter(|k| !k.is_empty()).ok_or("OpenRouter requires an API key. Add it in Models first.".into())
 }

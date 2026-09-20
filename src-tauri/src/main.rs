@@ -9,6 +9,7 @@ mod manager;
 mod mcp;
 mod memory;
 mod models;
+mod provider;
 mod storage;
 mod tasks;
 mod telegram;

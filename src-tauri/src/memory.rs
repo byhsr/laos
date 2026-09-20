@@ -7,7 +7,7 @@ use tauri::AppHandle;
 
 use crate::db::db;
 use crate::http;
-use crate::storage::stored_api_key;
+use crate::provider;
 
 pub(crate) const ROLLING_WINDOW: usize = 4; // max messages (user+assistant) sent as context
 pub(crate) const MEMORY_SUMMARY_KEY: &str = "__summary__";
@@ -28,32 +28,32 @@ pub(crate) fn load_memory(conn: &Connection, agent_id: &str) -> Vec<(String, Str
 
 // Non-streaming single-shot completion used for summarization. Returns the text.
 async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &str) -> Result<String, String> {
-  let client = http::client();
-  if let Some(m) = model.strip_prefix("ollama:") {
-    let response = client.post("http://127.0.0.1:11434/api/generate")
-      .json(&serde_json::json!({ "model": m, "prompt": prompt, "stream": false }))
-      .send().await.map_err(|e| e.to_string())?;
-    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-    Ok(json["response"].as_str().unwrap_or("").to_string())
+  let conn = db(app)?;
+  // A utility call, so no reasoning is applied even when the model is set to
+  // think: a summary gains nothing from it and it would multiply the per-turn
+  // background cost.
+  let resolved = provider::resolve(&conn, model, None)?;
+  let is_ollama = resolved.kind == provider::Kind::Ollama;
+
+  let mut body = if is_ollama {
+    serde_json::json!({ "model": resolved.model, "prompt": prompt, "stream": false })
   } else {
-    let conn = db(app)?;
-    let (url, api_model, key, is_openrouter) = if let Some(m) = model.strip_prefix("groq:") {
-      let k = stored_api_key(&conn, model).ok().flatten().ok_or("Groq requires an API key.")?;
-      ("https://api.groq.com/openai/v1/chat/completions".to_string(), m.to_string(), k, false)
-    } else if let Some(m) = model.strip_prefix("openrouter:") {
-      let k = stored_api_key(&conn, model).ok().flatten().ok_or("OpenRouter requires an API key.")?;
-      ("https://openrouter.ai/api/v1/chat/completions".to_string(), m.to_string(), k, true)
-    } else {
-      return Err(format!("Unsupported model provider for '{model}'."));
-    };
-    let mut body = serde_json::json!({ "model": api_model, "messages": [{ "role": "user", "content": prompt }] });
-    http::apply_openai_defaults(&mut body, is_openrouter, http::SUMMARY_MAX_TOKENS);
-    let response = http::send_with_retry(|| {
-      client.post(&url).header("Authorization", format!("Bearer {key}")).json(&body)
-    }, http::MODEL_ATTEMPTS).await?;
-    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-    Ok(json["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
+    serde_json::json!({ "model": resolved.model, "messages": [{ "role": "user", "content": prompt }] })
+  };
+  if is_ollama {
+    provider::apply_ollama_options(&mut body, http::SUMMARY_MAX_TOKENS);
+  } else {
+    http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, http::SUMMARY_MAX_TOKENS);
   }
+
+  let url = if is_ollama { resolved.generate_url() } else { resolved.chat_url() };
+  let response = http::send_model_request(&http::client(), &resolved, &url, &body, http::MODEL_ATTEMPTS).await?;
+  let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+  Ok(if is_ollama {
+    json["response"].as_str().unwrap_or("").to_string()
+  } else {
+    json["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string()
+  })
 }
 
 // Folds the turns that have scrolled out of the rolling window into the agent's

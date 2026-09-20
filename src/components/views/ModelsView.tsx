@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Check } from 'lucide-react';
-import type { ModelConfig } from '../../types';
+import type { ModelConfig, Reasoning } from '../../types';
 import { Drawer } from '../ui/Drawer';
 import { Dropdown } from '../ui/Dropdown';
 import { Checkbox } from '../ui/Checkbox';
@@ -20,7 +20,7 @@ export function ModelsView({ models, onAdd, onEdit, onDelete, embedded = false }
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <b style={{ fontSize: 13 }}>{m.label}</b>
-                <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)' }}>{m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.apiKey ? ' · key set' : ''}</span>
+                <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)' }}>{m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.apiKey ? ' · key set' : ''}{m.reasoning !== 'auto' ? ` · reasoning: ${m.reasoning}` : ''}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className="mr-[7px] text-[11px] text-muted"><i className={`mr-1.5 inline-block h-[7px] w-[7px] rounded-full ${m.enabled ? 'bg-[var(--green)]' : 'bg-[#f79009]'}`} />{m.enabled ? 'enabled' : 'disabled'}</span>
@@ -82,6 +82,23 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
 
         <label className={labelCls}>MODEL ID</label>
         <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={form.provider === 'ollama' ? 'qwen3:8b' : form.provider === 'groq' ? 'llama-3.3-70b-versatile' : 'anthropic/claude-3.5-haiku'} className={inputCls} />
+
+        <label className={labelCls}>REASONING</label>
+        <Dropdown
+          value={form.reasoning}
+          options={[
+            { value: 'auto', label: 'Auto — leave it to the model' },
+            { value: 'off', label: 'Off — answer directly' },
+            { value: 'low', label: 'Low effort' },
+            { value: 'medium', label: 'Medium effort' },
+            { value: 'high', label: 'High effort' },
+          ]}
+          onChange={(v) => setForm({ ...form, reasoning: v as Reasoning })}
+        />
+        <p className="text-[12px] text-muted" style={{ margin: '6px 0 0' }}>
+          Thinking models can spend thousands of tokens before answering, and those count against the reply's own budget. Auto sends nothing,
+          which is the right choice for models that don't support reasoning.
+        </p>
 
         {form.provider === 'ollama' && (
           <>

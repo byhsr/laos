@@ -20,7 +20,7 @@ use crate::memory::{
   summarize_old_turns, MEMORY_SUMMARY_KEY, ROLLING_WINDOW,
 };
 use crate::models::*;
-use crate::storage::stored_api_key;
+use crate::provider;
 use crate::tools::{AgentTool, MAX_TOOL_ROUNDS};
 use crate::tooltext::{parse_text_tool_calls, ToolCallLeakFilter};
 
@@ -89,19 +89,9 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({ "role": "system", "content": system })];
   messages.extend(window);
 
-  let model = agent.model.clone();
-  let (url, auth, key, is_openrouter) = if let Some(m) = model.strip_prefix("ollama:") {
-    ("http://127.0.0.1:11434/api/chat".to_string(), None::<String>, m.to_string(), false)
-  } else if let Some(m) = model.strip_prefix("groq:") {
-    let k = stored_api_key(&conn, &model).ok().flatten().ok_or("Groq requires an API key.")?;
-    ("https://api.groq.com/openai/v1/chat/completions".into(), Some(k), m.to_string(), false)
-  } else if let Some(m) = model.strip_prefix("openrouter:") {
-    let k = stored_api_key(&conn, &model).ok().flatten().ok_or("OpenRouter requires an API key.")?;
-    ("https://openrouter.ai/api/v1/chat/completions".into(), Some(k), m.to_string(), true)
-  } else {
-    return Err("Unknown model provider.".into());
-  };
-  let is_ollama = url.contains("11434");
+  // Provider, endpoint, key and reasoning setting all resolve in one place now.
+  let resolved = provider::resolve(&conn, &agent.model, None)?;
+  let is_ollama = resolved.kind == provider::Kind::Ollama;
 
   // Tool-call rounds (non-streaming) run first, then the final reply streams.
   if !tools.is_empty() {
@@ -109,17 +99,18 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
     for _ in 0..MAX_TOOL_ROUNDS {
       emit_status(&on_event, "Thinking…");
       let mut body = serde_json::json!({
-        "model": key,
+        "model": resolved.model,
         "messages": messages,
         "tools": tool_schemas(&tools),
         "stream": false,
       });
-      if !is_ollama { http::apply_openai_defaults(&mut body, is_openrouter, http::CHAT_MAX_TOKENS); }
-      let response = http::send_with_retry(|| {
-        let mut req = client.post(&url).json(&body);
-        if let Some(auth) = &auth { req = req.header("Authorization", format!("Bearer {auth}")); }
-        req
-      }, http::MODEL_ATTEMPTS).await?;
+      let budget = provider::apply_reasoning(&mut body, &resolved, http::CHAT_MAX_TOKENS);
+      if is_ollama {
+        provider::apply_ollama_options(&mut body, budget);
+      } else {
+        http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
+      }
+      let response = http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
       let parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
 
       // Support both Ollama (message.tool_calls) and OpenAI-compatible
@@ -176,18 +167,18 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
 
   emit_status(&on_event, "Writing…");
   let client = http::stream_client();
-  let mut body = serde_json::json!({ "model": key, "messages": messages, "stream": true });
-  if !is_ollama {
-    http::apply_openai_defaults(&mut body, is_openrouter, http::CHAT_MAX_TOKENS);
+  let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "stream": true });
+  let budget = provider::apply_reasoning(&mut body, &resolved, http::CHAT_MAX_TOKENS);
+  if is_ollama {
+    provider::apply_ollama_options(&mut body, budget);
+  } else {
+    let is_openrouter = resolved.kind == provider::Kind::OpenRouter;
+    http::apply_openai_defaults(&mut body, is_openrouter, budget);
     // Ask for usage on the final chunk so the recorded run has real token counts.
     if is_openrouter { body["usage"] = serde_json::json!({ "include": true }); }
     else { body["stream_options"] = serde_json::json!({ "include_usage": true }); }
   }
-  let response = http::send_with_retry(|| {
-    let mut req = client.post(&url).json(&body);
-    if let Some(auth) = &auth { req = req.header("Authorization", format!("Bearer {auth}")); }
-    req
-  }, http::MODEL_ATTEMPTS).await?;
+  let response = http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
   let mut stream = response.bytes_stream();
   let mut buffer = String::new();
   let mut delta = String::new();

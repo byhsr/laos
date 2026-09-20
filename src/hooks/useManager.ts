@@ -3,6 +3,7 @@ import { clearAgentMemory, closeSession, createChatSession, getChatSession, list
 import { useConfirmStore } from './useConfirm';
 import { useRunsStore } from './useRuns';
 import type { Agent } from '../types';
+import { createDeltaBuffer } from '../streamBuffer';
 
 export type ChatEntry = { role: 'user' | 'assistant'; content: string; time: string };
 
@@ -103,21 +104,24 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       const conv = { ...s.conversations, [agentId]: [...(s.conversations[agentId] ?? []), userEntry, assistantEntry] };
       return { conversations: conv, messages: conv[agentId] };
     });
-    let buffer = '';
+    // Batch the streamed deltas so we aren't re-rendering the whole conversation
+    // (and re-parsing its markdown) once per token.
+    const batcher = createDeltaBuffer((text) => {
+      set((s) => {
+        const list = s.conversations[agentId] ?? [];
+        const updated = list.map((e, i) => (i === list.length - 1 ? { ...e, content: text } : e));
+        return { conversations: { ...s.conversations, [agentId]: updated }, messages: updated };
+      });
+    });
+    let failed = false;
     try {
-      await streamChat(managerAgent, message, true, (delta) => {
-        buffer += delta;
-        set((s) => {
-          const list = s.conversations[agentId] ?? [];
-          const updated = list.map((e, i) => (i === list.length - 1 ? { ...e, content: buffer } : e));
-          return { conversations: { ...s.conversations, [agentId]: updated }, messages: updated };
-        });
-      }, (confirmReq) => {
+      await streamChat(managerAgent, message, true, (delta) => batcher.push(delta), (confirmReq) => {
         // Pop the confirmation dialog; the backend waits for the decision.
         useConfirmStore.getState().request(confirmReq);
       }, get().sessionIds[managerAgent.id] ?? undefined, (s) => set({ status: s }));
       useRunsStore.getState().loadRuns();
     } catch (e) {
+      failed = true;
       const msg = typeof e === 'string' ? e : (e instanceof Error ? e.message : 'Manager failed to respond.');
       set((s) => {
         const list = s.conversations[agentId] ?? [];
@@ -125,6 +129,9 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
         return { conversations: { ...s.conversations, [agentId]: updated }, messages: updated };
       });
     } finally {
+      // Only flush the tail on success: after a failure the bubble already shows
+      // the error, and a late flush would overwrite it with partial text.
+      if (!failed) batcher.end();
       set({ busy: false, status: '' });
     }
   },

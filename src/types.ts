@@ -1,9 +1,12 @@
 export type Provider = 'ollama' | 'openrouter' | 'groq';
+// Per-model reasoning control. 'auto' sends nothing at all to the provider, which
+// is the safe default: models without reasoning support never see the parameter.
+export type Reasoning = 'auto' | 'off' | 'low' | 'medium' | 'high';
 export type Agent = { id: string; name: string; objective: string; model: string; toolIds: string[]; integrations: string[]; skillIds: string[]; memory: boolean; permissions: string[]; homePath: string; color: string; x: number; y: number; isManager?: boolean; description?: string; persona?: string; pinned?: boolean; avatar?: string };
 export type RunEvent = { time: string; type: 'thought' | 'tool' | 'result'; title: string; detail?: string };
 export type Run = { id: string; agentId: string; startedAt: string; endedAt?: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; model: string; input: string; events: RunEvent[]; output?: string; promptTokens?: number; completionTokens?: number };
 export type Edge = { id: string; from: string; to: string };
-export type ModelConfig = { id: string; provider: Provider; label: string; model: string; host?: string; apiKey?: string; enabled: boolean };
+export type ModelConfig = { id: string; provider: Provider; label: string; model: string; host?: string; apiKey?: string; enabled: boolean; reasoning: Reasoning };
 export type IntegrationAction = { name: string; description: string };
 export type Integration = { id: string; name: string; provider: string; enabled: boolean; connected: boolean; config: Record<string, unknown>; actions: IntegrationAction[] };
 export type ToolParam = { name: string; type: string; description: string; required: boolean };
@@ -48,5 +51,5 @@ export type ChatMessage = { role: 'user' | 'assistant' | 'tool' | 'thought'; con
 export type ExecutionResult = { output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number };
 
 export const emptyTool = (): Tool => ({ id: '', name: '', kind: 'api', integrationId: 'http', description: '', enabled: true, config: { method: 'GET', url: '', headers: [], body: '', params: [] } });
-export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', host: '', apiKey: '', enabled: true });
+export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', host: '', apiKey: '', enabled: true, reasoning: 'auto' });
 export const emptySkill = (): Skill => ({ id: '', name: '', description: '', content: '' });

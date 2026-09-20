@@ -6,12 +6,13 @@ use async_trait::async_trait;
 use rusqlite::{params, Connection};
 use tauri::{AppHandle, Manager};
 
-use crate::agents::{all_mcp_tools, api_key_for, build_workspace_context, skills_prompt, tool_schemas};
+use crate::agents::{all_mcp_tools, build_workspace_context, skills_prompt, tool_schemas};
 use crate::db::{db, now};
 use crate::http;
 use crate::integrations::{integration_definitions, save_integration_config};
 use crate::memory::{build_context_bundle, build_day_context, load_memory, MEMORY_SUMMARY_KEY};
 use crate::models::*;
+use crate::provider;
 use crate::storage::{manager_default_model, parse_json_vec, save_agent, save_workflow};
 use crate::tasks::{create_task, delegate_task, list_tasks, task_from_row};
 use crate::tools::{AgentTool, ReadAnyFileTool, RunCommandTool, SearchFilesTool, MAX_TOOL_ROUNDS};
@@ -285,31 +286,22 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     ChatMessage { role: "system".into(), content: Some(prompt), tool_calls: None, tool_call_id: None },
   ];
   let client = http::client();
-  // The provider expects the bare model name; only our stored id carries the prefix.
-  let api_model = manager.model.split_once(':').map(|(_, m)| m.to_string()).unwrap_or_else(|| manager.model.clone());
+  // Endpoint, key and reasoning all resolve in one place. This path used to pass
+  // `!is_groq` as its "is OpenRouter" flag, which routed an unknown prefix to
+  // OpenRouter instead of failing.
+  let resolved = provider::resolve(&conn, &manager.model, None)?;
+  let is_ollama = resolved.kind == provider::Kind::Ollama;
   let mut final_output = String::new();
-  let is_ollama = manager.model.starts_with("ollama:");
-  let is_groq = manager.model.starts_with("groq:");
-  let provider_url = if is_ollama {
-    "http://127.0.0.1:11434/api/chat".to_string()
-  } else if is_groq {
-    "https://api.groq.com/openai/v1/chat/completions".to_string()
-  } else {
-    "https://openrouter.ai/api/v1/chat/completions".to_string()
-  };
-  let provider_key = if is_ollama { None } else { Some(api_key_for(&conn, &manager.model)?) };
 
   for _round in 0..MAX_TOOL_ROUNDS {
-    let mut body = serde_json::json!({ "model": api_model, "messages": messages, "tools": tool_schemas(&tools), "stream": false });
-    if !is_ollama { http::apply_openai_defaults(&mut body, !is_groq, http::CHAT_MAX_TOKENS); }
-    let response = http::send_with_retry(|| {
-      let mut req = client.post(&provider_url).json(&body);
-      if let Some(k) = &provider_key { req = req.header("Authorization", format!("Bearer {k}")); }
-      if !is_ollama && !is_groq {
-        req = req.header("HTTP-Referer", "https://local-agent-os.app").header("X-Title", "Local Agent OS");
-      }
-      req
-    }, http::MODEL_ATTEMPTS).await?;
+    let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "tools": tool_schemas(&tools), "stream": false });
+    let budget = provider::apply_reasoning(&mut body, &resolved, http::CHAT_MAX_TOKENS);
+    if is_ollama {
+      provider::apply_ollama_options(&mut body, budget);
+    } else {
+      http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
+    }
+    let response = http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
     let parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
     // Support both Ollama (message.tool_calls) and OpenAI-compatible shapes.
     let calls_arr = parsed["message"]["tool_calls"].as_array()

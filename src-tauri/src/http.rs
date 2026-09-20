@@ -4,11 +4,16 @@
 // across many providers, and its default (price-driven) pick is often a slow one.
 use std::time::Duration;
 
+use crate::provider;
+
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
 pub(crate) const CHAT_MAX_TOKENS: u64 = 2048;
+// Reasoning tokens are billed against max_tokens, so a model that thinks before
+// answering needs a larger allowance or it returns empty content.
+pub(crate) const REASONING_MAX_TOKENS: u64 = 8192;
 pub(crate) const SUMMARY_MAX_TOKENS: u64 = 400;
 
 // How many times a model request is attempted before giving up.
@@ -46,6 +51,62 @@ fn retry_after(resp: &reqwest::Response) -> Option<Duration> {
 
 fn backoff_delay(attempt: usize) -> Duration {
   Duration::from_millis(800u64.saturating_mul(1 << attempt.min(4)))
+}
+
+// The request fields that ask a model to reason. Support varies per provider and
+// per model, and can't be queried up front.
+const REASONING_KEYS: [&str; 3] = ["think", "reasoning", "reasoning_effort"];
+
+fn has_reasoning(body: &serde_json::Value) -> bool {
+  REASONING_KEYS.iter().any(|key| body.get(key).is_some())
+}
+
+fn strip_reasoning(body: &serde_json::Value) -> serde_json::Value {
+  let mut stripped = body.clone();
+  if let Some(obj) = stripped.as_object_mut() {
+    for key in REASONING_KEYS {
+      obj.remove(key);
+    }
+  }
+  stripped
+}
+
+fn build_model_request(client: &reqwest::Client, resolved: &provider::Resolved, url: &str, body: &serde_json::Value) -> reqwest::RequestBuilder {
+  let mut req = client.post(url).json(body);
+  if let Some(key) = &resolved.key {
+    req = req.header("Authorization", format!("Bearer {key}"));
+  }
+  if resolved.kind == provider::Kind::OpenRouter {
+    req = req.header("HTTP-Referer", "https://local-agent-os.app").header("X-Title", "Local Agent OS");
+  }
+  req
+}
+
+/// The single send path for model calls, so no call site has to remember the
+/// provider headers or the retry policy.
+///
+/// If a provider rejects the body with 400 and reasoning parameters were set, the
+/// request is retried once without them: some models mandate reasoning and refuse
+/// to have it disabled, and that shouldn't surface as a broken chat turn.
+pub(crate) async fn send_model_request(
+  client: &reqwest::Client,
+  resolved: &provider::Resolved,
+  url: &str,
+  body: &serde_json::Value,
+  attempts: usize,
+) -> Result<reqwest::Response, String> {
+  match send_with_retry(|| build_model_request(client, resolved, url, body), attempts).await {
+    Ok(resp) => Ok(resp),
+    Err(err) => {
+      // send_with_retry formats the status with StatusCode's Display, so a
+      // rejected body reads as "… 400 Bad Request".
+      if !err.ends_with(" 400 Bad Request") || !has_reasoning(body) {
+        return Err(err);
+      }
+      let stripped = strip_reasoning(body);
+      send_with_retry(|| build_model_request(client, resolved, url, &stripped), attempts).await
+    }
+  }
 }
 
 // Client for requests whose full response is awaited.

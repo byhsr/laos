@@ -17,6 +17,7 @@ import { ConfirmDialog } from './ui/ConfirmDialog';
 import { DeleteConfirm } from './ui/DeleteConfirm';
 import { Checkbox } from './ui/Checkbox';
 import { MicButton } from './ui/MicButton';
+import { createDeltaBuffer } from '../streamBuffer';
 
 const isComplete = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent' && !!a.model.trim() && !!a.objective.trim();
 
@@ -198,21 +199,25 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       sid = sess.id;
       useManagerStore.setState((s) => ({ sessionIds: { ...s.sessionIds, [agent.id]: sid } }));
     }
-    let buffer = '';
+    // Batch the streamed deltas — see src/streamBuffer.ts for why.
+    const batcher = createDeltaBuffer((text) => {
+      setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: text } : m)));
+    });
+    let failed = false;
     try {
-      await streamChat(agentToRun, text, false, (delta) => {
-        buffer += delta;
-        setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: buffer } : m)));
-      }, (confirmReq) => {
+      await streamChat(agentToRun, text, false, (delta) => batcher.push(delta), (confirmReq) => {
         // Agent tools that need approval (e.g. run_command) pop the same panel.
         useConfirmStore.getState().request(confirmReq);
       }, sid, setStatus);
       useRunsStore.getState().loadRuns();
     } catch (e) {
+      failed = true;
       const message = e instanceof Error ? e.message : String(e);
       setError(message);
       setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: `⚠️ ${message}` } : m)));
     } finally {
+      // Only flush the tail on success, so a late flush can't overwrite the error.
+      if (!failed) batcher.end();
       setRunning(false);
       setStatus('');
     }

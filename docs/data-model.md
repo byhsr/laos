@@ -50,7 +50,11 @@ Written by `execute_agent` (agents.rs) and `stream_chat` (chat.rs); read by `lis
 ### `model_configs`
 
 `id` (PK, e.g. `groq:llama-3.3-70b-versatile`), `provider`, `label`, `model`, `host`,
-`api_key`, `enabled`.
+`api_key`, `enabled`, `reasoning`.
+
+`host` overrides the endpoint root for `ollama:` models (default `http://127.0.0.1:11434`).
+`reasoning` is one of `auto` / `off` / `low` / `medium` / `high` and controls the provider's
+reasoning parameter — see [harness.md](./harness.md#reasoning-control).
 
 ### `tools`
 

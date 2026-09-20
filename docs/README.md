@@ -41,6 +41,7 @@ src-tauri/                   Backend (Rust / Tauri v2)
   src/main.rs                Entry point: declares modules, spawns background tasks, registers commands
   src/db.rs                  SQLite connection + idempotent schema/migrations
   src/dictation.rs           Local Whisper speech-to-text: mic capture, model download, transcription
+  src/provider.rs            Provider dispatch: endpoint, credentials, reasoning + Ollama tuning
   src/storage.rs             CRUD commands + Manager bootstrap
   src/http.rs                Shared provider HTTP client, retry, timeouts, request defaults
   src/agents.rs              One-shot agent execution + toolset assembly

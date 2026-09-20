@@ -9,7 +9,8 @@ use crate::db::db;
 use crate::http;
 use crate::integrations::integration_secret;
 use crate::models::*;
-use crate::storage::{parse_json_vec, stored_api_key};
+use crate::provider;
+use crate::storage::parse_json_vec;
 use crate::tools::{AgentTool, IntegrationTool};
 
 // Evaluate a single deterministic rule against the given value. Returns
@@ -213,46 +214,38 @@ async fn run_llm_judge(app: &AppHandle, rule: &serde_json::Value, input_value: &
   let system = "You are a strict quality judge. Evaluate the output against the criteria and reply with ONLY a JSON object: {\"pass\": true or false, \"reason\": \"short explanation\"}. No other text.";
   let full_prompt = format!("Criteria:\n{prompt}\n\nOutput to judge:\n{user_content}");
 
+  // Utility call: no reasoning is applied (see memory::one_shot_completion).
+  // Ollama still uses its chat endpoint here, because the judge needs `format`.
+  let resolved = provider::resolve(&conn, &model, api_key)?;
+  let is_ollama = resolved.kind == provider::Kind::Ollama;
+  let url = resolved.chat_url();
+
   let mut last_err = "LLM judge returned no text".to_string();
   for attempt in 0..2 {
-    let result = if let Some(m) = model.strip_prefix("ollama:") {
-      let client = http::stream_client();
-      let resp = client.post("http://127.0.0.1:11434/api/chat")
-        .json(&serde_json::json!({"model": m, "messages": [{"role":"system","content":system},{"role":"user","content":full_prompt}], "stream": false, "format": "json"}))
-        .send().await.map_err(|e| format!("LLM judge: could not reach Ollama ({e})"))?;
-      if !resp.status().is_success() { return Err(format!("LLM judge: Ollama returned {}", resp.status())); }
-      let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-      json["message"]["content"].as_str().unwrap_or("").to_string()
-    } else if let Some(m) = model.strip_prefix("groq:") {
-      let key = api_key.filter(|k| !k.trim().is_empty()).map(|k| k.to_string()).or(stored_api_key(&conn, &model).ok().flatten())
-        .ok_or("LLM judge: Groq requires an API key.")?;
-      let client = http::client();
-      let mut body = serde_json::json!({"model": m, "messages": [{"role":"system","content":system},{"role":"user","content":full_prompt}], "temperature": 0.1});
-      http::apply_openai_defaults(&mut body, false, http::SUMMARY_MAX_TOKENS);
-      let resp = client.post("https://api.groq.com/openai/v1/chat/completions")
-        .header("Authorization", format!("Bearer {key}"))
-        .json(&body)
-        .send().await.map_err(|e| format!("LLM judge: could not reach Groq ({e})"))?;
-      if !resp.status().is_success() { return Err(format!("LLM judge: Groq returned {}", resp.status())); }
-      let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-      json["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string()
-    } else if let Some(m) = model.strip_prefix("openrouter:") {
-      let key = api_key.filter(|k| !k.trim().is_empty()).map(|k| k.to_string()).or(stored_api_key(&conn, &model).ok().flatten())
-        .ok_or("LLM judge: OpenRouter requires an API key.")?;
-      let client = http::client();
-      let mut body = serde_json::json!({"model": m, "messages": [{"role":"system","content":system},{"role":"user","content":full_prompt}], "temperature": 0.1});
-      http::apply_openai_defaults(&mut body, true, http::SUMMARY_MAX_TOKENS);
-      let resp = client.post("https://openrouter.ai/api/v1/chat/completions")
-        .header("Authorization", format!("Bearer {key}"))
-        .header("HTTP-Referer", "https://local-agent-os.app")
-        .header("X-Title", "Local Agent OS")
-        .json(&body)
-        .send().await.map_err(|e| format!("LLM judge: could not reach OpenRouter ({e})"))?;
-      if !resp.status().is_success() { return Err(format!("LLM judge: OpenRouter returned {}", resp.status())); }
-      let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-      json["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string()
+    let messages = serde_json::json!([
+      { "role": "system", "content": system },
+      { "role": "user", "content": full_prompt },
+    ]);
+    // Ollama takes `format` to force a parseable JSON reply; the OpenAI-compatible
+    // providers take a low temperature instead.
+    let mut body = if is_ollama {
+      serde_json::json!({ "model": resolved.model, "messages": messages, "stream": false, "format": "json" })
     } else {
-      return Err(format!("LLM judge: unknown model provider for {model}"));
+      serde_json::json!({ "model": resolved.model, "messages": messages, "temperature": 0.1 })
+    };
+    if is_ollama {
+      provider::apply_ollama_options(&mut body, http::SUMMARY_MAX_TOKENS);
+    } else {
+      http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, http::SUMMARY_MAX_TOKENS);
+    }
+    let resp = http::send_model_request(&http::client(), &resolved, &url, &body, http::MODEL_ATTEMPTS)
+      .await
+      .map_err(|e| format!("LLM judge: {e}"))?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let result = if is_ollama {
+      json["message"]["content"].as_str().unwrap_or("").to_string()
+    } else {
+      json["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string()
     };
 
     // Parse the verdict, tolerating markdown fences and stray text.
