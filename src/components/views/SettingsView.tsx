@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Download, RefreshCw, RotateCcw, Settings, Sparkles, Trash2 } from 'lucide-react';
+import { RefreshCw, RotateCcw, Settings, Sparkles } from 'lucide-react';
 import type { ModelConfig } from '../../types';
 import { ModelsView } from './ModelsView';
 import { UpdatePrompt } from '../ui/UpdatePrompt';
-import { Dropdown } from '../ui/Dropdown';
 import { toast } from '../../hooks/useToast';
 import { appVersion, checkForUpdate, type UpdateInfo } from '../../runtime';
 import { NAV_SECTIONS, useNavLabels } from '../../hooks/useNavLabels';
-import { useDictation } from '../../hooks/useDictation';
 
 type SettingsTab = 'general' | 'models';
 
@@ -18,8 +16,6 @@ const TABS: { key: SettingsTab; label: string }[] = [
 
 const tabBtn = (active: boolean) =>
   `flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${active ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`;
-
-const formatSize = (bytes: number) => `${Math.round(bytes / 1_048_576)} MB`;
 
 export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditModel, onDeleteModel }: {
   models: ModelConfig[]; onRerunOnboarding: () => void;
@@ -34,31 +30,7 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
   const setNavLabel = useNavLabels((s) => s.setLabel);
   const resetNavLabels = useNavLabels((s) => s.reset);
 
-  const dictationModels = useDictation((s) => s.models);
-  const dictationModelId = useDictation((s) => s.modelId);
-  const setDictationModelId = useDictation((s) => s.setModelId);
-  const loadDictationModels = useDictation((s) => s.loadModels);
-  const dictationAvailable = useDictation((s) => s.available);
-  const dictationProgress = useDictation((s) => s.downloading);
-  const dictationError = useDictation((s) => s.error);
-  const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
-
   useEffect(() => { appVersion().then(setVersion); }, []);
-  useEffect(() => { void loadDictationModels(); }, [loadDictationModels]);
-
-  const selectedModel = dictationModels.find((m) => m.id === dictationModelId);
-
-  const startDictationDownload = async (id: string) => {
-    setDownloadingModel(id);
-    try {
-      await useDictation.getState().download(id);
-      toast('Speech model ready.', 'success');
-    } catch (e) {
-      toast(typeof e === 'string' ? e : 'The model download failed.', 'error');
-    } finally {
-      setDownloadingModel(null);
-    }
-  };
 
   const checkUpdates = async () => {
     setChecking(true);
@@ -110,42 +82,6 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
           <button className="primary" onClick={checkUpdates} disabled={checking}>
             <RefreshCw size={13} className={checking ? 'animate-spin' : ''} />{checking ? 'Checking…' : 'Check for updates'}
           </button>
-        </div>
-
-        <div className="mt-4 max-w-[700px] rounded-[16px] border border-line bg-panel p-[22px]">
-          <h3 className="mb-[5px] text-[14px]">Dictation</h3>
-          <p className="mb-4 text-[12px] leading-[1.7] text-muted">
-            Transcribe speech into the chat box with Whisper. Everything runs on this machine; the model is downloaded once and works offline.
-          </p>
-          <label className="mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">MODEL</label>
-          <Dropdown
-            value={dictationModelId}
-            options={dictationModels.map((m) => ({ value: m.id, label: `${m.label} · ${formatSize(m.sizeBytes)}` }))}
-            onChange={setDictationModelId}
-          />
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            {downloadingModel ? (
-              <button className="primary" disabled><RefreshCw size={13} className="animate-spin" />Downloading…</button>
-            ) : selectedModel?.downloaded ? (
-              <button className="secondary" onClick={() => void useDictation.getState().remove(dictationModelId)}><Trash2 size={12} />Remove model</button>
-            ) : (
-              <button className="primary" onClick={() => void startDictationDownload(dictationModelId)}><Download size={13} />Download model</button>
-            )}
-            {downloadingModel && dictationProgress && (
-              <span className="font-mono text-[11px] text-muted">
-                {dictationProgress.total > 0
-                  ? `${Math.round((dictationProgress.received / dictationProgress.total) * 100)}% · ${formatSize(dictationProgress.received)} of ${formatSize(dictationProgress.total)}`
-                  : 'Starting…'}
-              </span>
-            )}
-          </div>
-          <p className="mt-3 text-[11px] text-muted">
-            {selectedModel
-              ? (selectedModel.downloaded ? 'Ready to use.' : `Not downloaded yet — about ${formatSize(selectedModel.sizeBytes)}.`)
-              : 'Loading the model list…'}
-            {dictationAvailable ? '' : ' No microphone was detected on this machine.'}
-          </p>
-          {dictationError && <p className="mt-1 text-[11px] text-[#f87171]">{dictationError}</p>}
         </div>
 
         <div className="mt-4 max-w-[700px] rounded-[16px] border border-line bg-panel p-[22px]">

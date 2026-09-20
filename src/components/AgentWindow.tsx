@@ -16,7 +16,7 @@ import { StreamIndicator } from './ui/StreamIndicator';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { DeleteConfirm } from './ui/DeleteConfirm';
 import { Checkbox } from './ui/Checkbox';
-import { MicButton } from './ui/MicButton';
+import { ReasoningPicker } from './ui/ReasoningPicker';
 import { createDeltaBuffer } from '../streamBuffer';
 
 const isComplete = (a: Agent) => !!a.name.trim() && a.name.trim() !== 'New Agent' && !!a.model.trim() && !!a.objective.trim();
@@ -166,21 +166,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
   };
 
-  // Dictated text is appended to whatever is already typed. Setting state
-  // directly bypasses onInputChange, so the box is re-measured by hand.
-  const appendTranscript = (text: string) => {
-    const spoken = text.trim();
-    if (!spoken) return;
-    setInput((prev) => (prev.trim() ? `${prev.trim()} ${spoken}` : spoken));
-    requestAnimationFrame(() => {
-      const el = inputRef.current;
-      if (!el) return;
-      el.style.height = 'auto';
-      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-      el.focus();
-    });
-  };
-
   const send = async (text: string) => {
     if (!text.trim() || running) return;
     setRunning(true); setError(undefined); setStatus('Thinking…');
@@ -310,6 +295,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             <div className="absolute right-3 bottom-[calc(100%+8px)] left-3 z-[30]">
               <ConfirmDialog />
             </div>
+            <ReasoningPicker modelId={agent.model} />
             <textarea
               ref={inputRef}
               rows={1} placeholder={`Message ${agent.name}…`}
@@ -318,7 +304,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
               style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--color-hairline)', borderRadius: 16, padding: '12px 16px', color: 'var(--text)', resize: 'none', minHeight: 44, maxHeight: 160, boxShadow: 'var(--shadow-soft)' }}
             />
-            <MicButton onTranscript={appendTranscript} disabled={running} />
             <button className="primary" disabled={running || !input.trim()} onClick={() => send(input)} title="Send">
               <Send size={14} />
             </button>

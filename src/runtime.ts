@@ -1,5 +1,5 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
-import type { Agent, DictationModel, Integration, ModelConfig, Run, RunEvent, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
+import type { Agent, Integration, ModelConfig, Run, RunEvent, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
 
 // Streams a chat completion, calling onDelta with each token chunk and onConfirm
 // with structured confirmation requests from the Manager.
@@ -102,38 +102,6 @@ function progressChannel(onProgress?: (s: string) => void): Channel<string> {
   const ch = new Channel<string>();
   ch.onmessage = (s) => onProgress?.(s);
   return ch;
-}
-
-// Voice dictation (local Whisper). Audio is captured in Rust and transcribed on
-// this machine; the model is downloaded once into the app data directory.
-export async function dictationModels(): Promise<DictationModel[]> {
-  try { return await invoke<DictationModel[]>('dictation_models'); } catch { return []; }
-}
-export async function dictationAvailable(): Promise<boolean> {
-  try { return await invoke<boolean>('dictation_available'); } catch { return false; }
-}
-export async function dictationDownloadModel(model: string, onProgress?: (p: { received: number; total: number }) => void): Promise<void> {
-  const channel = new Channel<string>();
-  channel.onmessage = (raw) => {
-    if (!raw.startsWith('{')) return;
-    try {
-      const evt = JSON.parse(raw);
-      if (evt.type === 'progress') onProgress?.({ received: Number(evt.received ?? 0), total: Number(evt.total ?? 0) });
-    } catch { /* ignore a malformed progress frame */ }
-  };
-  await invoke('dictation_download_model', { model, onProgress: channel });
-}
-export async function dictationDeleteModel(model: string): Promise<void> {
-  await invoke('dictation_delete_model', { model });
-}
-export async function dictationStart(model: string): Promise<void> {
-  await invoke('dictation_start', { model });
-}
-export async function dictationStop(): Promise<string> {
-  return await invoke<string>('dictation_stop');
-}
-export async function dictationCancel(): Promise<void> {
-  try { await invoke('dictation_cancel'); } catch { /* nothing was recording */ }
 }
 
 // Knowledge base (shared, user-writable persistent docs).
