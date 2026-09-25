@@ -16,7 +16,7 @@ use crate::manager::{
   run_manager_tool, Approval,
 };
 use crate::memory::{
-  append_session_message, build_day_context, load_conversation, load_memory, save_conversation,
+  append_session_message, load_conversation, load_memory, load_session_messages, save_conversation,
   summarize_old_turns, MEMORY_SUMMARY_KEY, ROLLING_WINDOW,
 };
 use crate::models::*;
@@ -31,8 +31,15 @@ use crate::tooltext::{parse_text_tool_calls, ToolCallLeakFilter};
 pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>) -> Result<(), String> {
   let conn = db(&app)?;
 
-  // Rolling window: load history, append the new user turn.
-  let mut history = load_conversation(&conn, &agent.id);
+  // Rolling window: the CURRENT CHAT's turns. A new session starts empty, so a
+  // new chat gets a clean context and only long-term memory carries over. A call
+  // with no session (an internal/one-off turn) still falls back to the agent's
+  // stored conversation.
+  let scoped_to_session = session_id.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
+  let mut history = match &session_id {
+    Some(sid) if scoped_to_session => load_session_messages(&conn, sid),
+    _ => load_conversation(&conn, &agent.id),
+  };
   history.push(serde_json::json!({ "role": "user", "content": input }));
 
   // Fold older turns into memory in the background. It is an extra model call and
@@ -47,10 +54,11 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
     });
   }
 
-  // Build memory context (summary + facts) for the system prompt. Only compact
-  // long-term facts are injected — today's/yesterday's context and last-chat
-  // summaries are NOT force-fed (that causes hallucination across new chats).
-  // They're available on demand via the recall_memory tool.
+  // Long-term memory (durable facts + running summary) is the ONLY thing that
+  // crosses chat boundaries. Today's/yesterday's condensed context and the last
+  // chat's summary deliberately stay out of the prompt — a new chat should feel
+  // new, and force-feeding old context is what made it hallucinate. It remains
+  // reachable on demand through recall_memory.
   let memory = load_memory(&conn, &agent.id);
   let mut memory_blob = String::new();
   for (k, v) in &memory {
@@ -77,12 +85,9 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   let system = if is_manager {
     build_manager_system_prompt(&conn, &agent.name, &full_memory)?
   } else {
-    // Compact long-term memory plus the time-based context (last chat summary,
-    // today, yesterday) go in on every turn, so the agent starts each call
-    // already aware of recent work.
-    let day_context = build_day_context(&conn, &agent.id).unwrap_or_default();
+    // Long-term memory only — the conversation itself is the rolling window.
     let tool_note = if tools.is_empty() { String::new() } else { "\nYou have tools available: call one when it helps, wait for the result, then continue.".to_string() };
-    format!("You are {}. Objective: {}\n\n{full_memory}{day_context}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
+    format!("You are {}. Objective: {}\n\n{full_memory}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
 
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
@@ -243,11 +248,15 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   );
   if !delta.is_empty() {
     history.push(serde_json::json!({ "role": "assistant", "content": delta }));
-    let _ = save_conversation(&conn, &agent.id, &history);
-    // Also append to the chat session (bifurcated history) if one is active.
-    if let Some(sess) = &session_id {
-      let _ = append_session_message(&conn, sess, &agent.id, "user", &input);
-      let _ = append_session_message(&conn, sess, &agent.id, "assistant", &delta);
+    if scoped_to_session {
+      // The session IS the conversation, so record the turns there and leave the
+      // agent-level copy alone — it belongs to the session-less path.
+      if let Some(sess) = &session_id {
+        let _ = append_session_message(&conn, sess, &agent.id, "user", &input);
+        let _ = append_session_message(&conn, sess, &agent.id, "assistant", &delta);
+      }
+    } else {
+      let _ = save_conversation(&conn, &agent.id, &history);
     }
   }
   Ok(())

@@ -10,7 +10,7 @@ use crate::agents::{all_mcp_tools, build_workspace_context, skills_prompt, tool_
 use crate::db::{db, now};
 use crate::http;
 use crate::integrations::{integration_definitions, save_integration_config};
-use crate::memory::{build_context_bundle, build_day_context, load_memory, MEMORY_SUMMARY_KEY};
+use crate::memory::{build_context_bundle, load_memory, MEMORY_SUMMARY_KEY};
 use crate::models::*;
 use crate::provider;
 use crate::storage::{manager_default_model, parse_json_vec, save_agent, save_workflow};
@@ -176,12 +176,9 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, memory_
     .map(|s| parse_json_vec(&s))
     .unwrap_or_default();
   let skills = skills_prompt(conn, &skill_ids);
-  // Time-based context (last chat summary, today, yesterday) goes in on every
-  // turn; recall_memory still exposes the full bundle on demand.
-  let manager_id: String = conn
-    .query_row("SELECT id FROM agents WHERE is_manager=1 LIMIT 1", [], |r| r.get::<_, String>(0))
-    .unwrap_or_else(|_| "manager".to_string());
-  let day_context = build_day_context(conn, &manager_id).unwrap_or_default();
+  // Long-term memory only. The time-based context (last chat summary, today,
+  // yesterday) stays out of the prompt so a new chat starts clean; recall_memory
+  // still returns the full bundle on demand.
 
   Ok(format!(
     "You are {name}, the lead agent of a real, running agent workspace application. You are NOT a simulated or virtual entity â€” you have real tools and real effects on the user's machine.\n\n\
@@ -194,7 +191,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, memory_
      - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent â€” file access is just a permission value in the create_agent call.\n\
      - Never store secrets (API keys/tokens) without the user's explicit approval in the confirmation popup.\n\
      - Delegate domain work to agents rather than doing it inline.\n\n\
-     Workspace context:\n{context}\n\n{memory_blob}{day_context}\n{skills}\
+     Workspace context:\n{context}\n\n{memory_blob}\n{skills}\
      Return a concise, helpful reply to the user."
   ))
 }

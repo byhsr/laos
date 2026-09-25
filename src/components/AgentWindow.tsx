@@ -15,6 +15,7 @@ import { listChatSessions, getChatSession, createChatSession, deleteChatSession,
 import { useRunsStore } from '../hooks/useRuns';
 import { useManagerStore, type ChatEntry } from '../hooks/useManager';
 import { useConfirmStore } from '../hooks/useConfirm';
+import { useStickToBottom } from '../hooks/useStickToBottom';
 import { mergeStep } from '../chatSteps';
 import { useShallow } from 'zustand/react/shallow';
 import { DeleteConfirm } from './ui/DeleteConfirm';
@@ -154,11 +155,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     }
   }, [tab, agent.id]);
 
-  useEffect(() => {
-    // Always scroll the newest message into view.
-    const el = scrollRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-  }, [messages]);
+  useStickToBottom(scrollRef, messages);
 
   const send = async (text: string) => {
     if (!text.trim() || running) return;
@@ -208,7 +205,9 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   };
 
   const newChat = async () => {
-    // Close the outgoing session so it gets summarized into day context.
+    // Close the outgoing session so its summary is archived. The new session
+    // starts with an empty window — only the agent's long-term memory carries
+    // over into it.
     const cur = useManagerStore.getState().sessionIds[agent.id];
     if (cur) { void closeSession(cur, agent.id, agent.model); }
     const sess = await createChatSession(agent.id, 'Chat');

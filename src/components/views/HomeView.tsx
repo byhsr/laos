@@ -1,16 +1,31 @@
 import { Workflow as WorkflowIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Agent, Run, Tool, Workflow } from '../../types';
 import { AgentAvatar } from '../ui/AgentAvatar';
 import { GROUP_LABEL_CLS } from '../ui/Input';
+import { Select, type SelectOption } from '../ui/Select';
 
 const SHOW = 4;
 
 const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
+// Safe short day label — DB timestamps can be empty or malformed.
+const dayLabel = (s: string) => {
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? 'unknown' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
+
 // The readout grid: quiet boxes, one number each, with the token count given the
 // dominant cell and a faded caption pinned to the bottom of every box.
-const cell = 'flex flex-col justify-between rounded-xl border border-border bg-surface p-3.5';
+const cell = 'flex min-h-0 flex-col justify-between overflow-hidden rounded-xl border border-border bg-surface p-5';
+
+// How the token total is broken down. `total` is the default and a real entry in
+// the list, so the plain total is always one selection away.
+const TOKEN_FILTERS: SelectOption[] = [
+  { value: 'total', label: 'total' },
+  { value: 'agent', label: 'by agent' },
+  { value: 'day', label: 'by day' },
+];
 
 // No header: the section's own name lives in the rail, and the graph is a
 // section of its own. This view opens straight into content.
@@ -21,22 +36,60 @@ export function HomeView({ agents, tools, workflows, runs, onOpen, onCreate, onO
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
   const visibleAgents = agents.filter((a) => !a.isManager);
   const [hoveredAgentId, setHoveredAgentId] = useState<string | null>(null);
+  const [tokenGrouping, setTokenGrouping] = useState<'agent' | 'day' | null>(null);
 
   const promptTokens = runs.reduce((sum, r) => sum + (r.promptTokens ?? 0), 0);
   const completionTokens = runs.reduce((sum, r) => sum + (r.completionTokens ?? 0), 0);
+
+  // Same total either way — the filter only decides how it's broken down, and
+  // nothing is broken down until you ask for one.
+  const tokenGroups = useMemo(() => {
+    if (!tokenGrouping) return [];
+    const totals = new Map<string, number>();
+    for (const r of runs) {
+      const key = tokenGrouping === 'agent'
+        ? (agents.find((a) => a.id === r.agentId)?.name ?? r.agentId)
+        : dayLabel(r.startedAt);
+      totals.set(key, (totals.get(key) ?? 0) + (r.promptTokens ?? 0) + (r.completionTokens ?? 0));
+    }
+    return [...totals.entries()].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  }, [runs, agents, tokenGrouping]);
 
   const newLink = 'focus-ring cursor-pointer rounded border-0 bg-transparent p-0 font-mono text-[10px] text-muted transition-colors hover:text-foreground';
   const tile = 'focus-ring flex min-h-[64px] cursor-pointer items-center gap-3 rounded-xl border border-border bg-surface p-3.5 text-left transition-colors duration-150 hover:bg-background';
 
   return (
     <>
-      <div className="mb-5 grid auto-rows-[96px] grid-cols-3 gap-2.5">
+      <div className="mb-5 grid auto-rows-[104px] grid-cols-3 gap-3">
         <div className={`${cell} col-span-2 row-span-2`}>
-          <span className="text-[38px] leading-none font-bold tracking-tight text-foreground">{fmt(promptTokens + completionTokens)}</span>
-          <div className="flex items-baseline justify-between gap-3">
+          <div className="flex shrink-0 items-start justify-between gap-3">
+            <span className="text-[38px] leading-none font-bold tracking-tight text-foreground">{fmt(promptTokens + completionTokens)}</span>
+            <div className="w-[104px] shrink-0">
+              <Select
+                value={tokenGrouping ?? 'total'}
+                options={TOKEN_FILTERS}
+                onChange={(v) => setTokenGrouping(v === 'total' ? null : (v as 'agent' | 'day'))}
+              />
+            </div>
+          </div>
+
+          <div className="mt-3 flex shrink-0 items-baseline justify-between gap-3">
             <span className={GROUP_LABEL_CLS}>tokens</span>
             <span className="font-mono text-[10px] text-muted">{fmt(promptTokens)} in · {fmt(completionTokens)} out</span>
           </div>
+
+          {tokenGrouping && (
+            <div className="mt-2 min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+              {tokenGroups.length === 0
+                ? <span className="font-mono text-[10px] text-muted">no runs recorded yet</span>
+                : tokenGroups.map(([label, n]) => (
+                  <div key={label} className="flex items-center justify-between gap-2 border-b border-border py-1.5 font-mono text-[10px] last:border-0">
+                    <span className="min-w-0 truncate text-muted">{label}</span>
+                    <span className="shrink-0 text-foreground">{fmt(n)}</span>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
         <div className={cell}>
           <span className="text-[22px] leading-none font-bold text-foreground">{runs.length}</span>

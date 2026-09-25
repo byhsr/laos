@@ -129,6 +129,19 @@ fn save_summary_watermark(conn: &Connection, agent_id: &str, upto: usize) {
   );
 }
 
+// The turns of one chat session, shaped like a conversation. The rolling window
+// is scoped to a session, so a new chat starts from a clean context and only
+// long-term memory carries over from previous chats.
+pub(crate) fn load_session_messages(conn: &Connection, session_id: &str) -> Vec<serde_json::Value> {
+  let Ok(mut stmt) = conn.prepare("SELECT role, content FROM chat_messages WHERE session_id=?1 ORDER BY id") else { return Vec::new() };
+  let Ok(rows) = stmt.query_map(params![session_id], |row| {
+    Ok(serde_json::json!({ "role": row.get::<_, String>(0)?, "content": row.get::<_, String>(1)? }))
+  }) else { return Vec::new() };
+  let mut out = Vec::new();
+  for row in rows { if let Ok(v) = row { out.push(v); } }
+  out
+}
+
 pub(crate) fn load_conversation(conn: &Connection, agent_id: &str) -> Vec<serde_json::Value> {
   let stmt = conn.prepare("SELECT messages FROM agent_conversations WHERE agent_id=?1").ok();
   if let Some(mut stmt) = stmt {
@@ -162,6 +175,10 @@ pub fn clear_agent_memory(app: AppHandle, agent_id: String) -> Result<(), String
   let conn = db(&app)?;
   conn.execute("DELETE FROM memory WHERE agent_id=?1", params![agent_id]).map_err(|e| e.to_string())?;
   conn.execute("DELETE FROM agent_conversations WHERE agent_id=?1", params![agent_id]).map_err(|e| e.to_string())?;
+  // The sessions ARE the chat context now, so wiping memory has to wipe them too
+  // — otherwise the next turn would still open with the old conversation.
+  conn.execute("DELETE FROM chat_messages WHERE session_id IN (SELECT id FROM chat_sessions WHERE agent_id=?1)", params![agent_id]).map_err(|e| e.to_string())?;
+  conn.execute("DELETE FROM chat_sessions WHERE agent_id=?1", params![agent_id]).map_err(|e| e.to_string())?;
   Ok(())
 }
 

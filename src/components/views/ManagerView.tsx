@@ -14,6 +14,7 @@ import { Checkbox } from '../ui/Checkbox';
 import { StatusTag } from '../ui/Status';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, PROSE_CLS } from '../ui/Input';
 import { ChatComposer } from '../chat/ChatComposer';
+import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { MessageBubble } from '../chat/MessageBubble';
 import { toast } from '../../hooks/useToast';
 import { deleteChatSession, getChatSession, listChatSessions } from '../../runtime';
@@ -83,7 +84,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
     loadHistory(managerId);
     listChatSessions(managerId).then(setSessions).catch(() => {});
   }, [managerId, loadHistory]);
-  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages]);
+  useStickToBottom(scrollRef, messages);
   // "Settings" from the sidebar's context menu reopens the config panel.
   useEffect(() => {
     if (openConfigRequest > 0) openConfig();
