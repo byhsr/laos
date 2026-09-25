@@ -1,0 +1,155 @@
+/* ============================================================================
+   Instrument Panel UI — design tokens
+   ----------------------------------------------------------------------------
+   Copy this whole file into the project's global stylesheet. It IS the color
+   system. Do not add hue anywhere else.
+
+   The SINGLE accent is the only chromatic decision in the interface. Replace
+   `--accent` and `--accent-foreground` below with the project's brand color.
+   Every other token is a neutral.
+
+   Two planes:  --background (content, darker)  <  --surface (chrome, lighter)
+   One step of lightness between them. That is the entire elevation model.
+   ============================================================================ */
+
+@import "tailwindcss";
+
+:root {
+  /* light theme — same two-plane logic, mirrored */
+  --background: #f5f5f5; /* content plane (darker) */
+  --foreground: #111111;
+  --surface: #ffffff; /* chrome plane (lighter)  */
+  --border: #dddddd; /* keep ~10% away from --surface */
+  --muted: #6b7280;
+
+  /* the one accent */
+  --accent: #c8f135; /* SAMPLE — replace with your accent */
+  --accent-foreground: #111111; /* text/icons drawn ON the accent */
+
+  /* master radius. Everything else derives from it. */
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #191919; /* content plane                  */
+  --foreground: #f0efed;
+  --surface: #202020; /* chrome plane — ONE step up only */
+  --border: #2a2a2a; /* near-invisible: ~10% above surface */
+  --muted: #8a8a8a;
+  /* accent is unchanged across themes on purpose */
+}
+
+/* Map tokens into the utility layer so `bg-surface`, `text-muted`,
+   `border-border`, `rounded-xl` all resolve. Tailwind v4 form.
+   Without Tailwind, define the same names as plain CSS vars and use them
+   directly in component styles. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  /* KEEP THESE NEUTRAL ON PURPOSE.
+     Primary/secondary are foreground/muted, not the accent. Accent is reserved
+     for confirm affordances; selection surfaces must stay neutral. Pointing
+     `--color-primary` at the accent is the single most common way to break
+     this design language. */
+  --color-primary: var(--foreground);
+  --color-secondary: var(--muted);
+  --color-muted-foreground: var(--muted);
+  --color-danger: #ef4444;
+
+  /* radii by role:
+       rounded      -> inline inputs, chips
+       rounded-lg   -> buttons, rail items, tab actions
+       rounded-xl   -> cards, popovers, modals, tooltips  */
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  /* one global default so no border is ever off-palette */
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Scrollbars — thin, transparent track, thumb = border, hover = muted
+   --------------------------------------------------------------------------- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* ---------------------------------------------------------------------------
+   Focus — the only focus treatment in the app
+   --------------------------------------------------------------------------- */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Range input — restyled so no native slider survives
+   Track 4px, fill driven by --fill (%), 14px accent thumb with a background ring
+   --------------------------------------------------------------------------- */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0%,
+    var(--accent) var(--fill, 50%),
+    var(--border) var(--fill, 50%),
+    var(--border) 100%
+  );
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--background);
+  transition: transform 0.12s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+}
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.2);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--background);
+}

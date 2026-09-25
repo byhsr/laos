@@ -41,5 +41,6 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
-# Command Code
-.commandcode/
+# Command Code — local state stays out, but the skills we ship with the repo are tracked
+.commandcode/*
+!.commandcode/skills/
