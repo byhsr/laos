@@ -10,6 +10,7 @@ import { useWorkflowsStore } from './hooks/useWorkflows';
 import { useWorkspaceStore } from './hooks/useWorkspace';
 import { useIntegrationsStore } from './hooks/useIntegrations';
 import { Topbar } from './components/Topbar';
+import { Rail } from './components/Rail';
 import { Sidebar } from './components/Sidebar';
 import { AgentWindow } from './components/AgentWindow';
 import { HomeView, type HomeTab } from './components/views/HomeView';
@@ -89,6 +90,10 @@ export default function App() {
   const [drawerForm, setDrawerForm] = useState<DrawerForm>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [workflowToOpen, setWorkflowToOpen] = useState<string | null>(null);
+  // The workflow currently open in the builder, mirrored up from CanvasView so
+  // the topbar breadcrumb can name it; the counter asks the builder to close.
+  const [openWorkflow, setOpenWorkflow] = useState<{ id: string; name: string } | null>(null);
+  const [workflowCloseRequest, setWorkflowCloseRequest] = useState(0);
 
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
   const leadAgent = useMemo(() => agents.find((a) => a.isManager) ?? null, [agents]);
@@ -139,19 +144,19 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
-      <Topbar
-        collapsed={sidebarCollapsed}
-        onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
-        view={view}
-        setView={setView}
-        onNewAgent={addAgent}
-        agents={agents}
-        runs={runs}
-        onOpenGraph={() => { setView('home'); setHomeTab('graph'); }}
-        graphActive={view === 'home' && homeTab === 'graph'}
-      />
-      <div className="flex min-h-0 flex-1">
+    <div className="app-drag flex h-screen overflow-hidden">
+      {/* Left section: the action rail conjoined with the chat list — one panel,
+          one clean border. */}
+      <div className="app-no-drag my-3 ml-3 flex min-h-0 shrink-0 overflow-hidden rounded-xl border border-border bg-surface">
+        <Rail
+          collapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+          view={view}
+          setView={setView}
+          onNewAgent={addAgent}
+          onOpenGraph={() => { setView('home'); setHomeTab('graph'); }}
+          graphActive={view === 'home' && homeTab === 'graph'}
+        />
         <Sidebar
           agents={agents}
           view={view}
@@ -169,7 +174,23 @@ export default function App() {
           }}
           collapsed={sidebarCollapsed}
         />
-        <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
+      </div>
+
+      {/* Right section: free canvas — chrome floats on top, content is full-bleed. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <Topbar
+          view={view}
+          setView={setView}
+          agents={agents}
+          runs={runs}
+          onOpenGraph={() => { setView('home'); setHomeTab('graph'); }}
+          onOpenHome={() => { setView('home'); setHomeTab('overview'); }}
+          graphActive={view === 'home' && homeTab === 'graph'}
+          selectedAgent={selectedAgent}
+          workflow={openWorkflow}
+          onExitWorkflow={() => setWorkflowCloseRequest((n) => n + 1)}
+        />
+        <main className="app-no-drag min-h-0 min-w-0 flex-1 overflow-hidden">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
           <div className={pane(view === 'home')}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} onSaveAgent={persistAgent} onSaveWorkflow={saveWorkflow} tab={homeTab} /></div>
           <div className={pane(view === 'agents')}><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('agent deleted', 'success'); }} /></div>
@@ -178,6 +199,8 @@ export default function App() {
               agents={agents} tools={tools} workflows={workflows} integrations={integrations}
               initialWorkflowId={workflowToOpen}
               onInitialWorkflowConsumed={() => setWorkflowToOpen(null)}
+              onOpenChange={setOpenWorkflow}
+              closeRequest={workflowCloseRequest}
               onSaveWorkflow={saveWorkflow}
               onDeleteWorkflow={deleteWorkflow}
               onRunWorkflow={runWorkflow}
@@ -210,31 +233,32 @@ export default function App() {
             />
           </div>
           {selectedAgent && (
-            <div className={`h-full pb-4 ${view === 'agent' ? '' : 'hidden'}`}><AgentWindow key={selectedAgent.id} agent={selectedAgent} tools={tools} skills={skills} models={models} integrations={integrations} runs={runs} onBack={() => setView('agents')} onSave={persistAgent} onDelete={async (id) => { await deleteAgent(id); setSelectedAgentId(null); setView('agents'); }} onRun={handleRun} tabRequest={{ tab: configRequest.tab, n: configRequest.id === selectedAgent.id ? configRequest.n : 0 }} /></div>
+            <div className={`h-full pb-4 ${view === 'agent' ? '' : 'hidden'}`}><AgentWindow key={selectedAgent.id} agent={selectedAgent} tools={tools} skills={skills} models={models} integrations={integrations} runs={runs} onSave={persistAgent} onDelete={async (id) => { await deleteAgent(id); setSelectedAgentId(null); setView('agents'); }} onRun={handleRun} tabRequest={{ tab: configRequest.tab, n: configRequest.id === selectedAgent.id ? configRequest.n : 0 }} /></div>
           )}
         </main>
-        {drawerForm && drawerForm.kind === 'tool' && (
-          <ToolFormDrawer
-            editing={drawerForm.editing} isNew={drawerForm.isNew} integrations={integrations}
-            onClose={() => setDrawerForm(null)}
-            onSave={async (t) => { await saveTool(t); setDrawerForm(null); toast('tool saved', 'success'); }}
-          />
-        )}
-        {drawerForm && drawerForm.kind === 'model' && (
-          <ModelFormDrawer
-            editing={drawerForm.editing} isNew={drawerForm.isNew}
-            onClose={() => setDrawerForm(null)}
-            onSave={async (m) => { await saveModel(m); setDrawerForm(null); toast('model saved', 'success'); }}
-          />
-        )}
-        {drawerForm && drawerForm.kind === 'skill' && (
-          <SkillFormDrawer
-            editing={drawerForm.editing} isNew={drawerForm.isNew}
-            onClose={() => setDrawerForm(null)}
-            onSave={async (s) => { await saveSkill(s); setDrawerForm(null); toast('skill saved', 'success'); }}
-          />
-        )}
       </div>
+
+      {drawerForm && drawerForm.kind === 'tool' && (
+        <ToolFormDrawer
+          editing={drawerForm.editing} isNew={drawerForm.isNew} integrations={integrations}
+          onClose={() => setDrawerForm(null)}
+          onSave={async (t) => { await saveTool(t); setDrawerForm(null); toast('tool saved', 'success'); }}
+        />
+      )}
+      {drawerForm && drawerForm.kind === 'model' && (
+        <ModelFormDrawer
+          editing={drawerForm.editing} isNew={drawerForm.isNew}
+          onClose={() => setDrawerForm(null)}
+          onSave={async (m) => { await saveModel(m); setDrawerForm(null); toast('model saved', 'success'); }}
+        />
+      )}
+      {drawerForm && drawerForm.kind === 'skill' && (
+        <SkillFormDrawer
+          editing={drawerForm.editing} isNew={drawerForm.isNew}
+          onClose={() => setDrawerForm(null)}
+          onSave={async (s) => { await saveSkill(s); setDrawerForm(null); toast('skill saved', 'success'); }}
+        />
+      )}
       <Toaster />
       {showOnboarding && leadAgent && (
         <Onboarding manager={leadAgent} models={models} onFinish={finishOnboarding} onSkip={dismissOnboarding} />

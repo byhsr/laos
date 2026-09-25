@@ -66,9 +66,9 @@ const runDuration = (r: Run) => {
   return `${(ms / 1000).toFixed(1)}s`;
 };
 
-export function AgentWindow({ agent, tools, skills, models, integrations, runs, onBack, onSave, onDelete, onRun, tabRequest }: {
+export function AgentWindow({ agent, tools, skills, models, integrations, runs, onSave, onDelete, onRun, tabRequest }: {
   agent: Agent; tools: Tool[]; skills: Skill[]; models: ModelConfig[]; integrations: Integration[]; runs: Run[];
-  onBack: () => void; onSave: (a: Agent) => Promise<void>; onDelete: (id: string) => Promise<void>; onRun: (input: string, agent: Agent) => Promise<ExecutionResult>;
+  onSave: (a: Agent) => Promise<void>; onDelete: (id: string) => Promise<void>; onRun: (input: string, agent: Agent) => Promise<ExecutionResult>;
   tabRequest?: { tab: 'chat' | 'config'; n: number };
 }) {
   const complete = isComplete(agent);
@@ -231,12 +231,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <button className="focus-ring cursor-pointer rounded border-0 bg-transparent p-0 font-mono text-[11px] lowercase text-muted transition-colors hover:text-foreground" onClick={onBack}>agents</button>
-          <ChevronRight size={12} className="shrink-0 text-muted" />
-          <span className="min-w-0 truncate font-mono text-[11px] lowercase text-foreground">{agent.name}</span>
-        </div>
+      <header className="flex shrink-0 flex-wrap items-center justify-end gap-2">
         <div className="flex items-center gap-1">
           {(['chat', 'runs', 'info', 'config', 'history'] as const).map((t) => {
             const locked = !complete && (t === 'chat' || t === 'runs');

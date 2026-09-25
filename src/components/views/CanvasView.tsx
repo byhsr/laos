@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Bot, ChevronRight, GitBranch, Play, Plus, Repeat, RotateCcw, Save, ShieldCheck, Trash2, Webhook, Workflow as WorkflowIcon, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { Bot, GitBranch, Play, Plus, Repeat, RotateCcw, Save, ShieldCheck, Trash2, Webhook, Workflow as WorkflowIcon, X, ZoomIn, ZoomOut } from 'lucide-react';
 import type { Agent, Integration, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
 import { Select } from '../ui/Select';
 import { DeleteConfirm } from '../ui/DeleteConfirm';
@@ -172,13 +172,15 @@ const fmtDate = (s?: string) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
 };
 
-export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow, initialWorkflowId, onInitialWorkflowConsumed }: {
+export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow, initialWorkflowId, onInitialWorkflowConsumed, onOpenChange, closeRequest }: {
   agents: Agent[]; tools: Tool[]; workflows: Workflow[]; integrations: Integration[];
   onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
   onDeleteWorkflow: (id: string) => Promise<void>;
   onRunWorkflow: (w: Workflow, input: string) => Promise<WorkflowRunResult>;
   initialWorkflowId?: string | null;
   onInitialWorkflowConsumed?: () => void;
+  onOpenChange?: (open: { id: string; name: string } | null) => void;
+  closeRequest?: number;
 }) {
   const [current, setCurrent] = useState<Workflow | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -251,6 +253,18 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
   const closeBuilder = () => {
     setCurrent(null); setSelectedNodeId(null); setSelectedEdgeId(null); setRunResult(null); setRunError(null); setPan({ x: 0, y: 0 });
   };
+
+  // Mirror the open workflow up so the topbar breadcrumb can name it.
+  useEffect(() => {
+    onOpenChange?.(current ? { id: current.id, name: current.name } : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id, current?.name]);
+
+  // A tap on the breadcrumb's parent segment asks the builder to close.
+  useEffect(() => {
+    if (closeRequest) closeBuilder();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closeRequest]);
 
   const deleteWorkflow = async (id: string) => {
     await onDeleteWorkflow(id);
@@ -531,15 +545,11 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
     return (
       <div className="flex h-full min-h-0 flex-col gap-3">
         <header className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <button className="focus-ring flex cursor-pointer items-center gap-1 rounded-lg border-0 bg-transparent px-1.5 py-1 font-mono text-[11px] lowercase text-muted transition-colors hover:bg-surface hover:text-foreground" onClick={closeBuilder}><ArrowLeft size={12} />workflows</button>
-            <ChevronRight size={12} className="shrink-0 text-muted" />
-            <input
-              value={current.name}
-              onChange={(e) => update((w) => ({ ...w, name: e.target.value }))}
-              className={`${INPUT_INLINE_CLS} w-48 font-semibold`}
-            />
-          </div>
+          <input
+            value={current.name}
+            onChange={(e) => update((w) => ({ ...w, name: e.target.value }))}
+            className={`${INPUT_INLINE_CLS} w-48 font-semibold`}
+          />
           <div className="flex items-center gap-2">
             <input
               value={runInput}

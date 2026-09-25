@@ -9,7 +9,7 @@ import { DeleteConfirm } from './ui/DeleteConfirm';
 
 // The sidebar is purely the agent chat list: the lead agent always holds the
 // first slot, pinned agents follow. Right-click a row for its actions. Every
-// workspace section lives in the topbar.
+// workspace section lives in the rail beside it.
 export function Sidebar({ agents, view, selectedAgentId, onOpen, onTogglePin, onSettings, onDelete, collapsed }: {
   agents: Agent[]; view: View; selectedAgentId: string | null;
   onOpen: (id: string) => void;
@@ -35,9 +35,9 @@ export function Sidebar({ agents, view, selectedAgentId, onOpen, onTogglePin, on
   const closeDelete = () => setDeleteTarget(null);
 
   return (
-    <aside className={`relative z-10 my-3 ml-3 flex flex-col rounded-xl border border-border bg-surface px-2 py-3 transition-[width] duration-200 ease-out ${collapsed ? 'w-[64px]' : 'w-[228px]'}`}>
+    <aside className={`relative z-10 flex min-h-0 flex-col px-2 py-2.5 transition-[width] duration-200 ease-out ${collapsed ? 'w-[64px]' : 'w-[228px]'}`}>
       <nav className={`grid min-h-0 gap-0.5 overflow-x-hidden overflow-y-auto ${collapsed ? 'justify-items-center' : ''}`}>
-        {list.length === 0 && !collapsed && <p className="m-0 px-1 font-mono text-[10px] leading-relaxed text-muted">no agents yet — use + in the topbar.</p>}
+        {list.length === 0 && !collapsed && <p className="m-0 px-1 font-mono text-[10px] leading-relaxed text-muted">no agents yet — use + in the rail.</p>}
         {list.map((a) => {
           const active = a.isManager ? view === 'manager' : (view === 'agent' && selectedAgentId === a.id);
           const button = (
