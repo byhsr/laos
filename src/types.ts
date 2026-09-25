@@ -48,6 +48,12 @@ export type DrawerForm =
 
 export type ChatMessage = { role: 'user' | 'assistant' | 'tool' | 'thought'; content: string; detail?: string; time: string };
 
+// One real step in a chat turn, fed live from the backend so the pending bubble
+// reports what the agent is doing rather than a fixed "thinking" label.
+// `streaming` marks text still arriving token by token (the model's reasoning),
+// so later chunks grow that step instead of adding a line per token.
+export type ChatStep = { kind: 'think' | 'tool' | 'write' | 'wait'; text: string; time: string; streaming?: boolean };
+
 export type ExecutionResult = { output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number };
 
 export const emptyTool = (): Tool => ({ id: '', name: '', kind: 'api', integrationId: 'http', description: '', enabled: true, config: { method: 'GET', url: '', headers: [], body: '', params: [] } });

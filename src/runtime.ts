@@ -4,12 +4,15 @@ import type { Agent, Integration, ModelConfig, Run, RunEvent, Skill, Task, Tool,
 // Streams a chat completion, calling onDelta with each token chunk and onConfirm
 // with structured confirmation requests from the Manager.
 export type ManagerConfirmRequest = { requestId: string; tool: string; args: Record<string, unknown> };
+// A live step event: either a discrete phase (kind + text) or a chunk of the
+// model's own reasoning, which the caller appends to the growing thought.
+export type StreamStep = { kind: string; text: string; append?: boolean };
 export async function streamChat(
   agent: Agent, input: string, isManager: boolean,
   onDelta: (d: string) => void,
   onConfirm?: (r: ManagerConfirmRequest) => void,
   sessionId?: string,
-  onStatus?: (s: string) => void,
+  onStep?: (s: StreamStep) => void,
 ): Promise<void> {
   const channel = new Channel<string>();
   channel.onmessage = (raw) => {
@@ -23,8 +26,13 @@ export async function streamChat(
           return;
         }
         if (evt.type === 'status') {
-          // Live step for the pending bubble ("Thinking…", "Calling x…").
-          onStatus?.(String(evt.text ?? ''));
+          // A real step: which phase the turn is in, and what it's doing in it.
+          onStep?.({ kind: String(evt.kind ?? 'think'), text: String(evt.text ?? '') });
+          return;
+        }
+        if (evt.type === 'reasoning') {
+          // The model's thinking, chunk by chunk.
+          onStep?.({ kind: 'think', text: String(evt.text ?? ''), append: true });
           return;
         }
       } catch { /* not a control event — treat as a delta */ }

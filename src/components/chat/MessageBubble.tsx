@@ -1,14 +1,15 @@
 import { Markdown } from '../ui/Markdown';
 import { StreamIndicator } from '../ui/StreamIndicator';
+import type { ChatStep } from '../../types';
 
 // One message shape for both chat surfaces. Your own turns take the surface
 // fill; the agent's prose sits on the content plane behind a hairline, so the
 // two read apart without a second colour.
-export function MessageBubble({ role, content, streaming, status, meta }: {
+export function MessageBubble({ role, content, streaming, steps, meta }: {
   role: 'user' | 'assistant';
   content: string;
   streaming?: boolean;
-  status?: string;
+  steps?: ChatStep[];
   meta?: string;
 }) {
   const mine = role === 'user';
@@ -23,7 +24,7 @@ export function MessageBubble({ role, content, streaming, status, meta }: {
         {mine ? content : <Markdown>{content}</Markdown>}
         {streaming && (content
           ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-foreground/50 align-middle" />
-          : <StreamIndicator streaming status={status} />)}
+          : <StreamIndicator streaming steps={steps} />)}
       </div>
     </div>
   );

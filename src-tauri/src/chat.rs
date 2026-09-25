@@ -97,7 +97,7 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   if !tools.is_empty() {
     let client = http::client();
     for _ in 0..MAX_TOOL_ROUNDS {
-      emit_status(&on_event, "Thinking…");
+      emit_status(&on_event, "think", "Thinking…");
       let mut body = serde_json::json!({
         "model": resolved.model,
         "messages": messages,
@@ -142,7 +142,7 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
         // own call back, then each result as a user turn.
         messages.push(serde_json::json!({ "role": "assistant", "content": content }));
         for call in text_calls {
-          emit_status(&on_event, &format!("Calling {}…", call.name));
+          emit_status(&on_event, "tool", &format!("Calling {}…", call.name));
           let result = run_tool(&app, &tools, is_manager, &call.name, &call.args, &on_event).await?;
           messages.push(serde_json::json!({ "role": "user", "content": format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, result) }));
         }
@@ -156,7 +156,7 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
       let assistant_msg = if assistant_msg.is_null() { parsed["choices"][0]["message"].clone() } else { assistant_msg };
       messages.push(assistant_msg);
       for (call_id, name, args) in tool_calls {
-        emit_status(&on_event, &format!("Calling {name}…"));
+        emit_status(&on_event, "tool", &format!("Calling {name}…"));
         let result = run_tool(&app, &tools, is_manager, &name, &args, &on_event).await?;
         let mut tool_msg = serde_json::json!({ "role": "tool", "content": result });
         if !call_id.is_empty() { tool_msg["tool_call_id"] = serde_json::json!(call_id); }
@@ -165,7 +165,7 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
     }
   }
 
-  emit_status(&on_event, "Writing…");
+  emit_status(&on_event, "write", "Writing the reply…");
   let client = http::stream_client();
   let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "stream": true });
   let budget = provider::apply_reasoning(&mut body, &resolved, http::CHAT_MAX_TOKENS);
@@ -203,6 +203,8 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
       if line.is_empty() { continue; }
       if is_ollama {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+          // Ollama reports the model's reasoning on its own channel.
+          if let Some(t) = v["message"]["thinking"].as_str() { if !t.is_empty() { emit_reasoning(&on_event, t); } }
           if let Some(d) = v["message"]["content"].as_str() {
             let safe = leak.feed(d);
             if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
@@ -216,6 +218,8 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
         let Some(data) = line.strip_prefix("data:").map(|s| s.trim()) else { continue };
         if data == "[DONE]" { continue; }
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+          // OpenAI-compatible providers stream reasoning separately from content.
+          if let Some(t) = v["choices"][0]["delta"]["reasoning_content"].as_str() { if !t.is_empty() { emit_reasoning(&on_event, t); } }
           if let Some(d) = v["choices"][0]["delta"]["content"].as_str() {
             let safe = leak.feed(d);
             if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
@@ -249,11 +253,18 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   Ok(())
 }
 
-// A short human-readable step for the chat bubble while the reply is being
-// prepared. Tool rounds run before any token streams, so without this the UI can
-// only show a generic "typing" placeholder.
-fn emit_status(on_event: &tauri::ipc::Channel<String>, text: &str) {
-  let _ = on_event.send(serde_json::json!({ "type": "status", "text": text }).to_string());
+// A live step for the chat bubble while the reply is being prepared. Tool rounds
+// run before any token streams, so without this the UI can only show a generic
+// "typing" placeholder. The kind lets the UI group the trace (think / tool /
+// write / wait) instead of printing one flat status line.
+fn emit_status(on_event: &tauri::ipc::Channel<String>, kind: &str, text: &str) {
+  let _ = on_event.send(serde_json::json!({ "type": "status", "kind": kind, "text": text }).to_string());
+}
+
+// The model's own reasoning stream, forwarded so the UI can show what it is
+// actually thinking. Only providers that expose it send anything.
+fn emit_reasoning(on_event: &tauri::ipc::Channel<String>, text: &str) {
+  let _ = on_event.send(serde_json::json!({ "type": "reasoning", "text": text }).to_string());
 }
 
 // Runs a single tool call. State-changing tools go through the confirmation popup
@@ -263,7 +274,7 @@ async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: boo
     return Ok(execute_tool(app, tools, is_manager, name, args).await);
   }
   let request_id = format!("req-{}", chrono::Utc::now().timestamp_millis());
-  emit_status(on_event, "Waiting for your approval…");
+  emit_status(on_event, "wait", "Waiting for your approval…");
   let event = serde_json::json!({ "type": "confirm", "requestId": request_id, "tool": name, "args": args });
   on_event.send(event.to_string()).map_err(|e| e.to_string())?;
   let deadline = Instant::now() + Duration::from_secs(120);

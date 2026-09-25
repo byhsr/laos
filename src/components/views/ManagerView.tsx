@@ -29,7 +29,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
   // visible chat survives tab switches regardless of the shared currentAgentId.
   const messages = useManagerStore(useShallow((s) => s.conversations[managerId] ?? []));
   const busy = useManagerStore((s) => s.busy);
-  const status = useManagerStore((s) => s.status);
+  const steps = useManagerStore((s) => s.steps);
   const currentAgentId = useManagerStore((s) => s.currentAgentId);
   const setCurrentAgent = useManagerStore((s) => s.setCurrentAgent);
   const send = useManagerStore((s) => s.send);
@@ -165,7 +165,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
                   key={i}
                   role={m.role}
                   content={m.content}
-                  status={status}
+                  steps={steps}
                   streaming={busy && i === messages.length - 1 && m.role === 'assistant'}
                 />
               ))}
@@ -176,6 +176,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
             modelId={managerAgent.model}
             placeholder={`message ${leadName}…  (/agents, /tasks, /switch, /help)`}
             onSend={submit}
+            onModelChange={(id) => void persistAgent({ ...managerAgent, model: id })}
           />
         </div>
       )}

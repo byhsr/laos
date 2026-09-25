@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Check, ChevronRight, Lock, MessageSquarePlus, RotateCcw, Settings, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from './ui/ContextMenu';
-import type { Agent, ChatMessage, ExecutionResult, Integration, ModelConfig, Run, Skill, Tool } from '../types';
+import type { Agent, ChatMessage, ChatStep, ExecutionResult, Integration, ModelConfig, Run, Skill, Tool } from '../types';
 import { Select } from './ui/Select';
 import { MultiDropdown } from './ui/MultiDropdown';
 import { AgentAvatar, PersonaPicker } from './ui/AgentAvatar';
@@ -11,10 +11,11 @@ import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, PROSE_CLS } from './ui/Inp
 import { ChatComposer } from './chat/ChatComposer';
 import { MessageBubble } from './chat/MessageBubble';
 import { toast } from '../hooks/useToast';
-import { listChatSessions, getChatSession, createChatSession, deleteChatSession, closeSession, streamChat } from '../runtime';
+import { listChatSessions, getChatSession, createChatSession, deleteChatSession, closeSession, streamChat, type StreamStep } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
 import { useManagerStore, type ChatEntry } from '../hooks/useManager';
 import { useConfirmStore } from '../hooks/useConfirm';
+import { mergeStep } from '../chatSteps';
 import { useShallow } from 'zustand/react/shallow';
 import { DeleteConfirm } from './ui/DeleteConfirm';
 import { Checkbox } from './ui/Checkbox';
@@ -86,8 +87,11 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   const [sessions, setSessions] = useState<{ id: string; title: string; createdAt: string; updatedAt: string }[]>([]);
   const [viewingSession, setViewingSession] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  // Live step shown in the pending assistant bubble instead of a bare "typing".
-  const [status, setStatus] = useState('');
+  // Live trace of what this turn is doing — real backend steps, plus the model's
+  // reasoning as it streams in.
+  const [steps, setSteps] = useState<ChatStep[]>([]);
+
+  const pushStep = (ev: StreamStep) => setSteps((prev) => mergeStep(prev, ev));
   const [error, setError] = useState<string | undefined>(undefined);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
@@ -158,7 +162,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
   const send = async (text: string) => {
     if (!text.trim() || running) return;
-    setRunning(true); setError(undefined); setStatus('thinking…');
+    setRunning(true); setError(undefined); setSteps([]);
     const userMsg: ChatEntry = { role: 'user', content: text, time: new Date().toLocaleTimeString() };
     const assistantMsg: ChatEntry = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
@@ -180,7 +184,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       await streamChat(agentToRun, text, false, (delta) => batcher.push(delta), (confirmReq) => {
         // Agent tools that need approval (e.g. run_command) pop the same panel.
         useConfirmStore.getState().request(confirmReq);
-      }, sid, setStatus);
+      }, sid, pushStep);
       useRunsStore.getState().loadRuns();
     } catch (e) {
       failed = true;
@@ -191,7 +195,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       // Only flush the tail on success, so a late flush can't overwrite the error.
       if (!failed) batcher.end();
       setRunning(false);
-      setStatus('');
+      setSteps([]);
     }
   };
 
@@ -263,7 +267,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                   key={i}
                   role={m.role}
                   content={m.content}
-                  status={status}
+                  steps={steps}
                   streaming={running && i === messages.length - 1 && m.role === 'assistant'}
                 />
               ))}
@@ -274,7 +278,13 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               <AlertTriangle size={11} className="shrink-0" />{error}
             </p>
           )}
-          <ChatComposer busy={running} modelId={agent.model} placeholder={`message ${agent.name}…`} onSend={send} />
+          <ChatComposer
+            busy={running}
+            modelId={agent.model}
+            placeholder={`message ${agent.name}…`}
+            onSend={send}
+            onModelChange={(id) => void onSave({ ...agent, model: id })}
+          />
         </div>
       )}
 

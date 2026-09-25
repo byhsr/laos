@@ -2,8 +2,9 @@ import { create } from 'zustand';
 import { clearAgentMemory, closeSession, createChatSession, getChatSession, listChatSessions, renameChatSession, streamChat } from '../runtime';
 import { useConfirmStore } from './useConfirm';
 import { useRunsStore } from './useRuns';
-import type { Agent } from '../types';
+import type { Agent, ChatStep } from '../types';
 import { createDeltaBuffer } from '../streamBuffer';
+import { mergeStep } from '../chatSteps';
 
 export type ChatEntry = { role: 'user' | 'assistant'; content: string; time: string };
 
@@ -19,7 +20,7 @@ type ManagerState = {
   messages: ChatEntry[]; // current view (active session)
   sessionIds: Record<string, string | null>; // per-agent active session
   busy: boolean;
-  status: string; // live step for the pending bubble ("Thinking…", "Calling x…")
+  steps: ChatStep[]; // live trace of the current turn ("Thinking…", "Calling x…", its reasoning)
   setCurrentAgent: (agentId: string | null) => void;
   newSession: (agentId: string, model: string) => Promise<void>;
   loadHistory: (agentId: string) => Promise<void>;
@@ -33,7 +34,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
   messages: [],
   sessionIds: {},
   busy: false,
-  status: '',
+  steps: [],
 
   setCurrentAgent: (agentId) => {
     const conv = get().conversations;
@@ -95,7 +96,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
         await renameChatSession(get().sessionIds[managerAgent.id]!, titleFrom(message));
       }
     }
-    set({ busy: true, status: 'Thinking…' });
+    set({ busy: true, steps: [] });
     const userEntry: ChatEntry = { role: 'user', content: message, time: new Date().toLocaleTimeString() };
     const agentId = managerAgent.id;
     // Seed an empty assistant bubble that grows as tokens stream in.
@@ -118,7 +119,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       await streamChat(managerAgent, message, true, (delta) => batcher.push(delta), (confirmReq) => {
         // Pop the confirmation dialog; the backend waits for the decision.
         useConfirmStore.getState().request(confirmReq);
-      }, get().sessionIds[managerAgent.id] ?? undefined, (s) => set({ status: s }));
+      }, get().sessionIds[managerAgent.id] ?? undefined, (ev) => set((s) => ({ steps: mergeStep(s.steps, ev) })));
       useRunsStore.getState().loadRuns();
     } catch (e) {
       failed = true;
@@ -132,7 +133,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       // Only flush the tail on success: after a failure the bubble already shows
       // the error, and a late flush would overwrite it with partial text.
       if (!failed) batcher.end();
-      set({ busy: false, status: '' });
+      set({ busy: false, steps: [] });
     }
   },
 }));

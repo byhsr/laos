@@ -1,20 +1,21 @@
 import { useRef, useState } from 'react';
 import { Send } from 'lucide-react';
 import { IconButton } from '../ui/Button';
-import { ReasoningPicker } from '../ui/ReasoningPicker';
+import { ComposerSettings } from './ComposerSettings';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 
 // The chat composer, shared by the lead agent and every agent window so the two
 // can't drift. It floats over the message log on a gradient fade rather than
 // taking an in-flow row, and grows with its content up to a cap.
 //
-// Two rows: what you're writing, then what you can do with it — the send action
-// and the reasoning picker for the model this chat is running on.
-export function ChatComposer({ placeholder, busy, modelId, onSend }: {
+// Two rows: what you're writing, then what you can do with it — the "+" that
+// holds every per-turn setting (model, reasoning) and the send action.
+export function ChatComposer({ placeholder, busy, modelId, onSend, onModelChange }: {
   placeholder: string;
   busy: boolean;
   modelId: string;
   onSend: (text: string) => void | Promise<void>;
+  onModelChange: (modelId: string) => void;
 }) {
   const [input, setInput] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -53,7 +54,7 @@ export function ChatComposer({ placeholder, busy, modelId, onSend }: {
             className="max-h-[160px] min-h-[38px] w-full resize-none border-0 bg-transparent px-3.5 pt-2.5 pb-1 font-mono text-xs leading-relaxed text-foreground outline-none placeholder:text-muted/60"
           />
           <div className="flex items-center justify-end gap-2 px-2.5 pt-1 pb-2.5">
-            <ReasoningPicker modelId={modelId} />
+            <ComposerSettings modelId={modelId} onModelChange={onModelChange} />
             <IconButton label="send" className="h-[30px] w-[30px] shrink-0" disabled={busy || !input.trim()} onClick={submit}>
               <Send size={13} />
             </IconButton>
