@@ -158,16 +158,18 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
 
       {tab === 'chat' && (
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-24">
-            {messages.map((m, i) => (
-              <MessageBubble
-                key={i}
-                role={m.role}
-                content={m.content}
-                status={status}
-                streaming={busy && i === messages.length - 1 && m.role === 'assistant'}
-              />
-            ))}
+          <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
+            <div className="mx-auto w-full max-w-[720px]">
+              {messages.map((m, i) => (
+                <MessageBubble
+                  key={i}
+                  role={m.role}
+                  content={m.content}
+                  status={status}
+                  streaming={busy && i === messages.length - 1 && m.role === 'assistant'}
+                />
+              ))}
+            </div>
           </div>
           <ChatComposer
             busy={busy}

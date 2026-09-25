@@ -256,16 +256,18 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       {tab === 'chat' && (
         <div className="relative flex min-h-0 flex-1 flex-col">
           {/* Chat history — full height, no box; the composer overlays on top of it */}
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-24">
-            {messages.map((m, i) => (
-              <MessageBubble
-                key={i}
-                role={m.role}
-                content={m.content}
-                status={status}
-                streaming={running && i === messages.length - 1 && m.role === 'assistant'}
-              />
-            ))}
+          <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
+            <div className="mx-auto w-full max-w-[720px]">
+              {messages.map((m, i) => (
+                <MessageBubble
+                  key={i}
+                  role={m.role}
+                  content={m.content}
+                  status={status}
+                  streaming={running && i === messages.length - 1 && m.role === 'assistant'}
+                />
+              ))}
+            </div>
           </div>
           {error && (
             <p className="absolute bottom-[76px] left-4 z-30 m-0 flex items-center gap-1.5 font-mono text-[11px] text-danger">
