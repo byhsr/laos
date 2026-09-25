@@ -13,7 +13,8 @@ import { Topbar } from './components/Topbar';
 import { Rail } from './components/Rail';
 import { Sidebar } from './components/Sidebar';
 import { AgentWindow } from './components/AgentWindow';
-import { HomeView, type HomeTab } from './components/views/HomeView';
+import { HomeView } from './components/views/HomeView';
+import { GraphView } from './components/views/GraphView';
 import { AgentsView } from './components/views/AgentsView';
 import { CanvasView } from './components/views/CanvasView';
 import { ToolFormDrawer } from './components/views/ToolsView';
@@ -86,14 +87,9 @@ export default function App() {
     return () => clearTimeout(t);
   }, []);
   const [view, setView] = useState<View>('home');
-  const [homeTab, setHomeTab] = useState<HomeTab>('overview');
   const [drawerForm, setDrawerForm] = useState<DrawerForm>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [workflowToOpen, setWorkflowToOpen] = useState<string | null>(null);
-  // The workflow currently open in the builder, mirrored up from CanvasView so
-  // the topbar breadcrumb can name it; the counter asks the builder to close.
-  const [openWorkflow, setOpenWorkflow] = useState<{ id: string; name: string } | null>(null);
-  const [workflowCloseRequest, setWorkflowCloseRequest] = useState(0);
 
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
   const leadAgent = useMemo(() => agents.find((a) => a.isManager) ?? null, [agents]);
@@ -154,8 +150,8 @@ export default function App() {
           view={view}
           setView={setView}
           onNewAgent={addAgent}
-          onOpenGraph={() => { setView('home'); setHomeTab('graph'); }}
-          graphActive={view === 'home' && homeTab === 'graph'}
+          onOpenGraph={() => setView('graph')}
+          graphActive={view === 'graph'}
         />
         <Sidebar
           agents={agents}
@@ -178,29 +174,25 @@ export default function App() {
 
       {/* Right section: free canvas — chrome floats on top, content is full-bleed. */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <Topbar
-          view={view}
-          setView={setView}
-          agents={agents}
-          runs={runs}
-          onOpenGraph={() => { setView('home'); setHomeTab('graph'); }}
-          onOpenHome={() => { setView('home'); setHomeTab('overview'); }}
-          graphActive={view === 'home' && homeTab === 'graph'}
-          selectedAgent={selectedAgent}
-          workflow={openWorkflow}
-          onExitWorkflow={() => setWorkflowCloseRequest((n) => n + 1)}
-        />
+        <Topbar />
         <main className="app-no-drag min-h-0 min-w-0 flex-1 overflow-hidden">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
-          <div className={pane(view === 'home')}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} onSaveAgent={persistAgent} onSaveWorkflow={saveWorkflow} tab={homeTab} /></div>
+          <div className={pane(view === 'home')}><HomeView agents={agents} tools={tools} workflows={workflows} runs={runs} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} /></div>
+          <div className={pane(view === 'graph')}>
+            <GraphView
+              agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows}
+              onOpenAgent={openAgent}
+              onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }}
+              onSaveAgent={persistAgent}
+              onSaveWorkflow={saveWorkflow}
+            />
+          </div>
           <div className={pane(view === 'agents')}><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('agent deleted', 'success'); }} /></div>
           <div className={pane(view === 'workflows')}>
             <CanvasView
               agents={agents} tools={tools} workflows={workflows} integrations={integrations}
               initialWorkflowId={workflowToOpen}
               onInitialWorkflowConsumed={() => setWorkflowToOpen(null)}
-              onOpenChange={setOpenWorkflow}
-              closeRequest={workflowCloseRequest}
               onSaveWorkflow={saveWorkflow}
               onDeleteWorkflow={deleteWorkflow}
               onRunWorkflow={runWorkflow}

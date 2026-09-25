@@ -25,12 +25,12 @@ export function Sidebar({ agents, view, selectedAgentId, onOpen, onTogglePin, on
     .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || a.name.localeCompare(b.name));
   const list = lead ? [lead, ...rest] : rest;
 
-  // Selection reads through neutral foreground + surface fill, never an outline
-  // in a second colour.
+  // Selection reads through neutral foreground + surface fill + the same faint
+  // outline the app's tabs use, so it stays distinct from a plain hover.
   const row = (active: boolean) =>
-    `focus-ring flex w-full cursor-pointer items-center gap-2.5 rounded-lg border-0 px-2.5 py-1.5 text-left font-mono text-[11px] transition-colors duration-150 ${active ? 'bg-background text-foreground' : 'bg-transparent text-muted hover:bg-background hover:text-foreground'}`;
+    `focus-ring flex w-full cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-left font-mono text-[11px] transition-colors duration-150 ${active ? 'border-border bg-background text-foreground' : 'border-transparent bg-transparent text-muted hover:bg-background hover:text-foreground'}`;
   const rowCollapsed = (active: boolean) =>
-    `focus-ring grid w-full cursor-pointer place-items-center rounded-lg border-0 py-2 transition-colors duration-150 ${active ? 'bg-background text-foreground' : 'bg-transparent text-muted hover:bg-background hover:text-foreground'}`;
+    `focus-ring grid w-full cursor-pointer place-items-center rounded-lg border py-2 transition-colors duration-150 ${active ? 'border-border bg-background text-foreground' : 'border-transparent bg-transparent text-muted hover:bg-background hover:text-foreground'}`;
 
   const closeDelete = () => setDeleteTarget(null);
 

@@ -23,7 +23,7 @@ export function Rail({ collapsed, onToggleSidebar, view, setView, onNewAgent, on
 }) {
   const labels = useNavLabels((s) => s.labels);
   const btn = (active = false) =>
-    `grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded border-0 bg-transparent transition-colors duration-150 focus-ring ${active ? 'bg-background text-foreground' : 'text-muted hover:bg-background hover:text-foreground'}`;
+    `grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded border transition-colors duration-150 focus-ring ${active ? 'border-border bg-background text-foreground' : 'border-transparent bg-transparent text-muted hover:bg-background hover:text-foreground'}`;
   const rule = <span className="my-1 h-px w-4 shrink-0 bg-border" />;
 
   return (
@@ -42,7 +42,7 @@ export function Rail({ collapsed, onToggleSidebar, view, setView, onNewAgent, on
       {NAV.map((n) => (
         <IconButton
           key={n.key}
-          className={btn(view === n.view && !(n.view === 'home' && graphActive))}
+          className={btn(view === n.view)}
           label={navLabel(labels, n.key)}
           onClick={() => setView(n.view)}
         >
