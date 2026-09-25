@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Bot, GitBranch, Play, Plus, Repeat, RotateCcw, Save, ShieldCheck, Trash2, Webhook, Workflow as WorkflowIcon, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { Play, Plus, RotateCcw, Save, Trash2, Workflow as WorkflowIcon, X, ZoomIn, ZoomOut } from 'lucide-react';
 import type { Agent, Integration, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
 import { Select } from '../ui/Select';
 import { DeleteConfirm } from '../ui/DeleteConfirm';
@@ -10,6 +10,7 @@ import { Tooltip } from '../ui/Tooltip';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, INPUT_INLINE_CLS, PROSE_CLS } from '../ui/Input';
 import { toast } from '../../hooks/useToast';
 import { listWorkflowRuns, type WorkflowRunRecord } from '../../runtime';
+import { NODE_TYPES, TYPE_META } from './nodeTypes';
 
 // Safe timestamp formatting — DB values can be empty or malformed.
 const fmtWhen = (s?: string | null) => {
@@ -17,22 +18,6 @@ const fmtWhen = (s?: string | null) => {
   const d = new Date(s);
   return isNaN(d.getTime()) ? '' : d.toLocaleString();
 };
-
-// Node types carry an icon and a label — never a per-type hue. A type is
-// legible from its glyph; colour is reserved for the accent.
-const NODE_TYPES: { type: WorkflowNodeType; label: string; icon: React.ReactNode; desc: string }[] = [
-  { type: 'trigger', label: 'trigger', icon: <Webhook size={13} />, desc: 'Workflow entry point' },
-  { type: 'agent', label: 'agent', icon: <Bot size={13} />, desc: 'Run an agent' },
-  { type: 'subagent', label: 'subagent', icon: <GitBranch size={13} />, desc: 'Delegate to a sub-agent' },
-  { type: 'loop', label: 'loop', icon: <Repeat size={13} />, desc: 'Repeat until done' },
-  { type: 'checker', label: 'checker', icon: <ShieldCheck size={13} />, desc: 'Validate output' },
-  { type: 'integration', label: 'integration', icon: <Webhook size={13} />, desc: 'Call a tool/integration' },
-  { type: 'gate', label: 'gate', icon: <GitBranch size={13} />, desc: 'Conditional branch' },
-];
-
-const TYPE_META: Record<WorkflowNodeType, { label: string; icon: React.ReactNode }> = Object.fromEntries(
-  NODE_TYPES.map((n) => [n.type, { label: n.label, icon: n.icon }])
-) as Record<WorkflowNodeType, { label: string; icon: React.ReactNode }>;
 
 // ---- Node anatomy -----------------------------------------------------------
 // A node is a fixed-size module with four parts:
@@ -232,13 +217,16 @@ const fmtDate = (s?: string) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
 };
 
-export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow, initialWorkflowId, onInitialWorkflowConsumed }: {
+export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow, initialWorkflowId, onInitialWorkflowConsumed, building, onOpen }: {
   agents: Agent[]; tools: Tool[]; workflows: Workflow[]; integrations: Integration[];
   onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
   onDeleteWorkflow: (id: string) => Promise<void>;
   onRunWorkflow: (w: Workflow, input: string) => Promise<WorkflowRunResult>;
   initialWorkflowId?: string | null;
   onInitialWorkflowConsumed?: () => void;
+  // Whether the shell is showing the canvas rather than the workflow list.
+  building?: boolean;
+  onOpen?: () => void;
 }) {
   const [current, setCurrent] = useState<Workflow | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -249,8 +237,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
   const [runError, setRunError] = useState<string | null>(null);
   const [storedRuns, setStoredRuns] = useState<WorkflowRunRecord[]>([]);
   const [saving, setSaving] = useState(false);
-  const [drag, setDrag] = useState<{ type: WorkflowNodeType } | null>(null);
-  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const [paletteDrag, setPaletteDrag] = useState<{ type: WorkflowNodeType; x: number; y: number } | null>(null);
   const [moving, setMoving] = useState<{ id: string; dx: number; dy: number } | null>(null);
   const [drawingEdge, setDrawingEdge] = useState<{ from: string; port: string; x: number; y: number } | null>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -291,6 +278,35 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
     if (!current?.id) { setStoredRuns([]); return; }
     listWorkflowRuns(current.id).then(setStoredRuns);
   }, [current?.id]);
+
+  // Press a palette icon and drag onto the canvas to place that node. The drop
+  // happens on release, once the pointer is over the canvas.
+  const startPaletteDrag = (type: WorkflowNodeType) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    const toCanvas = (cx: number, cy: number) => {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      return rect ? { rect, x: cx - rect.left, y: cy - rect.top } : null;
+    };
+    const start = toCanvas(e.clientX, e.clientY);
+    if (start) setPaletteDrag({ type, x: start.x, y: start.y });
+    const onMove = (ev: PointerEvent) => {
+      const p = toCanvas(ev.clientX, ev.clientY);
+      if (p) setPaletteDrag({ type, x: p.x, y: p.y });
+    };
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      setPaletteDrag(null);
+      const p = toCanvas(ev.clientX, ev.clientY);
+      if (!p) return;
+      const { rect, x, y } = p;
+      if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
+      const w = screenToWorld(x, y);
+      addNode(type, Math.round(w.x - NODE_W / 2), Math.round(w.y - 20));
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
 
   // Replay a stored run in the results panel.
   const showStoredRun = (r: WorkflowRunRecord) => {
@@ -446,7 +462,6 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
     if (!rect) return;
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
-    if (drag) setDragPos({ x: sx, y: sy });
     if (moving) {
       const w = screenToWorld(sx, sy);
       moveNode(moving.id, Math.round(w.x - moving.dx), Math.round(w.y - moving.dy));
@@ -463,17 +478,13 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
   };
 
   const onPointerUp = () => {
-    if (drag && dragPos) {
-      const w = screenToWorld(dragPos.x, dragPos.y);
-      addNode(drag.type, Math.round(w.x - NODE_W / 2), Math.round(w.y - 20));
-    }
-    setDrag(null); setDragPos(null); setMoving(null); setDrawingEdge(null); setPanning(null);
+    setMoving(null); setDrawingEdge(null); setPanning(null);
   };
 
   const onCanvasPointerDown = (e: React.PointerEvent) => {
     // Pan when clicking any empty space. Nodes/ports call stopPropagation on
     // their own pointerdown, so whatever reaches here is background.
-    if (drag || moving || drawingEdge) return;
+    if (moving || drawingEdge) return;
     e.preventDefault();
     // Capture the pointer so panning keeps working even if the cursor leaves
     // the canvas and releases outside it.
@@ -537,39 +548,6 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
       document.body.style.cursor = '';
     };
     document.body.style.cursor = 'col-resize';
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  };
-
-  const startPaletteDrag = (type: WorkflowNodeType) => (e: React.PointerEvent) => {
-    e.preventDefault();
-    setDrag({ type });
-    setDragPos(null);
-    let lastX = e.clientX, lastY = e.clientY;
-    const onMove = (ev: PointerEvent) => {
-      lastX = ev.clientX; lastY = ev.clientY;
-      const rect = canvasRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      setDragPos({ x: ev.clientX - rect.left, y: ev.clientY - rect.top });
-    };
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      const rect = canvasRef.current?.getBoundingClientRect();
-      const over = rect && lastX >= rect.left && lastX <= rect.right && lastY >= rect.top && lastY <= rect.bottom;
-      setDrag((d) => {
-        if (d && over) {
-          setDragPos((pos) => {
-            if (pos) {
-              const w = screenToWorld(pos.x, pos.y);
-              addNode(d.type, Math.round(w.x - NODE_W / 2), Math.round(w.y - 20));
-            }
-            return null;
-          });
-        }
-        return null;
-      });
-    };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   };
@@ -657,24 +635,30 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
   };
 
   // ---------------- Builder screen ----------------
-  if (current) {
+  if (current && building) {
     return (
       <div className="flex h-full min-h-0 flex-col gap-3">
-        <header className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <button className="focus-ring flex cursor-pointer items-center gap-1 rounded-lg border-0 bg-transparent px-1.5 py-1 font-mono text-[11px] lowercase text-muted transition-colors hover:bg-surface hover:text-foreground" onClick={closeBuilder}><ArrowLeft size={12} />workflows</button>
+        {/* One row: the palette on the left, the workflow's own controls on the
+            right. Leaving the builder is the chrome's back button. */}
+        <header className="flex shrink-0 flex-wrap items-center gap-2">
+          <div className="flex min-w-0 items-center gap-0.5">
+            {NODE_TYPES.map((nt) => (
+              <Tooltip key={nt.type} label={`${nt.label} — ${nt.desc}`}>
+                <button
+                  type="button"
+                  className="focus-ring grid h-6 w-6 shrink-0 cursor-grab place-items-center rounded border border-transparent text-muted transition-colors hover:bg-surface hover:text-foreground active:cursor-grabbing"
+                  onPointerDown={startPaletteDrag(nt.type)}
+                >
+                  {nt.icon}
+                </button>
+              </Tooltip>
+            ))}
+          </div>
+          <div className="ml-auto flex items-center gap-2">
             <input
               value={current.name}
               onChange={(e) => update((w) => ({ ...w, name: e.target.value }))}
               className={`${INPUT_INLINE_CLS} w-48 font-semibold`}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              value={runInput}
-              onChange={(e) => setRunInput(e.target.value)}
-              placeholder="workflow input…"
-              className={`${INPUT_CLS} w-56`}
             />
             <Button icon={<Save size={13} />} onClick={save} disabled={saving}>{saving ? 'saving…' : 'save'}</Button>
             <Button variant="primary" icon={<Play size={13} />} onClick={run} disabled={running}>{running ? 'running…' : 'run'}</Button>
@@ -682,23 +666,6 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
         </header>
 
         <div className="flex min-h-0 flex-1 gap-3">
-          <div className="w-[170px] shrink-0 overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-surface p-2.5">
-            <span className={`${GROUP_LABEL_CLS} mb-2.5 block`}>nodes</span>
-            {NODE_TYPES.map((nt) => (
-              <Tooltip key={nt.type} label={nt.desc} className="flex w-full">
-                <div
-                  className="mb-1.5 w-full cursor-grab rounded-lg border border-border bg-background p-2.5 transition-colors hover:border-foreground/30 active:cursor-grabbing"
-                  onPointerDown={startPaletteDrag(nt.type)}
-                >
-                  <div className="flex items-center gap-1.5 font-mono text-[11px] text-foreground">
-                    <span className="shrink-0 text-muted">{nt.icon}</span><b className="min-w-0 truncate font-medium">{nt.label}</b>
-                  </div>
-                  <p className="mt-1 mb-0 font-mono text-[10px] leading-relaxed text-muted">{nt.desc}</p>
-                </div>
-              </Tooltip>
-            ))}
-          </div>
-
           <div
             ref={canvasRef}
             className="relative min-h-[550px] flex-1 overflow-hidden rounded-xl border border-border bg-background"
@@ -707,7 +674,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
             onPointerUp={onPointerUp}
             onPointerDown={onCanvasPointerDown}
             onWheel={onCanvasWheel}
-            onPointerLeave={() => { setDragPos(null); setDrawingEdge(null); }}
+            onPointerLeave={() => setDrawingEdge(null)}
           >
             {/* Panned + zoomed world layer */}
             <div
@@ -766,14 +733,14 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
 
               {current.nodes.map(nodeEl)}
 
-              {drag && dragPos && (() => {
-                const w = screenToWorld(dragPos.x, dragPos.y);
+              {paletteDrag && (() => {
+                const w = screenToWorld(paletteDrag.x, paletteDrag.y);
                 return (
                   <div
                     className="pointer-events-none absolute z-[5] flex flex-col justify-center rounded-xl border border-dashed border-accent bg-surface/80 px-2.5 opacity-80"
-                    style={{ left: w.x - NODE_W / 2, top: w.y - 20, width: NODE_W, height: nodeHeight(drag.type) }}
+                    style={{ left: w.x - NODE_W / 2, top: w.y - 20, width: NODE_W, height: nodeHeight(paletteDrag.type) }}
                   >
-                    <b className="font-mono text-[11px] text-foreground">{TYPE_META[drag.type].label}</b>
+                    <b className="font-mono text-[11px] text-foreground">{TYPE_META[paletteDrag.type].label}</b>
                   </div>
                 );
               })()}
@@ -783,7 +750,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
               <div className="pointer-events-none absolute inset-0 z-0 grid place-items-center">
                 <div className="max-w-[360px] px-4 text-center text-muted">
                   <WorkflowIcon size={24} className="mx-auto mb-2 opacity-50" />
-                  <p className="m-0 text-[12px] leading-relaxed">Drag nodes from the palette onto the canvas.</p>
+                  <p className="m-0 text-[12px] leading-relaxed">Drag node icons from the palette above onto the canvas.</p>
                   <p className="mt-1 mb-0 font-mono text-[10px] leading-relaxed">scroll to zoom · drag empty space to pan · drag an output port onto another node to wire it</p>
                 </div>
               </div>
@@ -806,6 +773,16 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
               onPointerDown={startInspectorResize}
             />
             <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-surface p-3.5">
+            {/* The run input lives here so the header stays a single row. */}
+            <div className="mb-3.5 shrink-0">
+              <label className={FIELD_LABEL_CLS}>run input</label>
+              <input
+                value={runInput}
+                onChange={(e) => setRunInput(e.target.value)}
+                placeholder="workflow input…"
+                className={INPUT_CLS}
+              />
+            </div>
             {runResult ? (
               <div>
                 <div className="mb-2.5 flex items-center justify-between gap-2">
@@ -969,7 +946,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
           placeholder="search workflows…"
           className={`${INPUT_CLS} w-52`}
         />
-        <Button variant="primary" icon={<Plus size={13} />} onClick={createNew}>new workflow</Button>
+        <Button variant="primary" icon={<Plus size={13} />} onClick={() => { createNew(); onOpen?.(); }}>new workflow</Button>
       </div>
 
       {(() => {
@@ -1011,7 +988,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
                 </div>
                 <span className="block font-mono text-[10px] text-muted">updated {fmtDate(w.updatedAt)}</span>
                 <div className="flex justify-end">
-                  <Button onClick={() => openWorkflow(w)}>open builder</Button>
+                  <Button onClick={() => { openWorkflow(w); onOpen?.(); }}>open builder</Button>
                 </div>
               </Card>
             ))}

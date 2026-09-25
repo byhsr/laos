@@ -36,7 +36,9 @@ export type WorkflowRunStep = { nodeId: string; nodeLabel: string; output: strin
 export type WorkflowRunResult = { steps: WorkflowRunStep[]; finalOutput: string; totalPromptTokens: number; totalCompletionTokens: number };
 export type Task = { id: string; requester: string; assignedAgent: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; input: string; context: string; result?: string | null; createdAt: string; completedAt?: string | null };
 
-export type View = 'home' | 'graph' | 'agents' | 'workflows' | 'manager' | 'tasks' | 'runs' | 'telegram' | 'agent' | 'workshop' | 'settings';
+// 'builder' is the workflow canvas, kept distinct from the 'workflows' list so
+// opening a workflow is a real navigation step the chrome can go back from.
+export type View = 'home' | 'graph' | 'agents' | 'workflows' | 'builder' | 'manager' | 'tasks' | 'runs' | 'telegram' | 'agent' | 'workshop' | 'settings';
 
 export type DrawerForm =
   | { kind: 'tool'; editing: Tool; isNew: boolean }

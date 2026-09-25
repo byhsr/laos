@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent, DrawerForm, View } from './types';
 import { emptyModel, emptySkill, emptyTool } from './types';
 import { useAgentsStore } from './hooks/useAgents';
@@ -99,6 +99,22 @@ export default function App() {
   const [drawerForm, setDrawerForm] = useState<DrawerForm>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [workflowToOpen, setWorkflowToOpen] = useState<string | null>(null);
+  const building = view === 'builder';
+
+  // The canvas is the widest thing in the app, so the chat list tucks away on the
+  // way in and comes back exactly as it was on the way out.
+  const collapsedBeforeBuilder = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (building) {
+      if (collapsedBeforeBuilder.current === null) collapsedBeforeBuilder.current = sidebarCollapsed;
+      setSidebarCollapsed(true);
+    } else if (collapsedBeforeBuilder.current !== null) {
+      setSidebarCollapsed(collapsedBeforeBuilder.current);
+      collapsedBeforeBuilder.current = null;
+    }
+    // Only the entry/exit matters — a manual toggle while building stands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [building]);
 
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
   const leadAgent = useMemo(() => agents.find((a) => a.isManager) ?? null, [agents]);
@@ -166,7 +182,7 @@ export default function App() {
         {/* Left section: the action rail conjoined with the chat list — one
             panel, one clean border. */}
         <div className="app-no-drag my-3 ml-3 flex min-h-0 shrink-0 overflow-hidden rounded-xl border border-border bg-surface">
-          <Rail view={view} setView={setView} />
+          <Rail view={view === 'builder' ? 'workflows' : view} setView={setView} />
           <Sidebar
             agents={agents}
             view={view}
@@ -189,22 +205,24 @@ export default function App() {
         {/* Right section: free canvas — content is full-bleed */}
         <main className="app-no-drag min-h-0 min-w-0 flex-1 overflow-hidden">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
-          <div className={pane(view === 'home')}><HomeView agents={agents} tools={tools} workflows={workflows} runs={runs} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} /></div>
+          <div className={pane(view === 'home')}><HomeView agents={agents} tools={tools} workflows={workflows} runs={runs} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('builder'); setWorkflowToOpen(id); }} /></div>
           <div className={pane(view === 'graph')}>
             <GraphView
               agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows}
               onOpenAgent={openAgent}
-              onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }}
+              onOpenWorkflow={(id) => { setView('builder'); setWorkflowToOpen(id); }}
               onSaveAgent={persistAgent}
               onSaveWorkflow={saveWorkflow}
             />
           </div>
           <div className={pane(view === 'agents')}><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('agent deleted', 'success'); }} /></div>
-          <div className={pane(view === 'workflows')}>
+          <div className={pane(view === 'workflows' || view === 'builder')}>
             <CanvasView
               agents={agents} tools={tools} workflows={workflows} integrations={integrations}
               initialWorkflowId={workflowToOpen}
               onInitialWorkflowConsumed={() => setWorkflowToOpen(null)}
+              building={building}
+              onOpen={() => setView('builder')}
               onSaveWorkflow={saveWorkflow}
               onDeleteWorkflow={deleteWorkflow}
               onRunWorkflow={runWorkflow}
