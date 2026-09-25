@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { Check, Plus, Trash2, Wrench } from 'lucide-react';
 import type { Integration, Tool, ToolParam } from '../../types';
-import { Drawer } from '../ui/Drawer';
-import { Dropdown } from '../ui/Dropdown';
+import { Modal } from '../ui/Modal';
+import { Button, IconButton } from '../ui/Button';
+import { Select } from '../ui/Select';
 import { Checkbox } from '../ui/Checkbox';
+import { Card } from '../ui/Card';
+import { FIELD_LABEL_CLS, INPUT_CLS } from '../ui/Input';
 
 export const TOOL_KINDS: { kind: string; integration: string; desc: string }[] = [
   { kind: 'api', integration: 'http', desc: 'Call any REST API with configured params' },
@@ -12,42 +15,45 @@ export const TOOL_KINDS: { kind: string; integration: string; desc: string }[] =
   { kind: 'write_file', integration: 'builtin', desc: 'Write to agent files dir' },
 ];
 
-export function ToolsView({ tools, integrations, onAdd, onEdit, onDelete, embedded = false }: {
-  tools: Tool[]; integrations: Integration[]; onAdd: () => void; onEdit: (t: Tool) => void; onDelete: (id: string) => Promise<void>; embedded?: boolean;
+export function ToolsView({ tools, integrations, onAdd, onEdit, onDelete }: {
+  tools: Tool[]; integrations: Integration[]; onAdd: () => void; onEdit: (t: Tool) => void; onDelete: (id: string) => Promise<void>;
 }) {
   return (
     <>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
-        {!embedded && <div><span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Tools</h1></div>}
-        <button className="primary ml-auto" onClick={onAdd}><Check size={13} />Add tool</button>
-      </header>
-      <div className="grid max-w-[900px] gap-3">
+      <div className="mb-4 flex justify-end">
+        <Button variant="primary" icon={<Check size={13} />} onClick={onAdd}>add tool</Button>
+      </div>
+
+      <div className="grid gap-2">
         {tools.map((t) => {
           const integration = integrations.find((i) => i.id === t.integrationId);
           // MCP tools are managed by their server, so name the server and drop
           // the generic Edit form (its kind has no MCP branch).
           const source = t.kind === 'mcp'
-            ? `MCP · ${String(t.config.serverName ?? t.integrationId)}`
+            ? `mcp · ${String(t.config.serverName ?? t.integrationId)}`
             : `${t.kind.replace('_', ' ')} · ${integration?.name ?? t.integrationId}`;
           return (
-            <div key={t.id} className="flex items-center gap-[15px] rounded-[16px] border border-line bg-panel p-[22px]">
-              <span className="grid h-10 w-10 place-items-center rounded-lg bg-panel2 text-[20px] text-muted"><Wrench size={18} /></span>
-              <div className="flex-1">
-                <b style={{ fontSize: 13 }}>{t.name}</b>
-                <span className="block text-[11px] text-muted">{source}{t.description ? ` · ${t.description}` : ''}</span>
+            <Card key={t.id} className="flex items-center gap-4 hover:bg-surface">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-background text-muted"><Wrench size={16} /></span>
+              <div className="min-w-0 flex-1">
+                <b className="block truncate font-mono text-[11px] text-foreground">{t.name}</b>
+                <span className="block truncate font-mono text-[10px] text-muted">{source}{t.description ? ` · ${t.description}` : ''}</span>
                 {t.kind === 'api' && (
-                  <span className="mt-1 block font-mono text-[11px] text-muted">{t.config.method ?? 'GET'} {t.config.url ?? ''}</span>
+                  <span className="mt-0.5 block truncate font-mono text-[10px] text-muted">{t.config.method ?? 'GET'} {t.config.url ?? ''}</span>
                 )}
               </div>
-              <span className="mr-[7px] text-[11px] text-muted"><i className={`mr-1.5 inline-block h-[7px] w-[7px] rounded-full ${t.enabled ? 'bg-[var(--green)]' : 'bg-[#f79009]'}`} />{t.enabled ? 'on' : 'off'}</span>
-              <div style={{ display: 'flex', gap: 6 }}>
-                {t.kind !== 'mcp' && <button className="secondary" onClick={() => onEdit(t)}>Edit</button>}
-                <button className="secondary" onClick={() => onDelete(t.id)}>Delete</button>
+              <span className="flex shrink-0 items-center gap-1.5 font-mono text-[10px] text-muted">
+                <i className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${t.enabled ? 'bg-foreground' : 'bg-muted'}`} />
+                {t.enabled ? 'enabled' : 'disabled'}
+              </span>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {t.kind !== 'mcp' && <Button onClick={() => onEdit(t)}>edit</Button>}
+                <IconButton label="delete tool" onClick={() => onDelete(t.id)}><Trash2 size={12} /></IconButton>
               </div>
-            </div>
+            </Card>
           );
         })}
-        {tools.length === 0 && <p className="mt-[22px] text-[12px] text-muted">No tools yet. Add one to start attaching capabilities to agents.</p>}
+        {tools.length === 0 && <p className="m-0 font-mono text-[11px] text-muted">no tools yet — add one to start attaching capabilities to agents</p>}
       </div>
     </>
   );
@@ -84,119 +90,115 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
   const setParams = (params: ToolParam[]) => setCfg({ params });
   const setHeaders = (headers: { name: string; value: string }[]) => setCfg({ headers });
 
-  const inputCls = 'w-full rounded-[10px] border border-line bg-panel2 px-3 py-2.5 text-text';
-  const labelCls = 'mt-4 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase';
+  const label = `${FIELD_LABEL_CLS} mt-4`;
+  const addBtn = 'justify-self-start';
 
   return (
-    <Drawer
-      title={isNew ? 'Add tool' : `Edit ${form.name}`}
+    <Modal
+      title={isNew ? 'add tool' : `edit ${form.name}`}
       onClose={onClose}
-      initialWidth={Math.round(window.innerWidth / 2)}
-      resizable
-      headerAction={<button className="primary" disabled={saving} onClick={save}><Check size={13} />{saving ? 'Saving…' : 'Save'}</button>}
+      headerAction={<Button variant="primary" disabled={saving} onClick={save}>{saving ? 'saving…' : 'save'}</Button>}
     >
-      <div className="w-full rounded-[16px] border border-line bg-panel p-[22px]">
-        <p className="text-[12px] leading-[1.6] text-muted" style={{ margin: '0 0 14px' }}>
-          {isApi
-            ? 'Configure a REST endpoint. The LLM will see the params below as callable arguments, and you can reference them in the URL, headers, and body with {paramName}.'
-            : 'Tools are reusable capabilities you attach to any agent.'}
-        </p>
+      <p className="mt-0 mb-3.5 font-mono text-[10px] leading-relaxed text-muted">
+        {isApi
+          ? 'Configure a REST endpoint. The LLM will see the params below as callable arguments, and you can reference them in the URL, headers, and body with {paramName}.'
+          : 'Tools are reusable capabilities you attach to any agent.'}
+      </p>
 
-        <label className={labelCls}>NAME</label>
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={isApi ? 'e.g. GitHub API' : 'e.g. Web Search'} className={inputCls} />
+      <label className={FIELD_LABEL_CLS}>name</label>
+      <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={isApi ? 'e.g. GitHub API' : 'e.g. Web Search'} className={INPUT_CLS} />
 
-        <label className={labelCls}>KIND</label>
-        <Dropdown
-          value={form.kind}
-          options={TOOL_KINDS.map((k) => ({ value: k.kind, label: `${k.kind.replace('_', ' ')} — ${k.desc}` }))}
-          onChange={(v) => { const k = kindFor(v); setForm({ ...form, kind: v, integrationId: k ? k.integration : form.integrationId }); }}
-        />
+      <label className={label}>kind</label>
+      <Select
+        value={form.kind}
+        options={TOOL_KINDS.map((k) => ({ value: k.kind, label: `${k.kind.replace('_', ' ')} — ${k.desc}` }))}
+        onChange={(v) => { const k = kindFor(v); setForm({ ...form, kind: v, integrationId: k ? k.integration : form.integrationId }); }}
+      />
 
-        {!isApi && (
-          <>
-            <label className={labelCls}>BACKED BY</label>
-            <Dropdown
-              value={form.integrationId}
-              options={integrations.map((i) => ({ value: i.id, label: i.name }))}
-              onChange={(v) => setForm({ ...form, integrationId: v })}
-            />
-          </>
-        )}
+      {!isApi && (
+        <>
+          <label className={label}>backed by</label>
+          <Select
+            value={form.integrationId}
+            options={integrations.map((i) => ({ value: i.id, label: i.name }))}
+            onChange={(v) => setForm({ ...form, integrationId: v })}
+          />
+        </>
+      )}
 
-        {isApi && (
-          <>
-            <label className={labelCls}>METHOD</label>
-            <Dropdown
-              value={form.config.method ?? 'GET'}
-              options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => ({ value: m, label: m }))}
-              onChange={(v) => setCfg({ method: v })}
-            />
+      {isApi && (
+        <>
+          <label className={label}>method</label>
+          <Select
+            value={form.config.method ?? 'GET'}
+            options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => ({ value: m, label: m }))}
+            onChange={(v) => setCfg({ method: v })}
+          />
 
-            <label className={labelCls}>URL</label>
-            <input
-              value={form.config.url ?? ''}
-              onChange={(e) => setCfg({ url: e.target.value })}
-              placeholder="https://api.example.com/users/{id}"
-              className={inputCls}
-            />
-            <p className="text-[11px] leading-[1.5] text-muted" style={{ margin: '6px 0 0' }}>Use {'{param}'} placeholders — they get filled from the LLM's arguments.</p>
+          <label className={label}>url</label>
+          <input
+            value={form.config.url ?? ''}
+            onChange={(e) => setCfg({ url: e.target.value })}
+            placeholder="https://api.example.com/users/{id}"
+            className={INPUT_CLS}
+          />
+          <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">Use {'{param}'} placeholders — they get filled from the LLM's arguments.</p>
 
-            <label className={labelCls}>HEADERS</label>
-            <div className="grid gap-1.5">
-              {(form.config.headers ?? []).map((h, i) => (
-                <div key={i} className="flex flex-wrap gap-1.5">
-                  <input value={h.name} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], name: e.target.value }; setHeaders(hs); }} placeholder="Header" className={`${inputCls} min-w-[120px] flex-1`} />
-                  <input value={h.value} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], value: e.target.value }; setHeaders(hs); }} placeholder="Value (e.g. Bearer {apiKey})" className={`${inputCls} min-w-[160px] flex-[2]`} />
-                  <button className="secondary shrink-0" onClick={() => setHeaders((form.config.headers ?? []).filter((_, j) => j !== i))}><Trash2 size={12} /></button>
-                </div>
-              ))}
-              <button className="secondary justify-self-start" onClick={() => setHeaders([...(form.config.headers ?? []), { name: '', value: '' }])}><Plus size={12} />Add header</button>
-            </div>
+          <label className={label}>headers</label>
+          <div className="grid gap-1.5">
+            {(form.config.headers ?? []).map((h, i) => (
+              <div key={i} className="flex flex-wrap items-center gap-1.5">
+                <input value={h.name} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], name: e.target.value }; setHeaders(hs); }} placeholder="Header" className={`${INPUT_CLS} min-w-[120px] flex-1`} />
+                <input value={h.value} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], value: e.target.value }; setHeaders(hs); }} placeholder="Value (e.g. Bearer {apiKey})" className={`${INPUT_CLS} min-w-[160px] flex-[2]`} />
+                <IconButton label="remove header" onClick={() => setHeaders((form.config.headers ?? []).filter((_, j) => j !== i))}><Trash2 size={12} /></IconButton>
+              </div>
+            ))}
+            <Button className={addBtn} icon={<Plus size={12} />} onClick={() => setHeaders([...(form.config.headers ?? []), { name: '', value: '' }])}>add header</Button>
+          </div>
 
-            <label className={labelCls}>BODY (JSON, optional)</label>
-            <textarea
-              value={form.config.body ?? ''}
-              onChange={(e) => setCfg({ body: e.target.value })}
-              rows={3}
-              placeholder='{"name": "{name}", "role": "admin"}'
-              className={`${inputCls} resize-y`}
-            />
+          <label className={label}>body (json, optional)</label>
+          <textarea
+            value={form.config.body ?? ''}
+            onChange={(e) => setCfg({ body: e.target.value })}
+            rows={3}
+            placeholder='{"name": "{name}", "role": "admin"}'
+            className={`${INPUT_CLS} resize-y`}
+          />
 
-            <label className={labelCls}>PARAMETERS (what the agent can pass)</label>
-            <div className="grid gap-2">
-              {(form.config.params ?? []).map((p, i) => (
-                <div key={i} className="rounded-[10px] border border-line bg-panel2 p-2.5">
-                  <div className="flex flex-wrap gap-1.5">
-                    <input value={p.name} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], name: e.target.value }; setParams(ps); }} placeholder="paramName" className={`${inputCls} min-w-[120px] flex-1`} />
-                    <div className="w-28 shrink-0">
-                      <Dropdown value={p.type} options={PARAM_TYPES.map((t) => ({ value: t, label: t }))} onChange={(v) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], type: v }; setParams(ps); }} />
-                    </div>
-                    <button className="secondary shrink-0" onClick={() => setParams((form.config.params ?? []).filter((_, j) => j !== i))}><Trash2 size={12} /></button>
+          <label className={label}>parameters (what the agent can pass)</label>
+          <div className="grid gap-2">
+            {(form.config.params ?? []).map((p, i) => (
+              <div key={i} className="rounded-lg border border-border bg-background p-2.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <input value={p.name} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], name: e.target.value }; setParams(ps); }} placeholder="paramName" className={`${INPUT_CLS} min-w-[120px] flex-1`} />
+                  <div className="w-28 shrink-0">
+                    <Select value={p.type} options={PARAM_TYPES.map((t) => ({ value: t, label: t }))} onChange={(v) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], type: v }; setParams(ps); }} />
                   </div>
-                  <input value={p.description} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], description: e.target.value }; setParams(ps); }} placeholder="What is this param? The LLM uses this to fill it." className={`${inputCls} mt-1.5`} />
-                  <div className="-mx-2 mt-1.5">
-                    <Checkbox
-                      checked={p.required}
-                      onChange={(next) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], required: next }; setParams(ps); }}
-                      label="Required"
-                    />
-                  </div>
+                  <IconButton label="remove parameter" onClick={() => setParams((form.config.params ?? []).filter((_, j) => j !== i))}><Trash2 size={12} /></IconButton>
                 </div>
-              ))}
-              <button className="secondary justify-self-start" onClick={() => setParams([...(form.config.params ?? []), { name: '', type: 'string', description: '', required: false }])}><Plus size={12} />Add parameter</button>
-            </div>
-          </>
-        )}
+                <input value={p.description} onChange={(e) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], description: e.target.value }; setParams(ps); }} placeholder="What is this param? The LLM uses this to fill it." className={`${INPUT_CLS} mt-1.5`} />
+                <div className="-mx-2 mt-1">
+                  <Checkbox
+                    checked={p.required}
+                    onChange={(next) => { const ps = [...(form.config.params ?? [])]; ps[i] = { ...ps[i], required: next }; setParams(ps); }}
+                    label="required"
+                  />
+                </div>
+              </div>
+            ))}
+            <Button className={addBtn} icon={<Plus size={12} />} onClick={() => setParams([...(form.config.params ?? []), { name: '', type: 'string', description: '', required: false }])}>add parameter</Button>
+          </div>
+        </>
+      )}
 
-        <label className={labelCls}>DESCRIPTION</label>
-        <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} placeholder="When should the agent use this? What does it return?" className={`${inputCls} resize-y`} />
+      <label className={label}>description</label>
+      <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} placeholder="When should the agent use this? What does it return?" className={`${INPUT_CLS} resize-y`} />
 
-        <div className="-mx-2 mt-3.5">
-          <Checkbox checked={form.enabled} onChange={(next) => setForm({ ...form, enabled: next })} label="Enabled" hint="available to agents" />
-        </div>
-
-        {error && <p style={{ fontSize: 11, color: '#f87171', margin: '10px 0 0' }}>{error}</p>}
+      <div className="-mx-2 mt-3.5">
+        <Checkbox checked={form.enabled} onChange={(next) => setForm({ ...form, enabled: next })} label="enabled" hint="available to agents" />
       </div>
-    </Drawer>
+
+      {error && <p className="mt-2.5 mb-0 font-mono text-[10px] text-danger">{error}</p>}
+    </Modal>
   );
 }

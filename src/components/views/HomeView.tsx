@@ -2,14 +2,15 @@ import { Workflow as WorkflowIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { Agent, Integration, Skill, Tool, Workflow } from '../../types';
 import { AgentAvatar } from '../ui/AgentAvatar';
+import { GROUP_LABEL_CLS } from '../ui/Input';
 import { GraphView } from './GraphView';
 
 const SHOW = 4;
 
 export type HomeTab = 'overview' | 'graph';
 
-// No header: the section title, the Overview/Graph tabs and "New agent" all live
-// in the topbar (Graph is its own topbar button, + creates an agent).
+// No header: the section title, the Overview/Graph tabs and "new agent" all live
+// in the topbar. This view opens straight into content.
 export function HomeView({ agents, tools, skills, integrations, workflows, onOpen, onCreate, onOpenWorkflow, onSaveAgent, onSaveWorkflow, tab }: {
   agents: Agent[]; tools: Tool[]; skills: Skill[]; integrations: Integration[]; workflows: Workflow[];
   onOpen: (id: string) => void; onCreate: () => void; onOpenWorkflow: (id: string) => void;
@@ -20,36 +21,39 @@ export function HomeView({ agents, tools, skills, integrations, workflows, onOpe
   const visibleAgents = agents.filter((a) => !a.isManager);
   const [hoveredAgentId, setHoveredAgentId] = useState<string | null>(null);
 
+  const newLink = 'focus-ring cursor-pointer rounded border-0 bg-transparent p-0 font-mono text-[10px] text-muted transition-colors hover:text-foreground';
+  const tile = 'focus-ring flex min-h-[64px] cursor-pointer items-center gap-3 rounded-xl border border-border bg-surface p-3.5 text-left transition-colors duration-150 hover:bg-background';
+
   return (
     <div className="flex h-full flex-col">
       {/* Overview stays mounted so Graph's pan/zoom survives view switches. */}
-      <div className={`min-h-0 flex-1 overflow-y-auto ${tab === 'overview' ? '' : 'hidden'}`}>
-        <div className="mb-3 flex items-center justify-between">
-          <span className="font-mono text-[11px] tracking-[1px] text-muted">Agents</span>
-          <button className="cursor-pointer border-0 bg-none p-0 font-mono text-[11px] tracking-[1px] text-muted hover:text-text" onClick={onCreate}>+ New</button>
+      <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'overview' ? '' : 'hidden'}`}>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <span className={GROUP_LABEL_CLS}>agents</span>
+          <button className={newLink} onClick={onCreate}>+ new</button>
         </div>
-        <div className="grid max-w-[1100px] grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-2.5">
           {visibleAgents.slice(0, SHOW).map((a) => (
-            <button key={a.id} className="home-agent flex min-h-[72px] cursor-pointer items-center gap-3 rounded-[16px] border border-line bg-panel p-4 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-dotted hover:border-mid hover:shadow-lift" onClick={() => onOpen(a.id)} onMouseEnter={() => setHoveredAgentId(a.id)} onMouseLeave={() => setHoveredAgentId((h) => (h === a.id ? null : h))}>
-              <AgentAvatar agent={a} size={40} playing={hoveredAgentId === a.id} />
+            <button key={a.id} className={tile} onClick={() => onOpen(a.id)} onMouseEnter={() => setHoveredAgentId(a.id)} onMouseLeave={() => setHoveredAgentId((h) => (h === a.id ? null : h))}>
+              <AgentAvatar agent={a} size={38} playing={hoveredAgentId === a.id} />
               <div className="min-w-0">
-                <b className="block truncate text-[13px]">{a.name}</b>
+                <b className="block truncate font-mono text-[11px] text-foreground">{a.name}</b>
                 <em className="block truncate font-mono text-[10px] text-muted not-italic">{a.toolIds.map(toolName).join(' · ') || 'no tools'}</em>
               </div>
             </button>
           ))}
         </div>
 
-        <div className="mt-6 mb-3 flex items-center justify-between">
-          <span className="font-mono text-[11px] tracking-[1px] text-muted">Workflows</span>
-          <button className="cursor-pointer border-0 bg-none p-0 font-mono text-[11px] tracking-[1px] text-muted hover:text-text" onClick={() => onOpenWorkflow('new')}>+ New</button>
+        <div className="mt-5 mb-2 flex items-center justify-between gap-3">
+          <span className={GROUP_LABEL_CLS}>workflows</span>
+          <button className={newLink} onClick={() => onOpenWorkflow('new')}>+ new</button>
         </div>
-        <div className="grid max-w-[1100px] grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-2.5">
           {workflows.slice(0, SHOW).map((w) => (
-            <button key={w.id} className="home-agent flex min-h-[72px] cursor-pointer items-center gap-3 rounded-[16px] border border-line bg-panel p-4 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-dotted hover:border-mid hover:shadow-lift" onClick={() => onOpenWorkflow(w.id)}>
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-panel2 text-muted"><WorkflowIcon size={16} /></span>
+            <button key={w.id} className={tile} onClick={() => onOpenWorkflow(w.id)}>
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-background text-muted"><WorkflowIcon size={15} /></span>
               <div className="min-w-0">
-                <b className="block truncate text-[13px]">{w.name}</b>
+                <b className="block truncate font-mono text-[11px] text-foreground">{w.name}</b>
                 <em className="block truncate font-mono text-[10px] text-muted not-italic">{w.nodes.length} nodes · {w.edges.length} connections</em>
               </div>
             </button>
@@ -58,7 +62,7 @@ export function HomeView({ agents, tools, skills, integrations, workflows, onOpe
       </div>
 
       <div className={`min-h-0 flex-1 ${tab === 'graph' ? '' : 'hidden'}`}>
-        <GraphView embedded agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows} onOpenAgent={onOpen} onOpenWorkflow={onOpenWorkflow} onSaveAgent={onSaveAgent} onSaveWorkflow={onSaveWorkflow} />
+        <GraphView agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows} onOpenAgent={onOpen} onOpenWorkflow={onOpenWorkflow} onSaveAgent={onSaveAgent} onSaveWorkflow={onSaveWorkflow} />
       </div>
     </div>
   );

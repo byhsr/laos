@@ -1,21 +1,23 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw, RotateCcw, Settings, Sparkles } from 'lucide-react';
+import { RefreshCw, RotateCcw, Sparkles } from 'lucide-react';
 import type { ModelConfig } from '../../types';
 import { ModelsView } from './ModelsView';
 import { UpdatePrompt } from '../ui/UpdatePrompt';
+import { Card } from '../ui/Card';
+import { Button } from '../ui/Button';
+import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS } from '../ui/Input';
+import { tabCls } from '../ui/tabs';
 import { toast } from '../../hooks/useToast';
 import { appVersion, checkForUpdate, type UpdateInfo } from '../../runtime';
 import { NAV_SECTIONS, useNavLabels } from '../../hooks/useNavLabels';
+import { THEMES, activeTheme, applyTheme, type ThemeKey } from '../../theme';
 
 type SettingsTab = 'general' | 'models';
 
 const TABS: { key: SettingsTab; label: string }[] = [
-  { key: 'general', label: 'General' },
-  { key: 'models', label: 'Models' },
+  { key: 'general', label: 'general' },
+  { key: 'models', label: 'models' },
 ];
-
-const tabBtn = (active: boolean) =>
-  `flex cursor-pointer items-center gap-1 rounded-[10px] border px-2.5 py-1.5 text-[11px] capitalize ${active ? 'border-dotted border-mid bg-panel2 text-text' : 'border-transparent bg-none text-muted hover:text-text'}`;
 
 export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditModel, onDeleteModel }: {
   models: ModelConfig[]; onRerunOnboarding: () => void;
@@ -25,6 +27,7 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
   const [version, setVersion] = useState('');
   const [checking, setChecking] = useState(false);
   const [found, setFound] = useState<UpdateInfo | null>(null);
+  const [theme, setTheme] = useState<ThemeKey>(activeTheme);
 
   const navLabels = useNavLabels((s) => s.labels);
   const setNavLabel = useNavLabels((s) => s.setLabel);
@@ -32,14 +35,19 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
 
   useEffect(() => { appVersion().then(setVersion); }, []);
 
+  const pickTheme = (key: ThemeKey) => {
+    applyTheme(key);
+    setTheme(key);
+  };
+
   const checkUpdates = async () => {
     setChecking(true);
     try {
       const u = await checkForUpdate();
       if (u) setFound(u);
-      else toast('You are on the latest version.', 'success');
+      else toast('you are on the latest version', 'success');
     } catch (e) {
-      toast(typeof e === 'string' ? e : 'Could not check for updates.', 'error');
+      toast(typeof e === 'string' ? e : 'could not check for updates', 'error');
     } finally {
       setChecking(false);
     }
@@ -47,71 +55,78 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
 
   return (
     <div className="flex h-full flex-col">
-      <header className="mb-5 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <Settings size={14} className="text-[var(--green)]" />
-          <span className="font-mono text-[11px] uppercase tracking-[1px] text-text">Settings</span>
-        </div>
-        <div className="flex items-center gap-1">
-          {TABS.map((t) => (
-            <button key={t.key} className={tabBtn(tab === t.key)} onClick={() => setTab(t.key)}>{t.label}</button>
-          ))}
-        </div>
-      </header>
+      {/* No view title — the header row carries only the tabs. */}
+      <div className="mb-4 flex shrink-0 flex-wrap items-center justify-end gap-1">
+        {TABS.map((t) => (
+          <button key={t.key} className={tabCls(tab === t.key)} onClick={() => setTab(t.key)}>{t.label}</button>
+        ))}
+      </div>
 
-      <div className={tab === 'general' ? '' : 'hidden'}>
-        <div className="max-w-[700px] rounded-[16px] border border-line bg-panel p-[22px]">
-          <h3 className="mb-[5px] text-[14px]">Theme</h3>
-          <p className="mb-6 text-[12px] leading-[1.7] text-muted">Local-first agent workspace. Runs are recorded locally; agents are isolated per home directory.</p>
-          <div className="mb-[31px] flex gap-[13px]">
-            {(['dark', 'light', 'cyber'] as const).map((t) => (
-              <button key={t} className={`w-[130px] cursor-pointer rounded-[10px] border border-line bg-transparent p-2 text-left hover:border-mid ${t === 'dark' ? 'border-[var(--green)]' : ''}`} onClick={() => document.documentElement.setAttribute('data-theme', t)}>
-                <span className={`mb-[7px] block h-[43px] rounded bg-[#f3f3f4] ${t === 'dark' ? 'bg-[#19191f]' : t === 'cyber' ? 'bg-[linear-gradient(135deg,#091020,#243267)]' : ''}`} />
-                <b className="text-[11px]">{t}</b>
-              </button>
-            ))}
-          </div>
-          <p className="text-[12px] text-muted">Everything runs locally — your agents, tools, and data stay on this machine.</p>
-        </div>
+      <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'general' ? '' : 'hidden'}`}>
+        <div className="grid gap-3">
+          <Card className="hover:bg-surface">
+            <h3 className="m-0 font-mono text-xs lowercase text-foreground">theme</h3>
+            <p className="mt-1 mb-4 text-[12px] leading-[1.65] text-muted">Local-first agent workspace. Runs are recorded locally; agents are isolated per home directory.</p>
+            <div className="flex flex-wrap gap-2.5">
+              {THEMES.map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => pickTheme(t.key)}
+                  aria-pressed={theme === t.key}
+                  className={`focus-ring w-[128px] cursor-pointer rounded-lg border p-2 text-left transition-colors ${
+                    theme === t.key ? 'border-foreground/40' : 'border-border hover:border-foreground/30'
+                  }`}
+                >
+                  {/* Swatch drawn from the theme registry — the only place the
+                      non-active themes' colours exist. */}
+                  <span className="mb-2 block h-10 w-full overflow-hidden rounded border" style={{ background: t.background, borderColor: t.border }}>
+                    <span className="mt-2 ml-2 block h-4 w-16 rounded-sm" style={{ background: t.surface, border: `1px solid ${t.border}` }} />
+                  </span>
+                  <b className="font-mono text-[10px] text-muted">{t.key}</b>
+                </button>
+              ))}
+            </div>
+          </Card>
 
-        <div className="mt-4 max-w-[700px] rounded-[16px] border border-line bg-panel p-[22px]">
-          <h3 className="mb-[5px] text-[14px]">Updates</h3>
-          <p className="mb-4 text-[12px] leading-[1.7] text-muted">
-            {version ? `Installed version ${version}. ` : ''}Signed builds update in place from GitHub Releases.
-          </p>
-          <button className="primary" onClick={checkUpdates} disabled={checking}>
-            <RefreshCw size={13} className={checking ? 'animate-spin' : ''} />{checking ? 'Checking…' : 'Check for updates'}
-          </button>
-        </div>
+          <Card className="hover:bg-surface">
+            <h3 className="m-0 font-mono text-xs lowercase text-foreground">updates</h3>
+            <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">
+              {version ? `Installed version ${version}. ` : ''}Signed builds update in place from GitHub Releases.
+            </p>
+            <Button variant="primary" icon={<RefreshCw size={13} className={checking ? 'animate-spin' : ''} />} onClick={checkUpdates} disabled={checking}>
+              {checking ? 'checking…' : 'check for updates'}
+            </Button>
+          </Card>
 
-        <div className="mt-4 max-w-[700px] rounded-[16px] border border-line bg-panel p-[22px]">
-          <h3 className="mb-[5px] text-[14px]">Navigation</h3>
-          <p className="mb-4 text-[12px] leading-[1.7] text-muted">Rename the navigation sections. Leave a field blank to restore the default.</p>
-          <div className="grid gap-2">
-            {NAV_SECTIONS.map((s) => (
-              <label key={s.key} className="flex items-center gap-3">
-                <span className="w-[92px] shrink-0 font-mono text-[11px] uppercase tracking-[0.08em] text-muted">{s.label}</span>
-                <input
-                  value={navLabels[s.key] ?? ''}
-                  onChange={(e) => setNavLabel(s.key, e.target.value)}
-                  placeholder={s.label}
-                  className="min-w-0 flex-1 rounded-md border border-line bg-panel2 px-3 py-1.5 text-[12.5px] text-text outline-none focus:border-mid"
-                />
-              </label>
-            ))}
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <button className="secondary" onClick={resetNavLabels}><RotateCcw size={12} />Reset names</button>
-            <button className="secondary" onClick={onRerunOnboarding}><Sparkles size={12} />Re-run onboarding</button>
-          </div>
+          <Card className="hover:bg-surface">
+            <h3 className="m-0 font-mono text-xs lowercase text-foreground">navigation</h3>
+            <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">Rename the navigation sections. Leave a field blank to restore the default.</p>
+            <div className="grid gap-2">
+              {NAV_SECTIONS.map((s) => (
+                <label key={s.key} className="flex items-center gap-3">
+                  <span className={`${GROUP_LABEL_CLS} w-[92px] shrink-0`}>{s.label}</span>
+                  <input
+                    value={navLabels[s.key] ?? ''}
+                    onChange={(e) => setNavLabel(s.key, e.target.value)}
+                    placeholder={s.label}
+                    className={`${INPUT_CLS} min-w-0 flex-1`}
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Button icon={<RotateCcw size={12} />} onClick={resetNavLabels}>reset names</Button>
+              <Button icon={<Sparkles size={12} />} onClick={onRerunOnboarding}>re-run onboarding</Button>
+            </div>
+          </Card>
         </div>
+      </div>
+
+      <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'models' ? '' : 'hidden'}`}>
+        <ModelsView models={models} onAdd={onAddModel} onEdit={onEditModel} onDelete={onDeleteModel} />
       </div>
 
       {found && <UpdatePrompt info={found} onDismiss={() => setFound(null)} />}
-
-      <div className={tab === 'models' ? '' : 'hidden'}>
-        <ModelsView embedded models={models} onAdd={onAddModel} onEdit={onEditModel} onDelete={onDeleteModel} />
-      </div>
     </div>
   );
 }

@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ArrowUpRight, Bot, Globe, Maximize2, Plus, Sparkles, UserCog, Workflow as WorkflowIcon, Wrench, X, ZoomIn, ZoomOut } from 'lucide-react';
 import type { Agent, Integration, Skill, Tool, Workflow } from '../../types';
+import { IconButton } from '../ui/Button';
+import { Tooltip } from '../ui/Tooltip';
+import { GROUP_LABEL_CLS } from '../ui/Input';
 
 const NODE_W = 196;
 const NODE_H = 54;
@@ -18,12 +21,12 @@ type GEdge = { id: string; from: string; to: string };
 type LinkField = 'toolIds' | 'skillIds' | 'integrations';
 
 const ICON: Record<Kind, ReactNode> = {
-  skill: <Sparkles size={14} />,
-  tool: <Wrench size={14} />,
-  integration: <Globe size={14} />,
-  agent: <Bot size={14} />,
-  manager: <UserCog size={14} />,
-  workflow: <WorkflowIcon size={14} />,
+  skill: <Sparkles size={13} />,
+  tool: <Wrench size={13} />,
+  integration: <Globe size={13} />,
+  agent: <Bot size={13} />,
+  manager: <UserCog size={13} />,
+  workflow: <WorkflowIcon size={13} />,
 };
 
 const LABEL: Record<Kind, string> = {
@@ -46,15 +49,11 @@ const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 
 function LinkRow({ name, onRemove }: { name: string; onRemove: () => void }) {
   return (
-    <div className="group flex items-center gap-2 rounded-md border border-line bg-panel2/50 px-2.5 py-1.5">
-      <span className="min-w-0 flex-1 truncate text-[12px] text-text">{name}</span>
-      <button
-        className="grid h-5 w-5 shrink-0 cursor-pointer place-items-center rounded text-muted opacity-0 transition-opacity hover:bg-[#e11d48] hover:text-white group-hover:opacity-100"
-        onClick={onRemove}
-        title="Remove link"
-      >
-        <X size={11} />
-      </button>
+    <div className="group flex items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5">
+      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground">{name}</span>
+      <span className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
+        <IconButton label="remove link" className="h-5 w-5 hover:bg-danger hover:text-white" onClick={onRemove}><X size={10} /></IconButton>
+      </span>
     </div>
   );
 }
@@ -69,27 +68,27 @@ function LinkSection({ title, linked, available, onAdd, onRemove, empty }: {
 }) {
   return (
     <section className="mb-5 last:mb-0">
-      <div className="mb-2 flex items-baseline justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted">{title}</span>
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <span className={GROUP_LABEL_CLS}>{title}</span>
         <span className="font-mono text-[10px] text-muted">{linked.length}</span>
       </div>
 
       {linked.length === 0 && available.length === 0 ? (
-        <p className="text-[11.5px] leading-[1.6] text-muted">{empty}</p>
+        <p className="m-0 font-mono text-[10px] leading-relaxed text-muted">{empty}</p>
       ) : (
         <div className="grid gap-1.5">
           {linked.map((i) => <LinkRow key={i.id} name={i.name} onRemove={() => onRemove(i.id)} />)}
           {available.length > 0 && (
             <div className="mt-0.5 flex flex-wrap gap-1.5">
               {available.map((i) => (
-                <button
-                  key={i.id}
-                  className="flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-dashed border-soft px-2 py-1 text-[11px] text-muted transition-colors hover:border-mid hover:text-text"
-                  onClick={() => onAdd(i.id)}
-                  title={`Link ${i.name}`}
-                >
-                  <Plus size={10} /><span className="truncate">{i.name}</span>
-                </button>
+                <Tooltip key={i.id} label={`link ${i.name}`}>
+                  <button
+                    className="focus-ring flex max-w-full cursor-pointer items-center gap-1 rounded-lg border border-border px-2 py-1 font-mono text-[10px] text-muted transition-colors hover:border-foreground/30 hover:text-foreground"
+                    onClick={() => onAdd(i.id)}
+                  >
+                    <Plus size={10} /><span className="truncate">{i.name}</span>
+                  </button>
+                </Tooltip>
               ))}
             </div>
           )}
@@ -124,42 +123,42 @@ function Inspector({ node, agents, skills, tools, integrations, workflows, onClo
   const capField = FIELD_OF[node.kind];
 
   return (
-    <aside className="glass flex w-[300px] shrink-0 flex-col overflow-hidden rounded-[16px] border border-hairline">
-      <header className="flex shrink-0 items-start justify-between gap-2 border-b border-hairline px-3.5 py-3">
+    <aside className="flex w-[300px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-surface">
+      <header className="flex shrink-0 items-start justify-between gap-2 border-b border-border px-3.5 py-3">
         <div className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-muted">
-            <i className="grid h-4 w-4 place-items-center rounded bg-panel2">{ICON[node.kind]}</i>
-            {LABEL[node.kind]}
+          <span className={`${GROUP_LABEL_CLS} flex items-center gap-1.5`}>
+            <i className="grid h-4 w-4 place-items-center rounded bg-background text-muted">{ICON[node.kind]}</i>
+            {LABEL[node.kind].toLowerCase()}
           </span>
-          <b className="mt-1 block truncate text-[13px] text-text">{node.label}</b>
+          <b className="mt-1 block truncate font-mono text-[11px] text-foreground">{node.label}</b>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {(isAgentish || node.kind === 'workflow') && (
-            <button className="secondary" onClick={openTarget} title="Open"><ArrowUpRight size={12} /></button>
+            <IconButton label="open" onClick={openTarget}><ArrowUpRight size={12} /></IconButton>
           )}
-          <button className="secondary" onClick={onClose} title="Close"><X size={12} /></button>
+          <IconButton label="close" onClick={onClose}><X size={12} /></IconButton>
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3.5 py-4">
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3.5 py-4">
         {agentNode && (
           <>
             <LinkSection
-              title="Tools" empty="No tools configured yet."
+              title="tools" empty="no tools configured yet"
               linked={named(tools.filter((t) => (agentNode.toolIds ?? []).includes(t.id)))}
               available={named(tools.filter((t) => !(agentNode.toolIds ?? []).includes(t.id)))}
               onAdd={(id) => patchAgent(agentNode, 'toolIds', [...(agentNode.toolIds ?? []), id])}
               onRemove={(id) => patchAgent(agentNode, 'toolIds', (agentNode.toolIds ?? []).filter((x) => x !== id))}
             />
             <LinkSection
-              title="Skills" empty="No skills configured yet."
+              title="skills" empty="no skills configured yet"
               linked={named(skills.filter((s) => (agentNode.skillIds ?? []).includes(s.id)))}
               available={named(skills.filter((s) => !(agentNode.skillIds ?? []).includes(s.id)))}
               onAdd={(id) => patchAgent(agentNode, 'skillIds', [...(agentNode.skillIds ?? []), id])}
               onRemove={(id) => patchAgent(agentNode, 'skillIds', (agentNode.skillIds ?? []).filter((x) => x !== id))}
             />
             <LinkSection
-              title="Integrations" empty="No integrations configured yet."
+              title="integrations" empty="no integrations configured yet"
               linked={named(integrations.filter((i) => (agentNode.integrations ?? []).includes(i.id)))}
               available={named(integrations.filter((i) => !(agentNode.integrations ?? []).includes(i.id)))}
               onAdd={(id) => patchAgent(agentNode, 'integrations', [...(agentNode.integrations ?? []), id])}
@@ -170,8 +169,8 @@ function Inspector({ node, agents, skills, tools, integrations, workflows, onClo
 
         {capField && (
           <LinkSection
-            title="Used by"
-            empty={`No agent uses this ${node.kind} yet.`}
+            title="used by"
+            empty={`no agent uses this ${node.kind} yet`}
             linked={namedAgents.filter((a) => (agents.find((x) => x.id === a.id)?.[capField] ?? []).includes(node.id.slice(node.id.indexOf(':') + 1)))}
             available={namedAgents.filter((a) => !(agents.find((x) => x.id === a.id)?.[capField] ?? []).includes(node.id.slice(node.id.indexOf(':') + 1)))}
             onAdd={(agentId) => {
@@ -189,8 +188,8 @@ function Inspector({ node, agents, skills, tools, integrations, workflows, onClo
 
         {wfNode && (
           <LinkSection
-            title="Agents in this workflow"
-            empty="This workflow has no agent steps yet. Add agents on the canvas."
+            title="agents in this workflow"
+            empty="this workflow has no agent steps yet — add agents on the canvas"
             linked={namedAgents.filter((a) => wfNode.nodes.some((n) => n.agentId === a.id))}
             available={named(agents.filter((a) => !a.isManager && !wfNode.nodes.some((n) => n.agentId === a.id)))}
             onAdd={(agentId) => {
@@ -211,11 +210,10 @@ function Inspector({ node, agents, skills, tools, integrations, workflows, onClo
   );
 }
 
-export function GraphView({ agents, skills, tools, integrations, workflows, onOpenAgent, onOpenWorkflow, onSaveAgent, onSaveWorkflow, embedded = false }: {
+export function GraphView({ agents, skills, tools, integrations, workflows, onOpenAgent, onOpenWorkflow, onSaveAgent, onSaveWorkflow }: {
   agents: Agent[]; skills: Skill[]; tools: Tool[]; integrations: Integration[]; workflows: Workflow[];
   onOpenAgent: (id: string) => void; onOpenWorkflow: (id: string) => void;
   onSaveAgent: (a: Agent) => Promise<void>; onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
-  embedded?: boolean;
 }) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; y: number; px: number; py: number; moved: boolean } | null>(null);
@@ -357,25 +355,15 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
     { kind: 'workflow' as Kind, n: workflows.length },
   ];
 
-  const zoomBtn = 'grid h-6 w-6 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted transition-colors hover:bg-white/5 hover:text-text';
+  const overlay = 'absolute z-[6] flex items-center rounded-xl border border-border bg-surface';
 
   return (
-    <div className="flex h-full min-h-[420px] flex-col">
-      {!embedded && (
-        <header className="mb-4 flex items-end justify-between gap-4">
-          <div className="min-w-0">
-            <span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span>
-            <h1 className="m-0 text-[24px]">Graph</h1>
-            <p className="mt-1 text-[12px] leading-[1.6] text-muted">What is wired to what. Drag to pan, scroll to zoom, click a node to see and edit its links.</p>
-          </div>
-        </header>
-      )}
-
+    <div className="flex h-full flex-col">
       {nodes.length === 0 ? (
-        <div className="grid flex-1 place-items-center rounded-[16px] p-8 text-center">
+        <div className="grid flex-1 place-items-center rounded-xl p-8 text-center">
           <div>
-            <p className="text-[13px] text-text">Nothing to map yet</p>
-            <p className="mx-auto mt-1 max-w-[340px] text-[12px] leading-[1.6] text-muted">Add an agent, tool, skill or workflow and it shows up here, wired to whatever it uses.</p>
+            <p className="m-0 font-mono text-[11px] text-foreground">nothing to map yet</p>
+            <p className="mx-auto mt-1 max-w-[340px] text-[12px] leading-relaxed text-muted">Add an agent, tool, skill or workflow and it shows up here, wired to whatever it uses.</p>
           </div>
         </div>
       ) : (
@@ -412,10 +400,10 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
               <svg className="pointer-events-none absolute top-0 left-0 z-0" width={width} height={height}>
                 <defs>
                   <marker id="gv-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-soft)" />
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-border)" />
                   </marker>
                   <marker id="gv-arrow-on" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-green)" />
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-accent)" />
                   </marker>
                 </defs>
                 {edges.map((e) => {
@@ -427,14 +415,14 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
                     <g key={e.id}>
                       <path
                         d={path(from, to)}
-                        className={`fill-none ${active ? 'stroke-[var(--green)]' : 'stroke-soft'}`}
+                        className={`fill-none ${active ? 'stroke-[var(--color-accent)]' : 'stroke-[var(--color-border)]'}`}
                         strokeWidth={active ? 1.8 : 1.2}
                         markerEnd={active ? 'url(#gv-arrow-on)' : 'url(#gv-arrow)'}
                       />
                       {active && (
                         <>
-                          <circle cx={from.x + NODE_W} cy={from.y + NODE_H / 2} r={3} fill="var(--color-green)" />
-                          <circle cx={to.x} cy={to.y + NODE_H / 2} r={3} fill="var(--color-green)" />
+                          <circle cx={from.x + NODE_W} cy={from.y + NODE_H / 2} r={3} fill="var(--color-accent)" />
+                          <circle cx={to.x} cy={to.y + NODE_H / 2} r={3} fill="var(--color-accent)" />
                         </>
                       )}
                     </g>
@@ -453,34 +441,31 @@ export function GraphView({ agents, skills, tools, integrations, workflows, onOp
                     onMouseEnter={() => setHover(n.id)}
                     onMouseLeave={() => setHover(null)}
                     onClick={() => setSelected((s) => (s === n.id ? null : n.id))}
-                    className={`absolute z-[1] flex cursor-pointer items-center gap-3 rounded-[14px] border bg-panel px-3 text-left shadow-soft transition-all duration-150 ${dim ? 'opacity-25' : 'opacity-100'} ${isSel ? 'border-[var(--green)]' : focus === n.id ? 'border-mid' : 'border-line hover:border-mid'}`}
+                    className={`absolute z-[1] flex cursor-pointer items-center gap-3 rounded-xl border bg-surface px-3 text-left transition-all duration-150 ${dim ? 'opacity-25' : 'opacity-100'} ${isSel ? 'border-accent' : focus === n.id ? 'border-foreground/40' : 'border-border hover:border-foreground/30'}`}
                     style={{ left: n.x, top: n.y, width: NODE_W, height: NODE_H }}
                   >
-                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-panel2 text-muted">{ICON[n.kind]}</span>
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-background text-muted">{ICON[n.kind]}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12px] text-text">{n.label}</span>
-                      <span className="block truncate font-mono text-[10.5px] text-muted">{n.sub}</span>
+                      <span className="block truncate font-mono text-[11px] text-foreground">{n.label}</span>
+                      <span className="block truncate font-mono text-[10px] text-muted">{n.sub}</span>
                     </span>
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${isSel ? 'bg-[var(--green)]' : 'bg-soft'}`} />
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${isSel ? 'bg-accent' : 'bg-border'}`} />
                   </button>
                 );
               })}
             </div>
 
-            <div
-              className="glass absolute top-3 right-3 z-[6] flex items-center gap-0.5 rounded-lg border border-hairline p-1"
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <button className={zoomBtn} title="Zoom out" onClick={() => zoomBy(0.9)}><ZoomOut size={13} /></button>
-              <span className="w-10 text-center font-mono text-[11px] text-muted">{Math.round(zoom * 100)}%</span>
-              <button className={zoomBtn} title="Zoom in" onClick={() => zoomBy(1.1)}><ZoomIn size={13} /></button>
-              <button className={zoomBtn} title="Fit to view" onClick={fit}><Maximize2 size={13} /></button>
+            <div className={`${overlay} top-3 right-3 gap-0.5 p-1`} onPointerDown={(e) => e.stopPropagation()}>
+              <IconButton label="zoom out" className="h-6 w-6" onClick={() => zoomBy(0.9)}><ZoomOut size={13} /></IconButton>
+              <span className="w-10 text-center font-mono text-[10px] text-muted">{Math.round(zoom * 100)}%</span>
+              <IconButton label="zoom in" className="h-6 w-6" onClick={() => zoomBy(1.1)}><ZoomIn size={13} /></IconButton>
+              <IconButton label="fit to view" className="h-6 w-6" onClick={fit}><Maximize2 size={13} /></IconButton>
             </div>
 
-            <div className="glass pointer-events-none absolute bottom-3 left-3 z-[6] flex flex-wrap items-center gap-3 rounded-lg border border-hairline px-3 py-1.5">
+            <div className={`${overlay} pointer-events-none bottom-3 left-3 flex-wrap gap-3 px-3 py-1.5`}>
               {counts.filter((c) => c.n > 0).map((c) => (
-                <span key={c.kind} className="flex items-center gap-1.5 font-mono text-[10.5px] text-muted">
-                  <i className="grid h-4 w-4 place-items-center rounded bg-panel2">{ICON[c.kind]}</i>
+                <span key={c.kind} className="flex items-center gap-1.5 font-mono text-[10px] text-muted">
+                  <i className="grid h-4 w-4 place-items-center rounded bg-background">{ICON[c.kind]}</i>
                   {c.n} {LABEL[c.kind].toLowerCase()}
                 </span>
               ))}

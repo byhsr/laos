@@ -29,7 +29,11 @@ import { Toaster } from './components/ui/Toaster';
 import { UpdatePrompt } from './components/ui/UpdatePrompt';
 import { toast } from './hooks/useToast';
 import { checkForUpdate, type UpdateInfo } from './runtime';
-import { Plus } from 'lucide-react';
+
+// Every view lives in a pane that scrolls internally — the shell itself never
+// scrolls, so there is never a double scrollbar or a page that jumps.
+const pane = (active: boolean) =>
+  `h-full overflow-x-hidden overflow-y-auto p-4 ${active ? '' : 'hidden'}`;
 
 export default function App() {
   const agents = useAgentsStore((s) => s.agents);
@@ -104,7 +108,7 @@ export default function App() {
     setShowOnboarding(false);
   };
 
-  // "Settings" from an agent's context menu: the lead opens its config drawer, a
+  // "Settings" from an agent's context menu: the lead opens its config panel, a
   // regular agent opens its Config tab. The nonce lets a repeat request re-fire.
   const [configRequest, setConfigRequest] = useState<{ id: string; n: number; tab: 'chat' | 'config' }>({ id: '', n: 0, tab: 'chat' });
   const openAgentSettings = (id: string) => {
@@ -131,12 +135,11 @@ export default function App() {
     const agent = await createAgent({});
     setSelectedAgentId(agent.id);
     setView('agent');
-    toast(`Agent "${agent.name}" created`, 'success');
+    toast(`agent "${agent.name}" created`, 'success');
   };
 
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden">
-      <div className="ambient-layer" aria-hidden />
+    <div className="flex h-screen flex-col overflow-hidden">
       <Topbar
         collapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
@@ -148,7 +151,7 @@ export default function App() {
         onOpenGraph={() => { setView('home'); setHomeTab('graph'); }}
         graphActive={view === 'home' && homeTab === 'graph'}
       />
-      <div className="relative z-10 flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1">
         <Sidebar
           agents={agents}
           view={view}
@@ -162,17 +165,15 @@ export default function App() {
           onDelete={async (id) => {
             await deleteAgent(id);
             if (selectedAgentId === id) { setSelectedAgentId(null); setView('home'); }
-            toast('Agent deleted', 'success');
+            toast('agent deleted', 'success');
           }}
           collapsed={sidebarCollapsed}
         />
-        {/* Chat surfaces carry their own header row, so the workspace's usual
-            top padding is dead space there — keep it minimal. */}
-        <main className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-10 ${view === 'agent' || view === 'manager' ? 'pt-2' : 'pt-9'}`}>
+        <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
-          <div className={`h-full ${view === 'home' ? '' : 'hidden'}`}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} onSaveAgent={persistAgent} onSaveWorkflow={saveWorkflow} tab={homeTab} /></div>
-          <div className={view === 'agents' ? '' : 'hidden'}><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('Agent deleted', 'success'); }} /></div>
-          <div className={view === 'workflows' ? '' : 'hidden'}>
+          <div className={pane(view === 'home')}><HomeView agents={agents} tools={tools} skills={skills} integrations={integrations} workflows={workflows} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} onSaveAgent={persistAgent} onSaveWorkflow={saveWorkflow} tab={homeTab} /></div>
+          <div className={pane(view === 'agents')}><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('agent deleted', 'success'); }} /></div>
+          <div className={pane(view === 'workflows')}>
             <CanvasView
               agents={agents} tools={tools} workflows={workflows} integrations={integrations}
               initialWorkflowId={workflowToOpen}
@@ -182,24 +183,24 @@ export default function App() {
               onRunWorkflow={runWorkflow}
             />
           </div>
-          <div className={view === 'manager' ? '' : 'hidden'}><ManagerView agents={agents} integrations={integrations} models={models} openConfigRequest={configRequest.id === leadAgent?.id ? configRequest.n : 0} /></div>
-          <div className={view === 'tasks' ? '' : 'hidden'}><TasksView agents={agents} /></div>
-          <div className={view === 'telegram' ? '' : 'hidden'}><TelegramView /></div>
-          <div className={view === 'runs' ? '' : 'hidden'}>
+          <div className={pane(view === 'manager')}><ManagerView agents={agents} integrations={integrations} models={models} openConfigRequest={configRequest.id === leadAgent?.id ? configRequest.n : 0} /></div>
+          <div className={pane(view === 'tasks')}><TasksView agents={agents} /></div>
+          <div className={pane(view === 'telegram')}><TelegramView /></div>
+          <div className={pane(view === 'runs')}>
             <RunsConsole runs={runs} agents={agents} onOpenAgent={openAgent} onClear={clearRuns} />
           </div>
-          <div className={view === 'workshop' ? '' : 'hidden'}>
+          <div className={pane(view === 'workshop')}>
             <WorkshopView
               skills={skills} tools={tools} integrations={integrations}
               onAddSkill={() => setDrawerForm({ kind: 'skill', editing: emptySkill(), isNew: true })}
               onEditSkill={(s) => setDrawerForm({ kind: 'skill', editing: s, isNew: false })}
-              onDeleteSkill={async (id) => { await deleteSkill(id); setAgents((prev) => prev.map((a) => ({ ...a, skillIds: a.skillIds.filter((s) => s !== id) }))); toast('Skill deleted', 'success'); }}
+              onDeleteSkill={async (id) => { await deleteSkill(id); setAgents((prev) => prev.map((a) => ({ ...a, skillIds: a.skillIds.filter((s) => s !== id) }))); toast('skill deleted', 'success'); }}
               onAddTool={() => setDrawerForm({ kind: 'tool', editing: emptyTool(), isNew: true })}
               onEditTool={(t) => setDrawerForm({ kind: 'tool', editing: t, isNew: false })}
-              onDeleteTool={async (id) => { await deleteTool(id); setTools((prev) => prev.filter((p) => p.id !== id)); setAgents((prev) => prev.map((a) => ({ ...a, toolIds: a.toolIds.filter((t) => t !== id) }))); toast('Tool deleted', 'success'); }}
+              onDeleteTool={async (id) => { await deleteTool(id); setTools((prev) => prev.filter((p) => p.id !== id)); setAgents((prev) => prev.map((a) => ({ ...a, toolIds: a.toolIds.filter((t) => t !== id) }))); toast('tool deleted', 'success'); }}
             />
           </div>
-          <div className={view === 'settings' ? '' : 'hidden'}>
+          <div className={pane(view === 'settings')}>
             <SettingsView
               models={models}
               onRerunOnboarding={() => setShowOnboarding(true)}
@@ -216,21 +217,21 @@ export default function App() {
           <ToolFormDrawer
             editing={drawerForm.editing} isNew={drawerForm.isNew} integrations={integrations}
             onClose={() => setDrawerForm(null)}
-            onSave={async (t) => { await saveTool(t); setDrawerForm(null); toast('Tool saved', 'success'); }}
+            onSave={async (t) => { await saveTool(t); setDrawerForm(null); toast('tool saved', 'success'); }}
           />
         )}
         {drawerForm && drawerForm.kind === 'model' && (
           <ModelFormDrawer
             editing={drawerForm.editing} isNew={drawerForm.isNew}
             onClose={() => setDrawerForm(null)}
-            onSave={async (m) => { await saveModel(m); setDrawerForm(null); toast('Model saved', 'success'); }}
+            onSave={async (m) => { await saveModel(m); setDrawerForm(null); toast('model saved', 'success'); }}
           />
         )}
         {drawerForm && drawerForm.kind === 'skill' && (
           <SkillFormDrawer
             editing={drawerForm.editing} isNew={drawerForm.isNew}
             onClose={() => setDrawerForm(null)}
-            onSave={async (s) => { await saveSkill(s); setDrawerForm(null); toast('Skill saved', 'success'); }}
+            onSave={async (s) => { await saveSkill(s); setDrawerForm(null); toast('skill saved', 'success'); }}
           />
         )}
       </div>

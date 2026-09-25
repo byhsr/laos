@@ -1,4 +1,4 @@
-import { Dropdown } from './Dropdown';
+import { Select } from './Select';
 import { useModelsStore } from '../../hooks/useModels';
 import type { Reasoning } from '../../types';
 
@@ -8,11 +8,11 @@ import type { Reasoning } from '../../types';
 // The setting is stored per model, not per agent, so changing it here changes it
 // for every agent that uses this model.
 const OPTIONS: { value: Reasoning; label: string }[] = [
-  { value: 'auto', label: 'Reasoning: auto' },
-  { value: 'off', label: 'Reasoning: off' },
-  { value: 'low', label: 'Reasoning: low' },
-  { value: 'medium', label: 'Reasoning: medium' },
-  { value: 'high', label: 'Reasoning: high' },
+  { value: 'auto', label: 'reasoning: auto' },
+  { value: 'off', label: 'reasoning: off' },
+  { value: 'low', label: 'reasoning: low' },
+  { value: 'medium', label: 'reasoning: medium' },
+  { value: 'high', label: 'reasoning: high' },
 ];
 
 export function ReasoningPicker({ modelId }: { modelId: string }) {
@@ -22,8 +22,8 @@ export function ReasoningPicker({ modelId }: { modelId: string }) {
   if (!model) return null;
 
   return (
-    <div className="w-[152px] shrink-0">
-      <Dropdown
+    <div className="w-[150px] shrink-0">
+      <Select
         value={model.reasoning}
         options={OPTIONS}
         onChange={(v) => void useModelsStore.getState().saveModel({ ...model, reasoning: v as Reasoning })}

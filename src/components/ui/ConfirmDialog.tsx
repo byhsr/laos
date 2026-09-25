@@ -1,16 +1,23 @@
 import { useState } from 'react';
-import { Check, ShieldAlert, X } from 'lucide-react';
+import { ShieldAlert } from 'lucide-react';
 import { useConfirmStore } from '../../hooks/useConfirm';
+import { Button } from './Button';
+import { FIELD_LABEL_CLS, INPUT_CLS } from './Input';
 
 const TOOL_LABELS: Record<string, string> = {
-  create_agent: 'Create agent', update_agent: 'Update agent', delete_agent: 'Delete agent',
-  create_workflow: 'Create workflow', update_workflow: 'Update workflow', delete_workflow: 'Delete workflow',
-  run_workflow: 'Run workflow', configure_integration: 'Configure integration',
-  create_task: 'Run task', cancel_task: 'Cancel task', delegate_task: 'Delegate task',
-  run_command: 'Run command',
+  create_agent: 'create agent', update_agent: 'update agent', delete_agent: 'delete agent',
+  create_workflow: 'create workflow', update_workflow: 'update workflow', delete_workflow: 'delete workflow',
+  run_workflow: 'run workflow', configure_integration: 'configure integration',
+  create_task: 'run task', cancel_task: 'cancel task', delegate_task: 'delegate task',
+  run_command: 'run command',
 };
 
-// Inline confirmation panel, rendered above the chat input (not a center modal).
+// Confirmation for a state-changing tool call. This is the app's confirmation
+// boundary: the popup is the confirmation, so the model is never asked to seek
+// permission in prose.
+//
+// It is a *floating panel*, not a full overlay, so it stays anchored where the
+// user is looking: just above the composer, built from the shared popover shell.
 export function ConfirmDialog() {
   const pending = useConfirmStore((s) => s.pending);
   const resolve = useConfirmStore((s) => s.resolve);
@@ -27,36 +34,38 @@ export function ConfirmDialog() {
   const title = TOOL_LABELS[pending.tool] ?? pending.tool.replace(/_/g, ' ');
 
   return (
-    <div className="glass-strong animate-[dropdown-in_160ms_ease-out] rounded-2xl border border-[#facc15]/35 p-4 shadow-float">
-      <div className="mb-2 flex items-center gap-2">
-        <ShieldAlert size={15} className="text-[#facc15]" />
-        <b className="text-[13px]">Confirm: {title}</b>
+    <div className="animate-[ip-pop_100ms_var(--ease-panel)_both] rounded-xl border border-border bg-surface p-3.5 shadow-lg">
+      <div className="mb-2.5 flex items-center gap-2">
+        <ShieldAlert size={13} className="shrink-0 text-danger" />
+        <b className="min-w-0 truncate font-mono text-xs lowercase text-foreground">confirm: {title}</b>
       </div>
+
       <div className="mb-3 grid gap-2">
-        {entries.length === 0 && <p className="text-[12px] text-muted">No parameters.</p>}
+        {entries.length === 0 && <p className="m-0 font-mono text-xs text-muted">no parameters</p>}
         {entries.map(([k, v]) => (
           <label key={k} className="block">
-            <span className="mb-1 block font-mono text-[11px] uppercase tracking-[0.08em] text-muted">{k}</span>
+            <span className={FIELD_LABEL_CLS}>{k}</span>
             {Array.isArray(v) ? (
               <input
-                value={Array.isArray(v) ? v.join(', ') : String(v ?? '')}
+                value={v.join(', ')}
                 onChange={(e) => setArgs((a) => ({ ...a, [k]: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) }))}
-                className="w-full rounded-md border border-line bg-panel2 px-3 py-1.5 text-[12.5px] text-text outline-none focus:border-mid"
+                className={INPUT_CLS}
               />
             ) : (
               <input
                 type={isSecret(k) ? 'password' : 'text'}
                 value={typeof v === 'string' ? v : String(v ?? '')}
                 onChange={(e) => setArgs((a) => ({ ...a, [k]: e.target.value }))}
-                className="w-full rounded-md border border-line bg-panel2 px-3 py-1.5 text-[12.5px] text-text outline-none focus:border-mid"
+                className={INPUT_CLS}
               />
             )}
           </label>
         ))}
       </div>
+
       <div className="flex justify-end gap-2">
-        <button className="secondary" onClick={() => resolve(false, args)}><X size={13} />Reject</button>
-        <button className="primary" onClick={() => resolve(true, args)}><Check size={13} />Approve</button>
+        <Button onClick={() => resolve(false, args)}>reject</Button>
+        <Button variant="accent" onClick={() => resolve(true, args)}>approve</Button>
       </div>
     </div>
   );

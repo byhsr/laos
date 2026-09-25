@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw, Send } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, RefreshCw } from 'lucide-react';
 import { listTelegramLogs, type TelegramLogEntry } from '../../runtime';
+import { Button } from '../ui/Button';
 
 const fmtTime = (s?: string | null) => {
   if (!s) return '';
@@ -23,27 +24,27 @@ export function TelegramView() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="mb-4 flex shrink-0 items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <Send size={14} className="text-[var(--green)]" />
-          <span className="font-mono text-[11px] uppercase tracking-[1px] text-text">Telegram</span>
-        </div>
-        <button className="secondary" onClick={load}><RefreshCw size={12} />Refresh</button>
-      </header>
+      <div className="mb-3 flex shrink-0 items-center justify-end">
+        <Button icon={<RefreshCw size={12} />} onClick={load}>refresh</Button>
+      </div>
 
-      <div className="runs-console min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-inset p-3.5 font-mono text-[12px] leading-[1.6]">
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-background p-3 font-mono text-[11px] leading-relaxed">
         {logs.length === 0 ? (
-          <p className="text-[11px] text-muted">No Telegram activity yet. Set up the bot token in Workshop → Integrations.</p>
+          <p className="m-0 font-mono text-[10px] text-muted">No Telegram activity yet. Set up the bot token in Workshop → Integrations.</p>
         ) : logs.map((l, i) => (
-          <div key={i} className="border-b border-[#1c1c1f] py-2 last:border-0">
-            <div className="flex items-center gap-3 text-[11px]">
-              <span className={l.direction === 'in' ? 'text-[#38bdf8]' : 'text-[#22c55e]'}>{l.direction === 'in' ? '▸ IN' : '◂ OUT'}</span>
-              <span className={`font-mono text-[11px] ${l.status === 'error' ? 'text-[#f87171]' : l.status === 'sent' ? 'text-[#22c55e]' : 'text-[#facc15]'}`}>{l.status}</span>
-              <span className="ml-auto text-mid">{fmtTime(l.createdAt)}</span>
+          <div key={i} className="border-b border-border py-2 last:border-0">
+            <div className="flex items-center gap-3">
+              <span className="flex shrink-0 items-center gap-1 text-muted">
+                {l.direction === 'in'
+                  ? <><ArrowDownLeft size={11} />in</>
+                  : <><ArrowUpRight size={11} />out</>}
+              </span>
+              <span className={`shrink-0 lowercase ${l.status === 'error' ? 'text-danger' : 'text-muted'}`}>{l.status}</span>
+              <span className="ml-auto shrink-0 text-muted">{fmtTime(l.createdAt)}</span>
             </div>
-            <div className="mt-1 text-[#d4d4d8]">in: {l.text}</div>
-            {l.reply && <div className="mt-0.5 text-[#a1a1aa]">out: {l.reply.length > 300 ? `${l.reply.slice(0, 300)}…` : l.reply}</div>}
-            {l.detail && <div className="mt-0.5 text-[#f87171]">detail: {l.detail}</div>}
+            <div className="mt-1 break-words text-foreground/80">in: {l.text}</div>
+            {l.reply && <div className="mt-0.5 break-words text-muted">out: {l.reply.length > 300 ? `${l.reply.slice(0, 300)}…` : l.reply}</div>}
+            {l.detail && <div className="mt-0.5 break-words text-danger">detail: {l.detail}</div>}
           </div>
         ))}
       </div>

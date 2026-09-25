@@ -4,9 +4,11 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { Agent, Run, View } from '../types';
 import { Vitals } from './Vitals';
 import { navLabel, useNavLabels, type NavKey } from '../hooks/useNavLabels';
-import { Tooltip } from './ui/Tooltip';
+import { IconButton } from './ui/Button';
 
 // Every section lives in the topbar; the sidebar is purely the agent chat list.
+// Chrome sits on the surface plane as two edge-anchored clusters with open space
+// between them, so the workspace reads as free space.
 const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
   { key: 'home', view: 'home', icon: <Home size={12} /> },
   { key: 'agents', view: 'agents', icon: <Bot size={12} /> },
@@ -38,50 +40,50 @@ export function Topbar({ collapsed, onToggleSidebar, view, setView, onNewAgent, 
   const toggleMax = () => { getCurrentWindow().toggleMaximize().catch(() => {}); };
   const close = () => { getCurrentWindow().close().catch(() => {}); };
 
-  const winBtn = 'app-no-drag grid h-5 w-7 shrink-0 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted transition-colors duration-150 hover:bg-white/5 hover:text-text';
+  const cluster = 'flex items-center gap-0.5 rounded-lg border border-border bg-surface p-1';
   const iconBtn = (active = false) =>
-    `app-no-drag grid h-5 w-5 shrink-0 cursor-pointer place-items-center rounded-md transition-colors duration-150 ${active ? 'bg-white/10 text-text' : 'text-muted hover:bg-white/5 hover:text-text'}`;
+    `app-no-drag grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded border-0 bg-transparent transition-colors duration-150 focus-ring ${active ? 'bg-background text-foreground' : 'text-muted hover:bg-background hover:text-foreground'}`;
+  const winBtn = 'h-6 w-8 rounded';
 
   return (
-    <div className="app-drag relative z-50 flex h-9 flex-none items-center justify-between gap-2 px-2 pt-1.5 select-none">
+    <div className="app-drag relative z-50 flex h-9 flex-none items-center justify-between gap-2 px-2 py-1 select-none">
       {/* Left: shell toggle, graph, every section, new agent */}
-      <div className="glass flex min-w-0 items-center gap-0.5 rounded-lg p-1">
-        <Tooltip label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-          <button className={iconBtn()} onClick={onToggleSidebar}>
-            <PanelLeft className="h-3 w-3" />
-          </button>
-        </Tooltip>
-        <Tooltip label={navLabel(labels, 'graph')}>
-          <button className={iconBtn(graphActive)} onClick={onOpenGraph}>
-            <Globe className="h-3 w-3" />
-          </button>
-        </Tooltip>
-        <span className="mx-0.5 h-3.5 w-px shrink-0 bg-hairline" />
+      <div className={`${cluster} min-w-0`}>
+        <IconButton className={iconBtn()} label={collapsed ? 'expand sidebar' : 'collapse sidebar'} onClick={onToggleSidebar}>
+          <PanelLeft className="h-3 w-3" />
+        </IconButton>
+        <IconButton className={iconBtn(graphActive)} label={navLabel(labels, 'graph')} onClick={onOpenGraph}>
+          <Globe className="h-3 w-3" />
+        </IconButton>
+        <span className="mx-0.5 h-3.5 w-px shrink-0 bg-border" />
         {NAV.map((n) => (
-          <Tooltip key={n.key} label={navLabel(labels, n.key)}>
-            <button className={iconBtn(view === n.view && !(n.view === 'home' && graphActive))} onClick={() => setView(n.view)}>
-              {n.icon}
-            </button>
-          </Tooltip>
+          <IconButton
+            key={n.key}
+            className={iconBtn(view === n.view && !(n.view === 'home' && graphActive))}
+            label={navLabel(labels, n.key)}
+            onClick={() => setView(n.view)}
+          >
+            {n.icon}
+          </IconButton>
         ))}
-        <span className="mx-0.5 h-3.5 w-px shrink-0 bg-hairline" />
-        <Tooltip label="New agent">
-          <button className={iconBtn()} onClick={onNewAgent}>
-            <Plus className="h-3 w-3" />
-          </button>
-        </Tooltip>
+        <span className="mx-0.5 h-3.5 w-px shrink-0 bg-border" />
+        <IconButton className={iconBtn()} label="new agent" onClick={onNewAgent}>
+          <Plus className="h-3 w-3" />
+        </IconButton>
       </div>
 
       {/* Right: vitals + window controls — kept as separate floating clusters */}
       <div className="flex shrink-0 items-center gap-1.5">
-        <div className="glass flex items-center gap-1 rounded-lg py-0.5 pr-1 pl-1">
+        <div className="flex items-center rounded-lg border border-border bg-surface">
           <Vitals agents={agents} runs={runs} />
         </div>
 
-        <div className="glass flex items-center gap-0.5 rounded-lg p-1">
-          <button className={winBtn} onClick={minimize} title="Minimize"><Minus className="h-3 w-3" strokeWidth={2.5} /></button>
-          <button className={winBtn} onClick={toggleMax} title={maximized ? 'Restore' : 'Maximize'}>{maximized ? <Minimize2 className="h-3 w-3" /> : <Maximize className="h-3 w-3" />}</button>
-          <button className={`${winBtn} hover:bg-[#e11d48] hover:text-white`} onClick={close} title="Close"><X className="h-3 w-3" /></button>
+        <div className={cluster}>
+          <IconButton className={winBtn} label="minimize" onClick={minimize}><Minus className="h-3 w-3" strokeWidth={2.5} /></IconButton>
+          <IconButton className={winBtn} label={maximized ? 'restore' : 'maximize'} onClick={toggleMax}>
+            {maximized ? <Minimize2 className="h-3 w-3" /> : <Maximize className="h-3 w-3" />}
+          </IconButton>
+          <IconButton className={`${winBtn} hover:bg-danger hover:text-white`} label="close" onClick={close}><X className="h-3 w-3" /></IconButton>
         </div>
       </div>
     </div>

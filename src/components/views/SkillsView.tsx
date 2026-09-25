@@ -1,43 +1,39 @@
 import { useState } from 'react';
-import { Check, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { Check, Sparkles, Trash2 } from 'lucide-react';
 import type { Skill } from '../../types';
-import { Drawer } from '../ui/Drawer';
+import { Modal } from '../ui/Modal';
+import { Button, IconButton } from '../ui/Button';
+import { Card } from '../ui/Card';
+import { FIELD_LABEL_CLS, INPUT_CLS, PROSE_CLS } from '../ui/Input';
 
-export function SkillsView({ skills, onAdd, onEdit, onDelete, embedded = false }: {
-  skills: Skill[]; onAdd: () => void; onEdit: (s: Skill) => void; onDelete: (id: string) => Promise<void>; embedded?: boolean;
+export function SkillsView({ skills, onAdd, onEdit, onDelete }: {
+  skills: Skill[]; onAdd: () => void; onEdit: (s: Skill) => void; onDelete: (id: string) => Promise<void>;
 }) {
   const wordCount = (s: Skill) => (s.content.trim() ? `${s.content.trim().split(/\s+/).length} words` : 'empty');
 
   return (
     <>
-      <header className="mb-6 flex items-end justify-between gap-4">
-        {!embedded && (
-          <div className="min-w-0">
-            <span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span>
-            <h1 className="m-0 text-[24px]">Skills</h1>
-            <p className="mt-1 text-[12px] leading-[1.6] text-muted">Reusable instruction packs. Attach them to an agent and they are injected into its prompt on every run and chat turn.</p>
-          </div>
-        )}
-        <button className="primary ml-auto shrink-0" onClick={onAdd}><Check size={13} />Add skill</button>
-      </header>
+      <div className="mb-4 flex justify-end">
+        <Button variant="primary" icon={<Check size={13} />} onClick={onAdd}>add skill</Button>
+      </div>
 
-      <div className="grid max-w-[900px] gap-3">
+      <div className="grid gap-2">
         {skills.map((s) => (
-          <div key={s.id} className="flex items-center gap-[15px] rounded-[16px] border border-line bg-panel p-[22px]">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-panel2 text-muted"><Sparkles size={18} /></span>
+          <Card key={s.id} className="flex items-center gap-4 hover:bg-surface">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-background text-muted"><Sparkles size={16} /></span>
             <div className="min-w-0 flex-1">
-              <b className="text-[13px]">{s.name}</b>
-              <span className="block truncate text-[11px] text-muted">{s.description || 'No description'}</span>
-              <span className="mt-1 block font-mono text-[11px] text-muted">{wordCount(s)}</span>
+              <b className="block truncate font-mono text-[11px] text-foreground">{s.name}</b>
+              <span className="block truncate font-mono text-[10px] text-muted">{s.description || 'no description'}</span>
+              <span className="mt-0.5 block font-mono text-[10px] text-muted">{wordCount(s)}</span>
             </div>
-            <div className="flex shrink-0 gap-1.5">
-              <button className="secondary" onClick={() => onEdit(s)}>Edit</button>
-              <button className="secondary" title="Delete skill" onClick={() => onDelete(s.id)}><Trash2 size={12} /></button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Button onClick={() => onEdit(s)}>edit</Button>
+              <IconButton label="delete skill" onClick={() => onDelete(s.id)}><Trash2 size={12} /></IconButton>
             </div>
-          </div>
+          </Card>
         ))}
         {skills.length === 0 && (
-          <p className="mt-[22px] text-[12px] text-muted">No skills yet. Add one, then attach it to an agent in the agent's Config tab.</p>
+          <p className="m-0 font-mono text-[11px] text-muted">no skills yet — add one, then attach it to an agent in the agent's config tab</p>
         )}
       </div>
     </>
@@ -64,38 +60,33 @@ export function SkillFormDrawer({ editing, isNew, onClose, onSave }: {
     }
   };
 
-  const inputCls = 'w-full rounded-[10px] border border-line bg-panel2 px-3 py-2.5 text-text';
-  const labelCls = 'mt-4 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase';
-
   return (
-    <Drawer
-      title={isNew ? 'Add skill' : `Edit ${form.name}`}
+    <Modal
+      title={isNew ? 'add skill' : `edit ${form.name}`}
       onClose={onClose}
-      initialWidth={Math.round(window.innerWidth / 2)}
-      resizable
-      headerAction={<button className="primary" disabled={saving} onClick={save}><Check size={13} />{saving ? 'Saving…' : 'Save'}</button>}
+      headerAction={<Button variant="primary" disabled={saving} onClick={save}>{saving ? 'saving…' : 'save'}</Button>}
     >
-      <div className="flex h-[calc(100vh-170px)] min-h-[420px] flex-col rounded-[16px] border border-line bg-panel p-[22px]">
-        <p className="m-0 mb-3.5 text-[12px] leading-[1.6] text-muted">
+      <div className="flex min-h-full flex-col">
+        <p className="mt-0 mb-3.5 font-mono text-[10px] leading-relaxed text-muted">
           A skill is instructions the model follows. Every agent you attach it to gets this text in its system prompt.
         </p>
 
-        <label className={labelCls}>NAME</label>
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Cold email writer" className={inputCls} />
+        <label className={FIELD_LABEL_CLS}>name</label>
+        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Cold email writer" className={INPUT_CLS} />
 
-        <label className={labelCls}>WHEN TO USE</label>
-        <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="One line describing when this applies" className={inputCls} />
+        <label className={`${FIELD_LABEL_CLS} mt-4`}>when to use</label>
+        <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="One line describing when this applies" className={INPUT_CLS} />
 
-        <label className={labelCls}>INSTRUCTIONS</label>
+        <label className={`${FIELD_LABEL_CLS} mt-4`}>instructions</label>
         <textarea
           value={form.content}
           onChange={(e) => setForm({ ...form, content: e.target.value })}
           placeholder="Write the instructions the agent should follow…"
-          className={`${inputCls} min-h-0 flex-1 resize-none leading-[1.6]`}
+          className={`${PROSE_CLS} min-h-[240px] flex-1`}
         />
 
-        {error && <p className="m-0 mt-2 text-[11px] text-[#f87171]">{error}</p>}
+        {error && <p className="mt-2 mb-0 font-mono text-[10px] text-danger">{error}</p>}
       </div>
-    </Drawer>
+    </Modal>
   );
 }

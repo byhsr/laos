@@ -1,6 +1,8 @@
 import { Lottie } from 'lottie-react';
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronRight } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Check, ChevronDown } from 'lucide-react';
+import { useAnchoredPosition, useDismiss } from './popover';
 import aiOrb from '../../assets/agents/ai-orb-persona.json';
 import astronaut from '../../assets/agents/astronaut-persona.json';
 import cowboyRobot from '../../assets/agents/cowboy-robot-persona.json';
@@ -60,8 +62,8 @@ export function AgentAvatar({ agent, size = 32, animate = true, playing, fluid =
 }) {
   const [hovered, setHovered] = useState(false);
   const boxClass = fluid
-    ? 'grid aspect-square w-full place-items-center overflow-hidden rounded-[14px] bg-panel2'
-    : 'grid shrink-0 place-items-center overflow-hidden rounded-lg bg-panel2';
+    ? 'grid aspect-square w-full place-items-center overflow-hidden rounded-lg bg-background'
+    : 'grid shrink-0 place-items-center overflow-hidden rounded-lg bg-background';
   const boxStyle = fluid ? undefined : { width: size, height: size };
 
   // A custom uploaded avatar wins over the persona animation.
@@ -89,11 +91,11 @@ export function AgentAvatar({ agent, size = 32, animate = true, playing, fluid =
     );
   }
 
-  // Fallback: colored initial tile.
+  // Fallback: neutral initial tile.
   return (
     <span
-      className={`grid place-items-center bg-panel2 font-bold ${fluid ? 'aspect-square w-full rounded-[14px] text-[28px]' : 'shrink-0 rounded-lg text-[13px]'}`}
-      style={fluid ? { color: agent.color } : { width: size, height: size, color: agent.color }}
+      className={`grid place-items-center rounded-lg bg-background text-muted ${fluid ? 'aspect-square w-full text-[28px]' : 'shrink-0 text-[13px]'}`}
+      style={fluid ? undefined : { width: size, height: size }}
     >
       {agent.name.charAt(0).toUpperCase()}
     </span>
@@ -101,35 +103,47 @@ export function AgentAvatar({ agent, size = 32, animate = true, playing, fluid =
 }
 
 // A dropdown that shows every persona as a live animated preview, so you can
-// see the wiggles before picking one.
+// see the wiggles before picking one. Same trigger shell and same portalled
+// popover panel as Select — one grammar per pattern.
 export function PersonaPicker({ value, onChange }: {
   value: string;
   onChange: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState<string | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
+  const anchor = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const pos = useAnchoredPosition(open, anchor, { minWidth: 330 });
+  useDismiss(open, () => setOpen(false), anchor, panel);
   const selected = PERSONAS.find((p) => p.id === value) ?? PERSONAS[0];
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+  useEffect(() => { if (!open) setHovered(null); }, [open]);
 
   return (
-    <div className="relative" ref={ref}>
-      <button type="button" className="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-line bg-panel2 px-3 py-2.5 text-left text-[13px] text-text hover:border-mid" onClick={() => setOpen((o) => !o)}>
-        <span className="flex items-center gap-3">
-          <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-md bg-panel"><Lottie src={selected.data} loop autoplay style={{ width: 28, height: 28 }} /></span>
-          {selected.label}
+    <div className="relative" ref={anchor}>
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="focus-ring flex h-[38px] w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-border bg-surface px-2.5 text-left font-mono text-[11px] text-foreground transition-colors hover:bg-background"
+      >
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="grid h-6 w-6 shrink-0 place-items-center overflow-hidden rounded bg-background">
+            <Lottie src={selected.data} loop autoplay style={{ width: 24, height: 24 }} />
+          </span>
+          <span className="min-w-0 truncate">{selected.label}</span>
         </span>
-        <ChevronRight size={13} className="rotate-90 text-muted transition-transform duration-150 group-aria-expanded:-rotate-90" />
+        <ChevronDown size={13} className={`shrink-0 text-muted transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {open && (
-        <div className="absolute top-[calc(100%+6px)] left-0 right-0 z-30 grid max-h-[420px] min-w-[320px] grid-cols-3 gap-1 overflow-y-auto rounded-lg border border-line bg-panel2 p-2 shadow-[0_14px_34px_#000a]">
+      {open && pos && createPortal(
+        <div
+          ref={panel}
+          role="listbox"
+          className="popover-shell grid w-[330px] max-h-[420px] grid-cols-3 gap-1 overflow-x-hidden overflow-y-auto p-2"
+          style={{ top: pos.top, bottom: pos.bottom, left: pos.left }}
+        >
           {PERSONAS.map((p) => {
             const active = p.id === value;
             // Every tile always shows the persona (first frame); hover plays the wiggle.
@@ -137,19 +151,27 @@ export function PersonaPicker({ value, onChange }: {
               <button
                 key={p.id}
                 type="button"
-                className={`flex cursor-pointer flex-col items-center gap-1 rounded-[10px] border p-2 text-center transition-colors ${active ? 'border-mid bg-line' : 'border-transparent hover:bg-line'}`}
+                role="option"
+                aria-selected={active}
+                className={`flex cursor-pointer flex-col items-center gap-1 rounded-lg border p-1.5 text-center transition-colors ${
+                  active ? 'border-foreground/40 bg-background' : 'border-transparent hover:bg-background'
+                }`}
                 onClick={() => { onChange(p.id); setOpen(false); }}
                 onMouseEnter={() => setHovered(p.id)}
                 onMouseLeave={() => setHovered((h) => (h === p.id ? null : h))}
               >
-                <span className="grid h-12 w-12 place-items-center overflow-hidden rounded-lg bg-panel">
+                <span className="grid h-12 w-12 place-items-center overflow-hidden rounded bg-surface">
                   <Lottie src={p.data} loop autoplay={hovered === p.id || active} style={{ width: 48, height: 48 }} />
                 </span>
-                <span className="flex items-center gap-1 text-[11px] text-text">{p.label}{active && <Check size={11} className="text-[var(--green)]" />}</span>
+                <span className="flex items-center gap-1 font-mono text-[10px] text-muted">
+                  <span className="min-w-0 truncate">{p.label}</span>
+                  {active && <Check size={10} className="shrink-0 text-foreground" />}
+                </span>
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

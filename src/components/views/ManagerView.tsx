@@ -1,29 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
-import { CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RotateCcw, Send, Settings, Trash2 } from 'lucide-react';
+import { CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RotateCcw, Settings, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from '../ui/ContextMenu';
 import type { Agent, Integration, ModelConfig, Task } from '../../types';
 import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
 import { useTasksStore } from '../../hooks/useTasks';
 import { useAgentsStore } from '../../hooks/useAgents';
 import { useShallow } from 'zustand/react/shallow';
-import { StreamIndicator } from '../ui/StreamIndicator';
-import { Markdown } from '../ui/Markdown';
-import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { Drawer } from '../ui/Drawer';
-import { Dropdown } from '../ui/Dropdown';
+import { Modal } from '../ui/Modal';
+import { Button } from '../ui/Button';
+import { Select } from '../ui/Select';
 import { AgentAvatar, PersonaPicker } from '../ui/AgentAvatar';
 import { Checkbox } from '../ui/Checkbox';
-import { ReasoningPicker } from '../ui/ReasoningPicker';
+import { StatusTag } from '../ui/Status';
+import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, PROSE_CLS } from '../ui/Input';
+import { ChatComposer } from '../chat/ChatComposer';
+import { MessageBubble } from '../chat/MessageBubble';
 import { toast } from '../../hooks/useToast';
 import { deleteChatSession, getChatSession, listChatSessions } from '../../runtime';
 
-const STATUS_COLOR: Record<string, string> = {
-  pending: 'text-[#facc15]',
-  running: 'text-[#38bdf8]',
-  completed: 'text-[#22c55e]',
-  failed: 'text-[#f87171]',
-  cancelled: 'text-muted',
-};
+const fieldLabel = `${FIELD_LABEL_CLS} mt-4`;
 
 export function ManagerView({ agents, integrations, models, openConfigRequest = 0 }: { agents: Agent[]; integrations: Integration[]; models: ModelConfig[]; openConfigRequest?: number }) {
   const managerId = agents.find((a) => a.isManager)?.id ?? 'manager';
@@ -43,9 +38,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
   const newSession = useManagerStore((s) => s.newSession);
   const tasks = useTasksStore((s) => s.tasks);
   const loadTasks = useTasksStore((s) => s.loadTasks);
-  const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [mgrDraft, setMgrDraft] = useState<Agent | null>(null);
   const avatarRef = useRef<HTMLInputElement>(null);
@@ -55,10 +48,10 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) { toast('Image must be under 2 MB', 'error'); return; }
+    if (file.size > 2 * 1024 * 1024) { toast('image must be under 2 MB', 'error'); return; }
     const reader = new FileReader();
     reader.onload = () => setMgrDraft((d) => (d ? { ...d, avatar: String(reader.result ?? '') } : d));
-    reader.onerror = () => toast('Could not read that image', 'error');
+    reader.onerror = () => toast('could not read that image', 'error');
     reader.readAsDataURL(file);
   };
   const [sessions, setSessions] = useState<{ id: string; title: string; createdAt: string; updatedAt: string }[]>([]);
@@ -66,6 +59,11 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
   const [viewMsgs, setViewMsgs] = useState<ChatEntry[]>([]);
   const sessionId = useManagerStore((s) => s.sessionIds[managerId] ?? null);
   const persistAgent = useAgentsStore((s) => s.persistAgent);
+
+  const managerAgent = agents.find((a) => a.isManager) ?? {
+    id: 'manager', name: 'Manager', objective: '', model: models.find((m) => m.enabled)?.id ?? '', toolIds: [],
+    integrations: [], skillIds: [], memory: true, permissions: ['network'], homePath: 'agents/manager', color: '', x: 0, y: 0, isManager: true,
+  };
 
   const openConfig = () => {
     const m = agents.find((a) => a.isManager) ?? managerAgent;
@@ -86,16 +84,11 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
     listChatSessions(managerId).then(setSessions).catch(() => {});
   }, [managerId, loadHistory]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages]);
-  // "Settings" from the sidebar's context menu reopens the config drawer.
+  // "Settings" from the sidebar's context menu reopens the config panel.
   useEffect(() => {
     if (openConfigRequest > 0) openConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openConfigRequest]);
-
-  const managerAgent = agents.find((a) => a.isManager) ?? {
-    id: 'manager', name: 'Manager', objective: '', model: models.find((m) => m.enabled)?.id ?? '', toolIds: [],
-    integrations: [], skillIds: [], memory: true, permissions: ['network'], homePath: 'agents/manager', color: '#22c55e', x: 0, y: 0, isManager: true,
-  };
 
   // Deterministic command handler — these never reach the LLM.
   const runCommand = (cmd: string, text: string): string | null => {
@@ -131,18 +124,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
     });
   };
 
-  // Auto-grow the input up to a max height as the user types.
-  const onInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    e.target.style.height = 'auto';
-    e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
-  };
-
-  const submit = async () => {
-    if (!input.trim() || busy) return;
-    const text = input.trim();
-    setInput('');
-    if (inputRef.current) inputRef.current.style.height = 'auto';
+  const submit = async (text: string) => {
     // Deterministic slash commands — resolved locally, no LLM involved.
     const cmd = text.toLowerCase().split(/\s+/)[0];
     const reply = runCommand(cmd, text);
@@ -158,14 +140,14 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
   const [tab, setTab] = useState<'chat' | 'info'>('chat');
 
   const menuItems: MenuItem[] = [
-    { key: 'chat', label: 'Chat', icon: <MessageSquare size={13} />, active: tab === 'chat', onSelect: () => setTab('chat') },
-    { key: 'info', label: 'Info', icon: <Info size={13} />, active: tab === 'info', onSelect: () => setTab('info') },
-    { key: 'new', label: 'New chat', icon: <MessageSquarePlus size={13} />, dividerBefore: true, onSelect: () => {
+    { key: 'chat', label: 'chat', icon: <MessageSquare size={13} />, active: tab === 'chat', onSelect: () => setTab('chat') },
+    { key: 'info', label: 'info', icon: <Info size={13} />, active: tab === 'info', onSelect: () => setTab('info') },
+    { key: 'new', label: 'new chat', icon: <MessageSquarePlus size={13} />, dividerBefore: true, onSelect: () => {
       const m = agents.find((a) => a.id === managerId)?.model ?? models.find((x) => x.enabled)?.id ?? '';
       void newSession(managerId, m);
     } },
-    { key: 'config', label: 'Config', icon: <Settings size={13} />, onSelect: openConfig },
-    { key: 'reset', label: 'Reset memory', icon: <RotateCcw size={13} />, onSelect: () => { void reset(managerId); } },
+    { key: 'config', label: 'config', icon: <Settings size={13} />, onSelect: openConfig },
+    { key: 'reset', label: 'reset memory', icon: <RotateCcw size={13} />, onSelect: () => { void reset(managerId); } },
   ];
 
   return (
@@ -176,212 +158,182 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
 
       {tab === 'chat' && (
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div ref={scrollRef} className="chat-log flex-1 scrollbar-thin scrollbar-color-mid overflow-y-auto px-4 pt-4 pb-24">
-              {messages.map((m, i) => (
-                <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} last:mb-0`}>
-                  <div className={`max-w-[78%] rounded-[16px] px-3.5 py-2.5 text-[13px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[8px] bg-line text-text' : 'rounded-tl-[8px] border border-line bg-panel2'}`}>
-                    {m.role === 'user' ? m.content : <Markdown>{m.content}</Markdown>}
-                    {busy && i === messages.length - 1 && m.role === 'assistant' && (
-                      m.content ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-muted align-middle" /> : <StreamIndicator streaming status={status} />
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+          <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-24">
+            {messages.map((m, i) => (
+              <MessageBubble
+                key={i}
+                role={m.role}
+                content={m.content}
+                status={status}
+                streaming={busy && i === messages.length - 1 && m.role === 'assistant'}
+              />
+            ))}
           </div>
-
-          {/* Input overlays the chat, floating at the bottom */}
-          <div className="absolute right-0 bottom-0 left-0 flex items-end gap-3 bg-gradient-to-t from-[var(--color-bg)] via-[var(--color-bg)]/85 to-transparent p-3 pt-6">
-            <div className="absolute right-3 bottom-[calc(100%+8px)] left-3 z-[30]">
-              <ConfirmDialog />
-            </div>
-            <ReasoningPicker modelId={managerAgent.model} />
-            <textarea
-              ref={inputRef}
-              rows={1}
-              value={input}
-              onChange={onInputChange}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
-              placeholder={`Message ${leadName}…  (/agents, /tasks, /switch, /help)`}
-              style={{ flex: 1, background: 'var(--panel2)', border: '1px solid var(--color-hairline)', borderRadius: 16, padding: '12px 16px', color: 'var(--text)', resize: 'none', minHeight: 44, maxHeight: 160, boxShadow: 'var(--shadow-soft)', outline: 'none' }}
-            />
-            <button className="primary" onClick={submit} disabled={busy || !input.trim()} title="Send"><Send size={14} /></button>
-          </div>
+          <ChatComposer
+            busy={busy}
+            modelId={managerAgent.model}
+            placeholder={`message ${leadName}…  (/agents, /tasks, /switch, /help)`}
+            onSend={submit}
+          />
         </div>
       )}
 
       {tab === 'info' && (
-        <div className="grid max-h-[calc(100vh-220px)] grid-cols-1 gap-4 overflow-y-auto md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-3 overflow-x-hidden overflow-y-auto md:grid-cols-2 xl:grid-cols-3">
           {/* Agents */}
-          <div className="rounded-[16px] border border-line bg-panel p-3.5">
-            <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">AGENTS</span>
-            <div className="grid gap-1">
+          <div className="rounded-xl border border-border bg-surface p-3.5">
+            <span className={GROUP_LABEL_CLS}>agents</span>
+            <div className="mt-2 grid gap-0.5">
               {agents.filter((a) => !a.isManager).map((a) => (
                 <button
                   key={a.id}
-                  className={`cursor-pointer rounded-[10px] border-0 px-2.5 py-2 text-left text-[12px] ${currentAgentId === a.id ? 'bg-panel2 text-text' : 'text-muted hover:bg-line'}`}
+                  className={`focus-ring cursor-pointer rounded-lg border-0 px-2.5 py-1.5 text-left font-mono text-[11px] transition-colors ${currentAgentId === a.id ? 'bg-background text-foreground' : 'text-muted hover:bg-background hover:text-foreground'}`}
                   onClick={() => setCurrentAgent(a.id)}
                 >
-                  <span className="mr-1.5 inline-block h-2 w-2 rounded-full" style={{ background: a.color }} />
                   {a.name}
-                  <span className="block font-mono text-[10px] text-muted">{a.integrations.join(', ') || 'no integrations'}</span>
+                  <span className="block truncate font-mono text-[10px] text-muted">{a.integrations.join(', ') || 'no integrations'}</span>
                 </button>
               ))}
-              {agents.filter((a) => !a.isManager).length === 0 && <p className="px-2 text-[11px] text-muted">No agents yet.</p>}
+              {agents.filter((a) => !a.isManager).length === 0 && <p className="m-0 px-2 font-mono text-[10px] text-muted">no agents yet</p>}
             </div>
           </div>
 
           {/* Integrations */}
-          <div className="rounded-[16px] border border-line bg-panel p-3.5">
-            <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">INTEGRATIONS</span>
-            <div className="grid gap-1">
+          <div className="rounded-xl border border-border bg-surface p-3.5">
+            <span className={GROUP_LABEL_CLS}>integrations</span>
+            <div className="mt-2 grid gap-0.5">
               {integrations.map((i) => (
-                <div key={i.id} className="flex items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-[11px]">
-                  <i className={`inline-block h-1.5 w-1.5 rounded-full ${i.connected ? 'bg-[var(--green)]' : 'bg-[#f79009]'}`} />
-                  <span className="text-muted">{i.name}</span>
+                <div key={i.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 font-mono text-[11px]">
+                  <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${i.connected ? 'bg-foreground' : 'bg-muted'}`} />
+                  <span className="min-w-0 truncate text-muted">{i.name}</span>
                 </div>
               ))}
             </div>
           </div>
 
           {/* Active tasks */}
-          <div className="rounded-[16px] border border-line bg-panel p-3.5">
-            <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">ACTIVE TASKS</span>
-            <div className="grid gap-1.5">
-              {activeTasks.length === 0 && <p className="px-2 text-[11px] text-muted">No active tasks.</p>}
+          <div className="rounded-xl border border-border bg-surface p-3.5">
+            <span className={GROUP_LABEL_CLS}>active tasks</span>
+            <div className="mt-2 grid gap-1.5">
+              {activeTasks.length === 0 && <p className="m-0 px-2 font-mono text-[10px] text-muted">no active tasks</p>}
               {activeTasks.map((t: Task) => (
-                <div key={t.id} className="rounded-[10px] border border-line bg-panel2 p-2">
-                  <div className="flex items-center justify-between">
-                    <b className="text-[11px]">{agents.find((a) => a.id === t.assignedAgent)?.name ?? t.assignedAgent}</b>
-                    <span className={`font-mono text-[10px] ${STATUS_COLOR[t.status]}`}>{t.status}</span>
+                <div key={t.id} className="rounded-lg border border-border bg-background p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <b className="min-w-0 truncate font-mono text-[11px] text-foreground">{agents.find((a) => a.id === t.assignedAgent)?.name ?? t.assignedAgent}</b>
+                    <StatusTag status={t.status} />
                   </div>
-                  <p className="mt-1 line-clamp-2 text-[10.5px] leading-1.5 text-muted">{t.input}</p>
+                  <p className="mt-1 mb-0 line-clamp-2 font-mono text-[10px] leading-relaxed text-muted">{t.input}</p>
                 </div>
               ))}
             </div>
           </div>
 
           {/* Chats */}
-          <div className="rounded-[16px] border border-line bg-panel p-3.5">
-            <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">CHATS</span>
-            <div className="grid gap-1.5">
-              {sessions.length === 0 && <p className="px-2 text-[11px] text-muted">No chats yet.</p>}
+          <div className="rounded-xl border border-border bg-surface p-3.5">
+            <span className={GROUP_LABEL_CLS}>chats</span>
+            <div className="mt-2 grid gap-1.5">
+              {sessions.length === 0 && <p className="m-0 px-2 font-mono text-[10px] text-muted">no chats yet</p>}
               {sessions.map((s) => (
-                <div key={s.id} className={`flex items-center gap-1 rounded-[10px] border px-2 py-1.5 ${s.id === sessionId ? 'border-[var(--green)] bg-panel2' : 'border-line bg-panel2/50'}`}>
-                  <button className="flex-1 cursor-pointer overflow-hidden text-left" onClick={async () => {
+                <div key={s.id} className={`flex items-center gap-1 rounded-lg border px-2 py-1.5 ${s.id === sessionId ? 'border-foreground/40 bg-background' : 'border-border bg-background'}`}>
+                  <button className="min-w-0 flex-1 cursor-pointer overflow-hidden border-0 bg-transparent p-0 text-left" onClick={async () => {
                     setViewingSession(s.id);
                     const msgs = await getChatSession(s.id);
                     setViewMsgs(msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: '' })));
                   }}>
-                    <span className="block truncate text-[11px] text-text">{s.id === sessionId ? '● Current chat' : s.title}</span>
+                    <span className={`block truncate font-mono text-[11px] ${s.id === sessionId ? 'text-foreground' : 'text-muted'}`}>{s.id === sessionId ? 'current chat' : s.title}</span>
                     <span className="block font-mono text-[10px] text-muted">{s.updatedAt ? (() => { const d = new Date(s.updatedAt); return isNaN(d.getTime()) ? '' : d.toLocaleString(); })() : ''}</span>
                   </button>
-                  <button className="cursor-pointer border-0 bg-transparent p-1 text-muted hover:text-[#f87171]" onClick={async () => { await deleteChatSession(s.id); listChatSessions(agents.find((a) => a.isManager)?.id ?? 'manager').then(setSessions); }}><Trash2 size={11} /></button>
+                  <button className="cursor-pointer border-0 bg-transparent p-1 text-muted transition-colors hover:text-danger" onClick={async () => { await deleteChatSession(s.id); listChatSessions(agents.find((a) => a.isManager)?.id ?? 'manager').then(setSessions); }}><Trash2 size={11} /></button>
                 </div>
               ))}
             </div>
           </div>
 
           {/* Commands */}
-          <div className="rounded-[16px] border border-line bg-panel p-3.5">
-            <span className="mb-2 block font-mono text-[11px] tracking-[1px] text-muted">COMMANDS</span>
-            <div className="grid gap-1 text-[11px] text-muted">
-              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[11px]">/switch &lt;agent&gt;</span>
-              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[11px]">/agents</span>
-              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[11px]">/tasks</span>
-              <span className="rounded bg-panel2 px-2 py-1.5 font-mono text-[11px]">/help</span>
-              <CornerDownLeft size={12} className="mt-1 opacity-50" />
+          <div className="rounded-xl border border-border bg-surface p-3.5">
+            <span className={GROUP_LABEL_CLS}>commands</span>
+            <div className="mt-2 grid gap-1">
+              <span className="rounded bg-background px-2 py-1.5 font-mono text-[11px] text-muted">/switch &lt;agent&gt;</span>
+              <span className="rounded bg-background px-2 py-1.5 font-mono text-[11px] text-muted">/agents</span>
+              <span className="rounded bg-background px-2 py-1.5 font-mono text-[11px] text-muted">/tasks</span>
+              <span className="rounded bg-background px-2 py-1.5 font-mono text-[11px] text-muted">/help</span>
+              <CornerDownLeft size={12} className="mt-1 text-muted opacity-50" />
             </div>
           </div>
         </div>
       )}
 
       {configOpen && mgrDraft && (
-        <Drawer
+        <Modal
           title={`${leadName} config`}
           onClose={() => setConfigOpen(false)}
-          initialWidth={Math.round(window.innerWidth / 2)}
-          resizable
-          headerAction={<button className="primary" onClick={saveConfig}>Save</button>}
+          headerAction={<Button variant="primary" onClick={saveConfig}>save</Button>}
         >
-          <div className="w-full rounded-[16px] border border-line bg-panel p-[22px]">
-            <label className="block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">NAME</label>
-            <input
-              value={mgrDraft.name}
-              onChange={(e) => setMgrDraft({ ...mgrDraft, name: e.target.value })}
-              placeholder="Name your lead agent"
-              className="w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] text-text outline-none focus:border-mid"
-            />
+          <label className={FIELD_LABEL_CLS}>name</label>
+          <input
+            value={mgrDraft.name}
+            onChange={(e) => setMgrDraft({ ...mgrDraft, name: e.target.value })}
+            placeholder="Name your lead agent"
+            className={INPUT_CLS}
+          />
 
-            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">MODEL</label>
-            <Dropdown
-              value={mgrDraft.model}
-              options={models.map((m) => ({ value: m.id, label: m.label }))}
-              onChange={(v) => setMgrDraft({ ...mgrDraft, model: v })}
-            />
+          <label className={fieldLabel}>model</label>
+          <Select
+            value={mgrDraft.model}
+            options={models.map((m) => ({ value: m.id, label: m.label }))}
+            onChange={(v) => setMgrDraft({ ...mgrDraft, model: v })}
+          />
 
-            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">PERSONA</label>
-            <PersonaPicker value={mgrDraft.persona ?? 'ai-orb'} onChange={(v) => setMgrDraft({ ...mgrDraft, persona: v })} />
-            <div className="mt-2 flex items-center gap-2">
-              <AgentAvatar agent={{ ...mgrDraft, persona: mgrDraft.persona ?? 'ai-orb' }} size={28} />
-            </div>
-
-            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">AVATAR</label>
-            <div className="mt-1.5 flex items-center gap-2">
-              <input ref={avatarRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden" onChange={onPickAvatar} />
-              <button type="button" className="secondary" onClick={() => avatarRef.current?.click()}>Upload image</button>
-              {mgrDraft.avatar && (
-                <button type="button" className="secondary" onClick={() => setMgrDraft({ ...mgrDraft, avatar: '' })}>Remove</button>
-              )}
-            </div>
-            <p className="mt-1.5 text-[10.5px] leading-1.5 text-muted">PNG, JPEG, GIF or WebP up to 2 MB. Overrides the persona.</p>
-
-            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">OBJECTIVE / PROMPT</label>
-            <textarea
-              value={mgrDraft.objective}
-              onChange={(e) => setMgrDraft({ ...mgrDraft, objective: e.target.value })}
-              rows={5}
-              placeholder={`Describe ${leadName}'s role…`}
-              className="mt-1.5 w-full resize-y rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] leading-1.6 text-text outline-none focus:border-mid"
-            />
-
-            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">PERMISSIONS</label>
-            <div className="mt-1.5 -mx-2">
-              {(['network', 'files', 'host_fs'] as const).map((p) => (
-                <Checkbox
-                  key={p}
-                  checked={mgrDraft.permissions.includes(p)}
-                  onChange={(next) => setMgrDraft({ ...mgrDraft, permissions: next ? [...mgrDraft.permissions, p] : mgrDraft.permissions.filter((x) => x !== p) })}
-                  label={p}
-                />
-              ))}
-            </div>
-
-            <label className="mt-4 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">MEMORY</label>
-            <div className="mt-1.5 flex items-center gap-2">
-              <button className="secondary" onClick={() => { const id = mgrDraft.id; reset(id); toast(`${leadName} memory cleared`, 'success'); }}>Reset memory</button>
-            </div>
+          <label className={fieldLabel}>persona</label>
+          <PersonaPicker value={mgrDraft.persona ?? 'ai-orb'} onChange={(v) => setMgrDraft({ ...mgrDraft, persona: v })} />
+          <div className="mt-2 flex items-center gap-2">
+            <AgentAvatar agent={{ ...mgrDraft, persona: mgrDraft.persona ?? 'ai-orb' }} size={28} />
           </div>
-        </Drawer>
+
+          <label className={fieldLabel}>avatar</label>
+          <div className="mt-1.5 flex items-center gap-2">
+            <input ref={avatarRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden" onChange={onPickAvatar} />
+            <Button onClick={() => avatarRef.current?.click()}>upload image</Button>
+            {mgrDraft.avatar && (
+              <Button onClick={() => setMgrDraft({ ...mgrDraft, avatar: '' })}>remove</Button>
+            )}
+          </div>
+          <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">PNG, JPEG, GIF or WebP up to 2 MB. Overrides the persona.</p>
+
+          <label className={fieldLabel}>objective / prompt</label>
+          <textarea
+            value={mgrDraft.objective}
+            onChange={(e) => setMgrDraft({ ...mgrDraft, objective: e.target.value })}
+            rows={6}
+            placeholder={`Describe ${leadName}'s role…`}
+            className={PROSE_CLS}
+          />
+
+          <label className={fieldLabel}>permissions</label>
+          <div className="-mx-2 mt-1.5">
+            {(['network', 'files', 'host_fs'] as const).map((p) => (
+              <Checkbox
+                key={p}
+                checked={mgrDraft.permissions.includes(p)}
+                onChange={(next) => setMgrDraft({ ...mgrDraft, permissions: next ? [...mgrDraft.permissions, p] : mgrDraft.permissions.filter((x) => x !== p) })}
+                label={p}
+              />
+            ))}
+          </div>
+
+          <label className={fieldLabel}>memory</label>
+          <div className="mt-1.5 flex items-center gap-2">
+            <Button onClick={() => { const id = mgrDraft.id; reset(id); toast(`${leadName} memory cleared`, 'success'); }}>reset memory</Button>
+          </div>
+        </Modal>
       )}
 
       {viewingSession && (
-        <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60" onClick={() => setViewingSession(null)}>
-          <div className="flex max-h-[70vh] w-[520px] max-w-[92vw] flex-col rounded-[16px] border border-line bg-panel shadow-[0_20px_60px_#000a]" onClick={(e) => e.stopPropagation()}>
-            <div className="flex h-[48px] flex-none items-center justify-between border-b border-line px-4">
-              <b className="text-[13px]">Chat history</b>
-              <button className="secondary" onClick={() => setViewingSession(null)}>Close</button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4">
-              {viewMsgs.length === 0 ? <p className="text-center text-[12px] text-muted">No messages.</p> : viewMsgs.map((m, i) => (
-                <div key={i} className={`mb-2 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] rounded-[16px] px-3 py-2 text-[12.5px] leading-1.6 break-words ${m.role === 'user' ? 'whitespace-pre-wrap rounded-tr-[8px] bg-line text-text' : 'rounded-tl-[8px] border border-line bg-panel2'}`}>{m.role === 'user' ? m.content : <Markdown>{m.content}</Markdown>}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <Modal title="chat history" onClose={() => setViewingSession(null)} width="min(92vw, 560px)">
+          {viewMsgs.length === 0
+            ? <p className="m-0 text-center font-mono text-xs text-muted">no messages</p>
+            : viewMsgs.map((m, i) => <MessageBubble key={i} role={m.role} content={m.content} />)}
+        </Modal>
       )}
     </div>
   );

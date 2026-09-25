@@ -5,6 +5,7 @@ import { AgentAvatar } from '../ui/AgentAvatar';
 import { DeleteConfirm } from '../ui/DeleteConfirm';
 import { ContextMenuAt } from '../ui/ContextMenu';
 import { agentMenuItems } from '../ui/agentMenu';
+import { Button, IconButton } from '../ui/Button';
 
 export function AgentsView({ agents, onOpen, onCreate, onDelete, onSettings, onTogglePin }: {
   agents: Agent[]; onOpen: (id: string) => void; onCreate: () => void; onDelete: (id: string) => void;
@@ -20,42 +21,41 @@ export function AgentsView({ agents, onOpen, onCreate, onDelete, onSettings, onT
 
   return (
     <>
-      <header className="mb-6 flex items-end justify-between">
-        <div>
-          <span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span>
-          <h1 style={{ margin: 0, fontSize: 24 }}>Agents</h1>
-        </div>
-        <button className="primary" onClick={onCreate}><Plus size={14} />New agent</button>
-      </header>
+      {/* No view title — the header row carries only the action. */}
+      <div className="mb-4 flex justify-end">
+        <Button variant="primary" icon={<Plus size={13} />} onClick={onCreate}>new agent</Button>
+      </div>
 
       {visible.length === 0 ? (
-        <div className="flex min-h-[370px] flex-col items-center justify-center rounded-[16px] border border-dashed border-soft text-center text-muted">
-          <Bot size={28} className="mb-3 opacity-60" />
-          <h2 className="mt-[13px] mb-[7px] text-text">No agents yet</h2>
-          <p className="mb-5 max-w-[360px] text-[12px] leading-[1.6]">Create your first agent — give it a name, a model, and an objective, then start chatting.</p>
-          <button className="primary" onClick={onCreate}><Plus size={14} />New agent</button>
+        <div className="flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-dashed border-border text-center text-muted">
+          <Bot size={26} className="mb-3 opacity-60" />
+          <h2 className="m-0 font-mono text-xs lowercase text-foreground">no agents yet</h2>
+          <p className="mt-2 mb-4 max-w-[360px] text-[12px] leading-relaxed">Create your first agent — give it a name, a model, and an objective, then start chatting.</p>
+          <Button variant="primary" icon={<Plus size={13} />} onClick={onCreate}>new agent</Button>
         </div>
       ) : (
-        <div className="grid max-w-[1100px] grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3.5">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
           {visible.map((a) => (
             <div
               key={a.id}
-              className="group relative cursor-pointer rounded-[16px] border border-line bg-panel p-[1px] text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-dotted hover:border-mid hover:shadow-lift"
+              className="group relative cursor-pointer overflow-hidden rounded-xl border border-border bg-surface text-left transition-colors duration-150 hover:bg-background"
               onClick={() => onOpen(a.id)}
               onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, agent: a }); }}
               onMouseEnter={() => setHoveredId(a.id)}
               onMouseLeave={() => setHoveredId((h) => (h === a.id ? null : h))}
             >
-              <button
-                className="absolute top-2 right-2 z-[1] grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-black/35 text-white/85 opacity-0 backdrop-blur-sm transition-opacity duration-150 group-hover:opacity-100 hover:bg-[#e11d48] hover:text-white"
-                title="Delete agent"
-                onClick={(e) => { e.stopPropagation(); openConfirm(a); }}
-              >
-                <Trash2 size={13} />
-              </button>
+              <div className="absolute top-2 right-2 z-[1] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                <IconButton
+                  label="delete agent"
+                  className="h-7 w-7 bg-surface hover:bg-danger hover:text-white"
+                  onClick={(e) => { e.stopPropagation(); openConfirm(a); }}
+                >
+                  <Trash2 size={12} />
+                </IconButton>
+              </div>
               <AgentAvatar agent={a} playing={hoveredId === a.id} fluid />
               <div className="px-3.5 py-3">
-                <b className="block truncate text-[14px]">{a.name}</b>
+                <b className="block truncate font-mono text-[11px] text-foreground">{a.name}</b>
               </div>
             </div>
           ))}

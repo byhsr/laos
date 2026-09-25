@@ -1,36 +1,42 @@
 import { useState } from 'react';
 import { Check } from 'lucide-react';
 import type { ModelConfig, Reasoning } from '../../types';
-import { Drawer } from '../ui/Drawer';
-import { Dropdown } from '../ui/Dropdown';
+import { Modal } from '../ui/Modal';
+import { Button } from '../ui/Button';
+import { Select } from '../ui/Select';
 import { Checkbox } from '../ui/Checkbox';
+import { Card } from '../ui/Card';
+import { FIELD_LABEL_CLS, INPUT_CLS } from '../ui/Input';
 
-export function ModelsView({ models, onAdd, onEdit, onDelete, embedded = false }: {
-  models: ModelConfig[]; onAdd: () => void; onEdit: (m: ModelConfig) => void; onDelete: (id: string) => Promise<void>; embedded?: boolean;
+export function ModelsView({ models, onAdd, onEdit, onDelete }: {
+  models: ModelConfig[]; onAdd: () => void; onEdit: (m: ModelConfig) => void; onDelete: (id: string) => Promise<void>;
 }) {
   return (
     <>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
-        {!embedded && <div><span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Models</h1></div>}
-        <button className="primary ml-auto" onClick={onAdd}><Check size={13} />Add model</button>
-      </header>
-      <div className="model-config max-w-[760px] rounded-[16px] border border-line bg-panel p-[22px]">
+      <div className="mb-4 flex justify-end">
+        <Button variant="primary" icon={<Check size={13} />} onClick={onAdd}>add model</Button>
+      </div>
+
+      <div className="grid gap-2">
         {models.map((m) => (
-          <div key={m.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--line)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <b style={{ fontSize: 13 }}>{m.label}</b>
-                <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)' }}>{m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.apiKey ? ' · key set' : ''}{m.reasoning !== 'auto' ? ` · reasoning: ${m.reasoning}` : ''}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className="mr-[7px] text-[11px] text-muted"><i className={`mr-1.5 inline-block h-[7px] w-[7px] rounded-full ${m.enabled ? 'bg-[var(--green)]' : 'bg-[#f79009]'}`} />{m.enabled ? 'enabled' : 'disabled'}</span>
-                <button className="secondary" onClick={() => onEdit(m)}>Edit</button>
-                <button className="secondary" onClick={() => onDelete(m.id)}>Delete</button>
-              </div>
+          <Card key={m.id} className="flex items-center justify-between gap-4 hover:bg-surface">
+            <div className="min-w-0">
+              <b className="block truncate font-mono text-[11px] text-foreground">{m.label}</b>
+              <span className="block truncate font-mono text-[10px] text-muted">
+                {m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.apiKey ? ' · key set' : ''}{m.reasoning !== 'auto' ? ` · reasoning: ${m.reasoning}` : ''}
+              </span>
             </div>
-          </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="flex items-center gap-1.5 font-mono text-[10px] text-muted">
+                <i className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${m.enabled ? 'bg-foreground' : 'bg-muted'}`} />
+                {m.enabled ? 'enabled' : 'disabled'}
+              </span>
+              <Button onClick={() => onEdit(m)}>edit</Button>
+              <Button onClick={() => onDelete(m.id)}>delete</Button>
+            </div>
+          </Card>
         ))}
-        {models.length === 0 && <p className="mt-[22px] text-[12px] text-muted">No models configured. Add one to get started.</p>}
+        {models.length === 0 && <p className="m-0 font-mono text-[11px] text-muted">no models configured — add one to get started</p>}
       </div>
     </>
   );
@@ -56,71 +62,64 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
     }
   };
 
-  const inputCls = 'w-full rounded-[10px] border border-line bg-panel2 px-3 py-2.5 text-text';
-  const labelCls = 'mt-4 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase';
-
   return (
-    <Drawer
-      title={isNew ? 'Add model' : `Edit ${form.label}`}
+    <Modal
+      title={isNew ? 'add model' : `edit ${form.label}`}
       onClose={onClose}
-      initialWidth={Math.round(window.innerWidth / 2)}
-      resizable
-      headerAction={<button className="primary" disabled={saving} onClick={save}><Check size={13} />{saving ? 'Saving…' : 'Save'}</button>}
+      headerAction={<Button variant="primary" disabled={saving} onClick={save}>{saving ? 'saving…' : 'save'}</Button>}
     >
-      <div className="w-full rounded-[16px] border border-line bg-panel p-[22px]">
-        <p className="text-[12px] leading-[1.6] text-muted" style={{ margin: '0 0 14px' }}>API keys are stored locally in the app's SQLite database — they never leave your machine.</p>
+      <p className="mt-0 mb-3.5 font-mono text-[10px] leading-relaxed text-muted">API keys are stored locally in the app's SQLite database — they never leave your machine.</p>
 
-        <label className={labelCls}>PROVIDER</label>
-        <Dropdown
-          value={form.provider}
-          options={[{ value: 'ollama', label: 'Ollama (local)' }, { value: 'openrouter', label: 'OpenRouter' }, { value: 'groq', label: 'Groq' }]}
-          onChange={(v) => setForm({ ...form, provider: v as 'ollama' | 'openrouter' | 'groq' })}
-        />
+      <label className={FIELD_LABEL_CLS}>provider</label>
+      <Select
+        value={form.provider}
+        options={[{ value: 'ollama', label: 'Ollama (local)' }, { value: 'openrouter', label: 'OpenRouter' }, { value: 'groq', label: 'Groq' }]}
+        onChange={(v) => setForm({ ...form, provider: v as 'ollama' | 'openrouter' | 'groq' })}
+      />
 
-        <label className={labelCls}>LABEL</label>
-        <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="e.g. Qwen3 8B" className={inputCls} />
+      <label className={`${FIELD_LABEL_CLS} mt-4`}>label</label>
+      <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="e.g. Qwen3 8B" className={INPUT_CLS} />
 
-        <label className={labelCls}>MODEL ID</label>
-        <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={form.provider === 'ollama' ? 'qwen3:8b' : form.provider === 'groq' ? 'llama-3.3-70b-versatile' : 'anthropic/claude-3.5-haiku'} className={inputCls} />
+      <label className={`${FIELD_LABEL_CLS} mt-4`}>model id</label>
+      <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={form.provider === 'ollama' ? 'qwen3:8b' : form.provider === 'groq' ? 'llama-3.3-70b-versatile' : 'anthropic/claude-3.5-haiku'} className={INPUT_CLS} />
 
-        <label className={labelCls}>REASONING</label>
-        <Dropdown
-          value={form.reasoning}
-          options={[
-            { value: 'auto', label: 'Auto — leave it to the model' },
-            { value: 'off', label: 'Off — answer directly' },
-            { value: 'low', label: 'Low effort' },
-            { value: 'medium', label: 'Medium effort' },
-            { value: 'high', label: 'High effort' },
-          ]}
-          onChange={(v) => setForm({ ...form, reasoning: v as Reasoning })}
-        />
-        <p className="text-[12px] text-muted" style={{ margin: '6px 0 0' }}>
-          Thinking models can spend thousands of tokens before answering, and those count against the reply's own budget. Auto sends nothing,
-          which is the right choice for models that don't support reasoning.
-        </p>
+      <label className={`${FIELD_LABEL_CLS} mt-4`}>reasoning</label>
+      <Select
+        value={form.reasoning}
+        options={[
+          { value: 'auto', label: 'auto — leave it to the model' },
+          { value: 'off', label: 'off — answer directly' },
+          { value: 'low', label: 'low effort' },
+          { value: 'medium', label: 'medium effort' },
+          { value: 'high', label: 'high effort' },
+        ]}
+        onChange={(v) => setForm({ ...form, reasoning: v as Reasoning })}
+      />
+      <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+        Thinking models can spend thousands of tokens before answering, and those count against the reply's own budget. Auto sends nothing,
+        which is the right choice for models that don't support reasoning.
+      </p>
 
-        {form.provider === 'ollama' && (
-          <>
-            <label className={labelCls}>HOST</label>
-            <input value={form.host ?? ''} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder="http://localhost:11434" className={inputCls} />
-          </>
-        )}
+      {form.provider === 'ollama' && (
+        <>
+          <label className={`${FIELD_LABEL_CLS} mt-4`}>host</label>
+          <input value={form.host ?? ''} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder="http://localhost:11434" className={INPUT_CLS} />
+        </>
+      )}
 
-        {(form.provider === 'openrouter' || form.provider === 'groq') && (
-          <>
-            <label className={labelCls}>API KEY</label>
-            <input type="password" value={form.apiKey ?? ''} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder={form.provider === 'groq' ? 'gsk_…' : 'sk-or-v1-…'} className={inputCls} />
-            <p className="text-[12px] text-muted" style={{ margin: '6px 0 0' }}>Runs using this model will read the key automatically.</p>
-          </>
-        )}
+      {(form.provider === 'openrouter' || form.provider === 'groq') && (
+        <>
+          <label className={`${FIELD_LABEL_CLS} mt-4`}>api key</label>
+          <input type="password" value={form.apiKey ?? ''} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder={form.provider === 'groq' ? 'gsk_…' : 'sk-or-v1-…'} className={INPUT_CLS} />
+          <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">Runs using this model will read the key automatically.</p>
+        </>
+      )}
 
-        <div className="-mx-2 mt-3.5">
-          <Checkbox checked={form.enabled} onChange={(next) => setForm({ ...form, enabled: next })} label="Enabled" hint="available to agents" />
-        </div>
-
-        {error && <p style={{ fontSize: 11, color: '#f87171', margin: '10px 0 0' }}>{error}</p>}
+      <div className="-mx-2 mt-3.5">
+        <Checkbox checked={form.enabled} onChange={(next) => setForm({ ...form, enabled: next })} label="enabled" hint="available to agents" />
       </div>
-    </Drawer>
+
+      {error && <p className="mt-2.5 mb-0 font-mono text-[10px] text-danger">{error}</p>}
+    </Modal>
   );
 }

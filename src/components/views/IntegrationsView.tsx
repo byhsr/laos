@@ -1,13 +1,18 @@
 import { useState } from 'react';
-import { Check, Globe, Key, Plug, RefreshCw, Rocket, X } from 'lucide-react';
+import { Check, Globe, Key, Loader2, Plug, RefreshCw, Rocket, X } from 'lucide-react';
 import { SiAirtable, SiGoogle, SiNotion, SiTelegram } from 'react-icons/si';
 import type { Integration } from '../../types';
 import { useIntegrationsStore } from '../../hooks/useIntegrations';
 import { toast } from '../../hooks/useToast';
-import { Drawer } from '../ui/Drawer';
+import { Modal } from '../ui/Modal';
+import { Button, IconButton } from '../ui/Button';
+import { Card } from '../ui/Card';
+import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS } from '../ui/Input';
 import { McpServers } from './McpServers';
 import { telegramRegisterCustomUrl, telegramRegisterWebhook, telegramStartTunnel, telegramStopTunnel, telegramTunnelStatus } from '../../runtime';
 
+// Third-party marks are rendered as themselves, in the app's foreground — the
+// icons are currentColor, so no invented brand colours are layered on top.
 const LOGOS: Record<string, React.ReactNode> = {
   notion: <SiNotion size={18} />,
   airtable: <SiAirtable size={18} />,
@@ -18,7 +23,12 @@ const LOGOS: Record<string, React.ReactNode> = {
 
 const OAUTH_PROVIDERS = ['sheets', 'docs', 'notion'];
 
-export function IntegrationsView({ integrations, embedded = false }: { integrations: Integration[]; embedded?: boolean }) {
+// Backend progress lines arrive with a leading status glyph; the UI owns the
+// icon, so strip any glyph the backend embedded in the text.
+const cleanStep = (s: string) => s.replace(/^[✕✓▸·…\-]\s*/, '');
+const stepFailed = (s: string) => s.startsWith('✕');
+
+export function IntegrationsView({ integrations }: { integrations: Integration[] }) {
   const saveConfig = useIntegrationsStore((s) => s.saveConfig);
   const connect = useIntegrationsStore((s) => s.connect);
   const test = useIntegrationsStore((s) => s.test);
@@ -63,7 +73,7 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
     if (!hasClientId) {
       // No OAuth client configured yet — open the config panel so the user can set it.
       setDrawerId(id);
-      toast(`Set the OAuth client ID/secret for ${def?.name ?? id} first, then click Connect.`, 'info');
+      toast(`set the OAuth client ID/secret for ${def?.name ?? id} first, then click connect`, 'info');
       return;
     }
     try {
@@ -72,7 +82,7 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
       void url;
     } catch (e) {
       const msg = typeof e === 'string' ? e : (e instanceof Error ? e.message : JSON.stringify(e));
-      toast(msg || 'Connection failed', 'error');
+      toast(msg || 'connection failed', 'error');
     }
   };
 
@@ -81,7 +91,7 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
     const ok = await test(id);
     setTesting(null);
     await loadIntegrations();
-    toast(ok ? 'Connection OK' : 'Connection failed', ok ? 'success' : 'error');
+    toast(ok ? 'connection ok' : 'connection failed', ok ? 'success' : 'error');
   };
 
   const refreshTunnelStatus = async () => {
@@ -103,7 +113,7 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
       const msg = await telegramRegisterWebhook(addStep);
       setWebhookRegistered(true);
       addStep(msg);
-      toast('Webhook registered', 'success');
+      toast('webhook registered', 'success');
     } catch (e) {
       const msg = typeof e === 'string' ? e : 'Webhook registration failed';
       addStep(`✕ ${msg}`);
@@ -124,7 +134,7 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
       const msg = await telegramRegisterWebhook(addStep);
       setWebhookRegistered(true);
       addStep(msg);
-      toast('Telegram connected', 'success');
+      toast('telegram connected', 'success');
     } catch (e) {
       const msg = typeof e === 'string' ? e : 'Tunnel failed';
       addStep(`✕ ${msg}`);
@@ -140,7 +150,7 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
       await telegramStopTunnel();
       setTunnelUrl(null);
       setWebhookRegistered(false);
-      toast('Tunnel stopped', 'success');
+      toast('tunnel stopped', 'success');
     } finally {
       setTunnelBusy(false);
     }
@@ -155,7 +165,7 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
       setWebhookRegistered(true);
       setTunnelUrl(customUrl.trim().replace(/\/$/, ''));
       addStep(msg);
-      toast('Webhook registered', 'success');
+      toast('webhook registered', 'success');
     } catch (e) {
       const msg = typeof e === 'string' ? e : 'Registration failed';
       addStep(`✕ ${msg}`);
@@ -165,53 +175,52 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
     }
   };
 
+  const label = `${FIELD_LABEL_CLS} mt-4`;
+
   return (
     <>
-      {!embedded && (
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 24 }}>
-          <div><span className="font-mono text-[11px] tracking-[1px] text-muted">WORKSPACE</span><h1 style={{ margin: 0, fontSize: 24 }}>Integrations</h1></div>
-        </header>
-      )}
-      <div className="grid max-w-[1100px] grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
         {integrations.map((i) => {
           const isOAuth = OAUTH_PROVIDERS.includes(i.id);
           return (
-            <div key={i.id} className="rounded-[16px] border border-dashed border-line bg-panel p-[22px]">
+            <Card key={i.id} className="flex flex-col gap-3 hover:bg-surface">
               <div className="flex items-start justify-between gap-4">
-                <div className="flex min-w-0 items-start gap-4">
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-panel2 text-text">{LOGOS[i.id] ?? <Key size={18} className="text-muted" />}</span>
+                <div className="flex min-w-0 items-start gap-3.5">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-background text-foreground">{LOGOS[i.id] ?? <Key size={16} className="text-muted" />}</span>
                   <div className="min-w-0">
-                    <b style={{ fontSize: 13 }}>{i.name}</b>
-                    <span className="mt-1 block text-[11px] text-muted">{i.provider} · {i.actions.length} actions</span>
+                    <b className="block truncate font-mono text-[11px] text-foreground">{i.name}</b>
+                    <span className="mt-0.5 block truncate font-mono text-[10px] text-muted">{i.provider} · {i.actions.length} actions</span>
                   </div>
                 </div>
-                {i.connected ? (
-                  <div className="flex shrink-0 gap-1.5">
-                    <button title="Test connection" className="secondary grid h-8 w-8 place-items-center p-0" onClick={() => onTest(i.id)} disabled={testing === i.id}><RefreshCw size={12} /></button>
-                    <button title="Configure" className="secondary grid h-8 w-8 place-items-center p-0" onClick={() => setDrawerId(i.id)}><Key size={12} /></button>
-                  </div>
-                ) : isOAuth ? (
-                  <button title="Connect" className="primary grid h-8 w-8 shrink-0 place-items-center p-0" onClick={() => onConnect(i.id)}><Plug size={12} /></button>
-                ) : (
-                  <button title="Configure" className="primary grid h-8 w-8 shrink-0 place-items-center p-0" onClick={() => setDrawerId(i.id)}><Key size={12} /></button>
-                )}
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {i.connected ? (
+                    <>
+                      <IconButton label="test connection" onClick={() => onTest(i.id)} disabled={testing === i.id}>
+                        <RefreshCw size={12} className={testing === i.id ? 'animate-spin' : ''} />
+                      </IconButton>
+                      <IconButton label="configure" onClick={() => setDrawerId(i.id)}><Key size={12} /></IconButton>
+                    </>
+                  ) : isOAuth ? (
+                    <IconButton label="connect" className="border-foreground/30 text-foreground" onClick={() => onConnect(i.id)}><Plug size={12} /></IconButton>
+                  ) : (
+                    <IconButton label="configure" className="border-foreground/30 text-foreground" onClick={() => setDrawerId(i.id)}><Key size={12} /></IconButton>
+                  )}
+                </div>
               </div>
 
               {i.connected && i.actions.length > 0 && (
-                <div className="mt-4 flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-1.5">
                   {i.actions.map((a) => (
-                    <span key={a.name} title={a.description} className="rounded bg-panel2 px-2 py-1 font-mono text-[11px] text-muted">{a.name}</span>
+                    <span key={a.name} className="rounded bg-background px-2 py-0.5 font-mono text-[10px] text-muted">{a.name}</span>
                   ))}
                 </div>
               )}
 
-              <div className="mt-4 flex items-center gap-2">
-                <span className="text-[10.5px] text-muted">
-                  <i className={`mr-1.5 inline-block h-[6px] w-[6px] rounded-full ${i.connected ? 'bg-[var(--green)]' : 'bg-[#52525b]'}`} />
-                  {i.connected ? 'Connected' : 'Not connected'}
-                </span>
-              </div>
-            </div>
+              <span className="flex items-center gap-1.5 font-mono text-[10px] text-muted">
+                <i className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${i.connected ? 'bg-foreground' : 'bg-muted'}`} />
+                {i.connected ? 'connected' : 'not connected'}
+              </span>
+            </Card>
           );
         })}
       </div>
@@ -219,119 +228,119 @@ export function IntegrationsView({ integrations, embedded = false }: { integrati
       <McpServers />
 
       {active && (
-        <Drawer
+        <Modal
           title={`${active.name} — config`}
           onClose={() => { setDrawerId(null); setTokenDraft({}); }}
-          initialWidth={Math.round(window.innerWidth / 2)}
-          resizable
           headerAction={
-            <button className="primary" disabled={saving} onClick={() => saveToken(active.id)}>
-              <Check size={13} />{saving ? 'Saving…' : 'Save config'}
-            </button>
+            <Button variant="primary" disabled={saving} onClick={() => saveToken(active.id)}>
+              {saving ? 'saving…' : 'save config'}
+            </Button>
           }
         >
-          <div className="w-full rounded-[16px] border border-line bg-panel p-[22px]">
-            <p className="text-[12px] leading-[1.6] text-muted" style={{ margin: '0 0 14px' }}>
-              Credentials are stored locally in the app's SQLite database — they never leave your machine.
-            </p>
+          <p className="mt-0 mb-3.5 font-mono text-[10px] leading-relaxed text-muted">
+            Credentials are stored locally in the app's SQLite database — they never leave your machine.
+          </p>
 
-            <label className="mt-0 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">TOKEN / API KEY</label>
-            <input
-              type="password"
-              value={tokenDraft.token ?? tokenDraft.apiKey ?? ''}
-              onChange={(e) => setTokenDraft((d) => ({ ...d, token: e.target.value, apiKey: e.target.value }))}
-              placeholder={active.connected ? 'Leave blank to keep existing' : 'Paste token or API key'}
-              className="w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] text-text outline-none focus:border-mid"
-            />
+          <label className={FIELD_LABEL_CLS}>token / api key</label>
+          <input
+            type="password"
+            value={tokenDraft.token ?? tokenDraft.apiKey ?? ''}
+            onChange={(e) => setTokenDraft((d) => ({ ...d, token: e.target.value, apiKey: e.target.value }))}
+            placeholder={active.connected ? 'Leave blank to keep existing' : 'Paste token or API key'}
+            className={INPUT_CLS}
+          />
 
-            {OAUTH_PROVIDERS.includes(active.id) && (
-              <>
-                <label className="mt-4 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">OAUTH CLIENT ID</label>
-                <input value={tokenDraft.clientId ?? ''} onChange={(e) => setTokenDraft((d) => ({ ...d, clientId: e.target.value }))} placeholder="OAuth client ID" className="w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
-                <label className="mt-4 mb-1.5 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">OAUTH CLIENT SECRET</label>
-                <input type="password" value={tokenDraft.clientSecret ?? ''} onChange={(e) => setTokenDraft((d) => ({ ...d, clientSecret: e.target.value }))} placeholder="OAuth client secret" className="w-full rounded-md border border-line bg-panel2 px-3 py-2 text-[12.5px] text-text outline-none focus:border-mid" />
-                <p className="mt-1.5 text-[11px] leading-[1.5] text-muted">Set client ID/secret, then click Connect to start the OAuth flow.</p>
-              </>
-            )}
+          {OAUTH_PROVIDERS.includes(active.id) && (
+            <>
+              <label className={label}>oauth client id</label>
+              <input value={tokenDraft.clientId ?? ''} onChange={(e) => setTokenDraft((d) => ({ ...d, clientId: e.target.value }))} placeholder="OAuth client ID" className={INPUT_CLS} />
+              <label className={label}>oauth client secret</label>
+              <input type="password" value={tokenDraft.clientSecret ?? ''} onChange={(e) => setTokenDraft((d) => ({ ...d, clientSecret: e.target.value }))} placeholder="OAuth client secret" className={INPUT_CLS} />
+              <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">Set client ID/secret, then click connect to start the OAuth flow.</p>
+              <div className="mt-3.5">
+                <Button icon={<Plug size={12} />} onClick={() => onConnect(active.id)}>connect</Button>
+              </div>
+            </>
+          )}
 
-            <div className="mt-4 flex items-center gap-2">
-              {OAUTH_PROVIDERS.includes(active.id) && (
-                <button className="secondary" onClick={() => onConnect(active.id)}><Plug size={12} />Connect</button>
-              )}
-            </div>
-
-            {active.id === 'telegram' && (
-              <>
-              <div className="mt-6 rounded-[16px] border border-line bg-panel2 p-[22px]">
-                <div className="mb-1.5 flex items-center justify-between">
-                  <span className="font-mono text-[11px] tracking-[1px] text-muted">REMOTE ACCESS</span>
-                  <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-text" onClick={refreshTunnelStatus} title="Refresh status"><RefreshCw size={12} /></button>
+          {active.id === 'telegram' && (
+            <>
+              <div className="mt-5 rounded-xl border border-border bg-background p-4">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <span className={GROUP_LABEL_CLS}>remote access</span>
+                  <IconButton label="refresh status" className="h-6 w-6" onClick={refreshTunnelStatus}><RefreshCw size={12} /></IconButton>
                 </div>
-                <p className="mb-3 text-[12px] leading-[1.6] text-muted">
-                  Expose this local app to Telegram with a Cloudflare tunnel. One click starts the tunnel and registers the webhook — no domain needed, Cloudflare gives you a free <code className="font-mono text-[11px]">trycloudflare.com</code> URL.
+                <p className="mb-3 text-[12px] leading-[1.65] text-muted">
+                  Expose this local app to Telegram with a Cloudflare tunnel. One click starts the tunnel and registers the webhook — no domain needed, Cloudflare gives you a free <code className="font-mono">trycloudflare.com</code> URL.
                 </p>
+
                 {tunnelUrl ? (
                   <>
-                    <div className="mb-3 flex items-center gap-2 rounded-md border border-[var(--green)] bg-panel px-3 py-2">
-                      <i className="inline-block h-2 w-2 shrink-0 rounded-full bg-[var(--green)]" />
-                      <span className="min-w-0 truncate font-mono text-[11px] text-text">{tunnelUrl}</span>
+                    <div className="mb-3 flex items-center gap-2 rounded-lg border border-border px-3 py-2">
+                      <i className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-foreground" />
+                      <span className="min-w-0 truncate font-mono text-[10px] text-foreground">{tunnelUrl}</span>
                     </div>
-                    <div className="mb-3 flex items-center gap-2 text-[11px]">
-                      <span className={webhookRegistered ? 'text-[var(--green)]' : 'text-[#facc15]'}>
-                        {webhookRegistered ? '✓ Webhook registered' : '… Webhook not yet registered'}
-                      </span>
+                    <div className="mb-3 flex items-center gap-1.5 font-mono text-[10px] text-muted">
+                      {webhookRegistered
+                        ? <><Check size={11} className="text-foreground" />webhook registered</>
+                        : <><Loader2 size={11} />webhook not yet registered</>}
                     </div>
                     {!webhookRegistered && (
-                      <p className="mb-3 rounded-md border border-[#facc15]/40 bg-panel px-3 py-2 text-[11px] leading-[1.5] text-muted">
-                        Make sure the bot token is saved above (TOKEN / API KEY), then click <b className="text-text">Register webhook</b>.
+                      <p className="mb-3 rounded-lg border border-border px-3 py-2 text-[11px] leading-relaxed text-muted">
+                        Make sure the bot token is saved above (token / api key), then click <b className="text-foreground">register webhook</b>.
                       </p>
                     )}
                     <div className="flex gap-2">
                       {!webhookRegistered && (
-                        <button className="primary flex-1" onClick={onRegisterWebhook} disabled={tunnelBusy}><Rocket size={13} />Register webhook</button>
+                        <Button variant="primary" className="flex-1" icon={<Rocket size={13} />} onClick={onRegisterWebhook} disabled={tunnelBusy}>register webhook</Button>
                       )}
-                      <button className="secondary flex-1" onClick={onStopTunnel} disabled={tunnelBusy}><X size={12} />Stop tunnel</button>
+                      <Button className="flex-1" icon={<X size={12} />} onClick={onStopTunnel} disabled={tunnelBusy}>stop tunnel</Button>
                     </div>
                   </>
                 ) : (
-                  <button className="primary w-full" onClick={onExposeTelegram} disabled={tunnelBusy}>
-                    <Rocket size={13} />{tunnelBusy ? 'Working…' : 'Expose & register webhook'}
-                  </button>
+                  <Button variant="primary" className="w-full" icon={<Rocket size={13} />} onClick={onExposeTelegram} disabled={tunnelBusy}>
+                    {tunnelBusy ? 'working…' : 'expose & register webhook'}
+                  </Button>
                 )}
 
                 {tunnelSteps.length > 0 && (
-                  <div className="mt-3 rounded-md border border-line bg-panel p-2.5">
-                    {tunnelSteps.map((s, i) => (
-                      <div key={i} className="flex items-start gap-2 py-0.5 font-mono text-[10.5px] leading-[1.5]">
-                        <span className="text-mid">{tunnelBusy && i === tunnelSteps.length - 1 ? '▸' : '·'}</span>
-                        <span className={s.startsWith('✕') ? 'text-[#f87171]' : s.includes('✓') || s.includes('registered at') ? 'text-[var(--green)]' : 'text-muted'}>{s}</span>
-                      </div>
-                    ))}
+                  <div className="mt-3 rounded-lg border border-border p-2.5">
+                    {tunnelSteps.map((s, i) => {
+                      const failed = stepFailed(s);
+                      const current = tunnelBusy && i === tunnelSteps.length - 1;
+                      return (
+                        <div key={i} className="flex items-start gap-2 py-0.5 font-mono text-[10px] leading-relaxed">
+                          <span className={`mt-px shrink-0 ${failed ? 'text-danger' : 'text-muted'}`}>
+                            {failed ? <X size={10} /> : current ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
+                          </span>
+                          <span className={failed ? 'text-danger' : 'text-muted'}>{cleanStep(s)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
-                <p className="mt-3 text-[11px] leading-[1.5] text-muted">Requires <code className="font-mono text-[11px]">cloudflared</code> (auto-downloaded if missing). While the tunnel is active, long-polling pauses.</p>
+                <p className="mt-3 mb-0 font-mono text-[10px] leading-relaxed text-muted">Requires <code className="font-mono">cloudflared</code> (auto-downloaded if missing). While the tunnel is active, long-polling pauses.</p>
               </div>
 
               {/* Own domain / named tunnel option */}
-              <div className="mt-4 rounded-[16px] border border-line bg-panel2 p-[22px]">
-                <span className="mb-1.5 block font-mono text-[11px] tracking-[1px] text-muted">USE YOUR OWN DOMAIN</span>
-                <p className="mb-3 text-[12px] leading-[1.6] text-muted">
-                  Have a Cloudflare account and a domain? Set up a named tunnel in Cloudflare (pointing at <code className="font-mono text-[11px]">http://127.0.0.1:14789</code>) and enter its public HTTPS URL below. Telegram will send to your domain instead of a random trycloudflare URL.
+              <div className="mt-3 rounded-xl border border-border bg-background p-4">
+                <span className={GROUP_LABEL_CLS}>use your own domain</span>
+                <p className="mt-1.5 mb-3 text-[12px] leading-[1.65] text-muted">
+                  Have a Cloudflare account and a domain? Set up a named tunnel in Cloudflare (pointing at <code className="font-mono">http://127.0.0.1:14789</code>) and enter its public HTTPS URL below. Telegram will send to your domain instead of a random trycloudflare URL.
                 </p>
                 <input
                   value={customUrl}
                   onChange={(e) => setCustomUrl(e.target.value)}
                   placeholder="https://bot.yourdomain.com"
-                  className="mb-2 w-full rounded-md border border-line bg-panel px-3 py-2 text-[12.5px] text-text outline-none focus:border-mid"
+                  className={`${INPUT_CLS} mb-2`}
                 />
-                <button className="secondary w-full" onClick={onRegisterCustomUrl} disabled={customBusy || !customUrl.trim()}>
-                  <Globe size={12} />{customBusy ? 'Registering…' : 'Register webhook to my domain'}
-                </button>
+                <Button className="w-full" icon={<Globe size={12} />} onClick={onRegisterCustomUrl} disabled={customBusy || !customUrl.trim()}>
+                  {customBusy ? 'registering…' : 'register webhook to my domain'}
+                </Button>
               </div>
-              </>
-            )}
-          </div>
-        </Drawer>
+            </>
+          )}
+        </Modal>
       )}
     </>
   );

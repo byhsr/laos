@@ -1,16 +1,18 @@
 import { CheckCircle2, Info, X, XCircle } from 'lucide-react';
 import { useToastStore, type ToastKind } from '../../hooks/useToast';
 
+// One toast shell. Only the error variant carries hue — every other kind is
+// neutral chrome.
 const KIND_STYLES: Record<ToastKind, string> = {
-  success: 'border-[var(--green)]/50 text-[var(--green)]',
-  error: 'border-[#f87171]/50 text-[#f87171]',
-  info: 'border-mid/50 text-muted',
+  success: 'border-border bg-background text-foreground',
+  error: 'border-danger bg-danger text-white',
+  info: 'border-border bg-background text-foreground',
 };
 
 const KIND_ICON: Record<ToastKind, React.ReactNode> = {
-  success: <CheckCircle2 size={15} />,
-  error: <XCircle size={15} />,
-  info: <Info size={15} />,
+  success: <CheckCircle2 size={13} />,
+  error: <XCircle size={13} />,
+  info: <Info size={13} />,
 };
 
 export function Toaster() {
@@ -18,15 +20,22 @@ export function Toaster() {
   const dismiss = useToastStore((s) => s.dismiss);
 
   return (
-    <div className="pointer-events-none fixed top-10 right-4 z-[100] flex min-w-80 max-w-md flex-col gap-2">
+    <div className="pointer-events-none fixed top-14 right-4 z-[9999] flex flex-col gap-2" style={{ width: 'clamp(240px, 20vw, 320px)' }}>
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`glass-strong pointer-events-auto flex animate-[dropdown-in_160ms_ease-out] items-start gap-3 rounded-2xl border border-hairline px-4 py-3 shadow-float ${KIND_STYLES[t.kind]}`}
+          className={`pointer-events-auto flex animate-[ip-toast_250ms_ease-out_both] items-start gap-2.5 rounded-lg border px-3 py-2 font-mono text-xs ${KIND_STYLES[t.kind]}`}
         >
-          {KIND_ICON[t.kind]}
-          <span className="min-h-4 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-text">{t.message}</span>
-          <button className="cursor-pointer border-0 bg-transparent p-0 text-muted hover:text-text" onClick={() => dismiss(t.id)}><X size={12} /></button>
+          <span className="mt-px shrink-0">{KIND_ICON[t.kind]}</span>
+          <span className="min-w-0 flex-1 leading-relaxed break-words whitespace-pre-wrap">{t.message}</span>
+          <button
+            type="button"
+            aria-label="dismiss"
+            className="shrink-0 cursor-pointer border-0 bg-transparent p-0 opacity-60 transition-opacity hover:opacity-100"
+            onClick={() => dismiss(t.id)}
+          >
+            <X size={12} />
+          </button>
         </div>
       ))}
     </div>

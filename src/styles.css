@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap');
-
 /* ---------------------------------------------------------------------------
    Base
 --------------------------------------------------------------------------- */
@@ -7,7 +5,8 @@
 
 html {
   font-family: var(--font-sans);
-  color: var(--color-text);
+  color: var(--color-foreground);
+  background: var(--color-background);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -18,48 +17,80 @@ button, input, textarea, select { font: inherit; }
 button { color: inherit; cursor: pointer; }
 
 /* ---------------------------------------------------------------------------
-   Controls
-   Primary = the accent plane. Secondary = a quiet hairline surface.
+   Controls — one shell, shared by every button in the app.
+   Hierarchy is brightness, never color: primary is foreground text, secondary
+   is muted, and the accent fills a control only for confirm/emphasis CTAs.
+   Action labels are lowercase and mono, like all chrome.
 --------------------------------------------------------------------------- */
-.primary {
+.control,
+.primary,
+.secondary,
+.accent,
+.danger {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: var(--color-accent);
-  color: var(--color-bg);
-  padding: 9px 15px;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.1px;
-  box-shadow: var(--shadow-soft);
-  transition: opacity 150ms ease, transform 150ms ease;
-}
-.primary:hover { opacity: 0.9; }
-.primary:active { transform: translateY(1px); }
-.primary:disabled { opacity: 0.4; cursor: not-allowed; }
-
-.secondary {
-  display: inline-flex;
-  align-items: center;
+  justify-content: center;
   gap: 6px;
-  border: 1px solid var(--color-line);
-  border-radius: 10px;
-  background: var(--color-panel2);
-  color: var(--color-text);
-  padding: 7px 11px;
-  font-size: 12px;
-  font-weight: 600;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
   line-height: 1;
-  transition: border-color 150ms ease, background-color 150ms ease, opacity 150ms ease;
+  white-space: nowrap;
+  transition:
+    background-color 150ms var(--ease-panel),
+    color 150ms var(--ease-panel),
+    border-color 150ms var(--ease-panel),
+    scale 150ms var(--ease-panel);
 }
-.secondary:hover { border-color: var(--color-mid); }
-.secondary:disabled { opacity: 0.4; cursor: not-allowed; }
 
+.control:hover,
+.primary:hover,
+.secondary:hover { background: var(--color-background); color: var(--color-foreground); }
+
+.control:active,
+.primary:active,
+.secondary:active,
+.accent:active,
+.danger:active { scale: 0.88; }
+
+.control:disabled,
+.primary:disabled,
+.secondary:disabled,
+.accent:disabled,
+.danger:disabled { opacity: 0.4; cursor: not-allowed; scale: 1; }
+
+/* Emphasis without hue. */
+.primary { color: var(--color-foreground); }
+
+/* The one place the accent fills a control. */
+.accent {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-accent-foreground);
+}
+.accent:hover { background: var(--color-accent); color: var(--color-accent-foreground); opacity: 0.85; }
+
+/* Destructive actions only. */
+.danger {
+  border-color: var(--color-danger);
+  background: var(--color-danger);
+  color: #fff;
+}
+.danger:hover { background: var(--color-danger); color: #fff; opacity: 0.85; }
+
+/* Icon-only variant: a square hit area, same shell. */
+.icon-btn { width: 30px; padding: 0; }
+
+.control:focus-visible,
 .primary:focus-visible,
-.secondary:focus-visible {
+.secondary:focus-visible,
+.accent:focus-visible,
+.danger:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }

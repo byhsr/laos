@@ -3,24 +3,19 @@ import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { Lottie } from 'lottie-react';
 import type { Agent, ModelConfig } from '../types';
 import { PERSONAS } from './ui/AgentAvatar';
+import { Button } from './ui/Button';
+import { Tooltip } from './ui/Tooltip';
+import { FIELD_LABEL_CLS, INPUT_CLS, PROSE_CLS } from './ui/Input';
 
 export type OnboardingPatch = { name: string; objective: string; persona: string; model: string };
 
-const STEPS = ['Welcome', 'Name', 'Purpose', 'Model'] as const;
+const STEPS = ['welcome', 'name', 'purpose', 'model'] as const;
 
 const personaData = (id: string) => PERSONAS.find((p) => p.id === id)?.data ?? PERSONAS[0].data;
 
-// A soft radial wash so the stage never sits on a flat background.
-const GLOW = {
-  background:
-    'radial-gradient(46% 40% at 20% 16%, rgba(52,211,153,0.10), transparent 62%), radial-gradient(52% 46% at 84% 90%, rgba(124,148,204,0.10), transparent 62%)',
-};
-const STAGE_GLOW = {
-  background: 'radial-gradient(50% 50% at 50% 50%, rgba(52,211,153,0.16), transparent 70%)',
-  filter: 'blur(10px)',
-};
-
-// First-run setup. Renders at z-40 so the topbar and its window controls stay usable.
+// First-run setup — a full-screen brand moment, so the animated persona stage is
+// allowed to be the one expressive element. Its chrome still follows the shell:
+// surface planes, hairline borders, mono labels, no glow.
 export function Onboarding({ manager, models, onFinish, onSkip }: {
   manager: Agent; models: ModelConfig[];
   onFinish: (patch: OnboardingPatch) => Promise<void>;
@@ -59,82 +54,84 @@ export function Onboarding({ manager, models, onFinish, onSkip }: {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-[var(--color-bg)]">
-      <div className="pointer-events-none absolute inset-0" style={GLOW} />
-
+    <div className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-background">
       {/* Progress — completed steps are clickable to go back */}
-      <header className="relative z-10 flex shrink-0 flex-wrap items-center justify-center gap-2 px-6 pt-7">
+      <header className="relative z-10 flex shrink-0 flex-wrap items-center justify-center gap-1.5 px-6 pt-6">
         {STEPS.map((s, i) => (
           <button
             key={s}
             disabled={i > step}
             onClick={() => setStep(i)}
-            className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] transition-colors duration-150 ${
-              i === step ? 'border-[var(--green)] bg-panel2 text-text' : i < step ? 'border-line text-muted hover:border-mid hover:text-text' : 'border-transparent text-mid'
+            className={`focus-ring flex items-center gap-2 rounded-lg border px-2.5 py-1 font-mono text-[11px] lowercase transition-colors duration-150 disabled:cursor-not-allowed ${
+              i === step
+                ? 'border-border bg-surface text-foreground'
+                : i < step
+                  ? 'border-transparent text-muted hover:bg-surface hover:text-foreground'
+                  : 'border-transparent text-muted/50'
             }`}
           >
-            <span className={`grid h-4 w-4 place-items-center rounded-full text-[9px] font-bold ${i <= step ? 'bg-[var(--green)] text-[var(--color-bg)]' : 'bg-line text-muted'}`}>{i + 1}</span>
+            <span className={`grid h-4 w-4 place-items-center rounded-[4px] font-mono text-[9px] ${i <= step ? 'bg-foreground text-background' : 'bg-border text-muted'}`}>{i + 1}</span>
             {s}
           </button>
         ))}
       </header>
 
-      <div className="relative z-10 flex min-h-0 flex-1 items-center justify-center px-6 py-6">
+      <div className="relative z-10 flex min-h-0 flex-1 items-center justify-center overflow-x-hidden overflow-y-auto px-6 py-6">
         {step === 0 ? (
-          <div className="flex animate-[step-in_280ms_ease-out] flex-col items-center text-center">
-            <div className="relative mb-4 grid h-[240px] w-[240px] place-items-center">
-              <div className="absolute inset-0 rounded-full" style={STAGE_GLOW} />
-              <Lottie src={personaData(persona)} loop autoplay style={{ width: 210, height: 210 }} />
+          <div className="flex flex-col items-center text-center animate-[ip-fade_250ms_var(--ease-panel)_both]">
+            <div className="mb-2 grid h-[220px] w-[220px] place-items-center">
+              <Lottie src={personaData(persona)} loop autoplay style={{ width: 200, height: 200 }} />
             </div>
-            <h1 className="m-0 max-w-[620px] text-[30px] leading-[1.15]">Your workspace, run by an agent you shape</h1>
-            <p className="mt-3 max-w-[540px] text-[13px] leading-[1.8] text-muted">
+            <h1 className="m-0 max-w-[620px] text-[30px] leading-[1.15] font-bold">Your workspace, run by an agent you shape</h1>
+            <p className="mt-3 max-w-[540px] text-[13px] leading-[1.7] text-muted">
               Everything runs on this machine — agents, tools, chats and runs stay local. One lead agent
               orchestrates the rest, and it's yours to name and direct.
             </p>
-            <button className="primary mt-7" onClick={() => setStep(1)}>
-              Get started<ArrowRight size={13} />
-            </button>
+            <Button variant="accent" className="mt-7" icon={<ArrowRight size={13} />} onClick={() => setStep(1)}>
+              get started
+            </Button>
           </div>
         ) : (
-          <div key={step} className="grid w-full max-w-[980px] animate-[step-in_220ms_ease-out] grid-cols-1 items-start gap-10 lg:grid-cols-[300px_minmax(0,1fr)]">
+          <div key={step} className="grid w-full max-w-[980px] grid-cols-1 items-start gap-10 animate-[ip-fade_200ms_var(--ease-panel)_both] lg:grid-cols-[300px_minmax(0,1fr)]">
             {/* Live stage — reflects the choices as they're made */}
             <div className="flex flex-col items-center">
-              <div className="relative grid h-[210px] w-[210px] place-items-center">
-                <div className="absolute inset-0 rounded-full" style={STAGE_GLOW} />
-                <Lottie src={personaData(persona)} loop autoplay style={{ width: 185, height: 185 }} />
+              <div className="grid h-[190px] w-[190px] place-items-center">
+                <Lottie src={personaData(persona)} loop autoplay style={{ width: 170, height: 170 }} />
               </div>
               <b className="mt-1 max-w-[260px] truncate text-[15px]">{name.trim() || 'Your lead agent'}</b>
-              <span className="mt-1 max-w-[260px] truncate font-mono text-[10.5px] text-muted">{pickedModel?.label ?? 'no model selected'}</span>
+              <span className="mt-1 max-w-[260px] truncate font-mono text-[10px] text-muted">{pickedModel?.label ?? 'no model selected'}</span>
             </div>
 
             <div className="min-w-0">
               {step === 1 && (
                 <div>
-                  <h2 className="m-0 text-[20px]">Name your lead agent</h2>
-                  <p className="mt-1.5 text-[12.5px] leading-[1.7] text-muted">Call it whatever you like — this is who you'll be talking to.</p>
+                  <h2 className="m-0 text-[20px] font-bold">Name your lead agent</h2>
+                  <p className="mt-1.5 text-[13px] leading-[1.65] text-muted">Call it whatever you like — this is who you'll be talking to.</p>
                   <input
                     autoFocus
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Chief, Ada, Boss…"
-                    className="mt-5 w-full max-w-[440px] rounded-xl border border-line bg-panel2 px-3.5 py-3 text-[14px] text-text outline-none transition-colors focus:border-mid"
+                    className={`${INPUT_CLS} mt-5 max-w-[440px] py-2.5`}
                   />
-                  <label className="mt-6 mb-2 block text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">Look</label>
-                  <div className="grid max-w-[440px] grid-cols-5 gap-2 sm:grid-cols-6">
+                  <label className={`${FIELD_LABEL_CLS} mt-6`}>look</label>
+                  <div className="grid max-w-[440px] grid-cols-5 gap-1.5 sm:grid-cols-6">
                     {PERSONAS.map((p) => {
                       const active = p.id === persona;
                       return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          title={p.label}
-                          onClick={() => setPersona(p.id)}
-                          onMouseEnter={() => setHovered(p.id)}
-                          onMouseLeave={() => setHovered((h) => (h === p.id ? null : h))}
-                          className={`grid cursor-pointer place-items-center rounded-xl border p-1.5 transition-colors duration-150 ${active ? 'border-[var(--green)] bg-panel2' : 'border-line hover:border-mid'}`}
-                        >
-                          <Lottie src={p.data} loop autoplay={hovered === p.id || active} style={{ width: 42, height: 42 }} />
-                        </button>
+                        <Tooltip key={p.id} label={p.label} className="flex w-full">
+                          <button
+                            type="button"
+                            onClick={() => setPersona(p.id)}
+                            onMouseEnter={() => setHovered(p.id)}
+                            onMouseLeave={() => setHovered((h) => (h === p.id ? null : h))}
+                            className={`focus-ring grid w-full cursor-pointer place-items-center rounded-lg border p-1.5 transition-colors duration-150 ${
+                              active ? 'border-foreground/40 bg-surface' : 'border-border hover:bg-surface'
+                            }`}
+                          >
+                            <Lottie src={p.data} loop autoplay={hovered === p.id || active} style={{ width: 42, height: 42 }} />
+                          </button>
+                        </Tooltip>
                       );
                     })}
                   </div>
@@ -143,8 +140,8 @@ export function Onboarding({ manager, models, onFinish, onSkip }: {
 
               {step === 2 && (
                 <div>
-                  <h2 className="m-0 text-[20px]">What should {agentName} do?</h2>
-                  <p className="mt-1.5 text-[12.5px] leading-[1.7] text-muted">
+                  <h2 className="m-0 text-[20px] font-bold">What should {agentName} do?</h2>
+                  <p className="mt-1.5 text-[13px] leading-[1.65] text-muted">
                     Its role, your context, how it should behave. This becomes the agent's standing brief.
                   </p>
                   <textarea
@@ -153,22 +150,22 @@ export function Onboarding({ manager, models, onFinish, onSkip }: {
                     onChange={(e) => setObjective(e.target.value)}
                     rows={8}
                     placeholder="e.g. You are my operations lead. Keep my projects moving, delegate research to my other agents, and ask before anything destructive."
-                    className="mt-5 w-full resize-none rounded-xl border border-line bg-panel2 px-3.5 py-3 text-[13.5px] leading-[1.75] text-text outline-none transition-colors focus:border-mid"
+                    className={`${PROSE_CLS} mt-5`}
                   />
                 </div>
               )}
 
               {step === 3 && (
                 <div>
-                  <h2 className="m-0 text-[20px]">Pick its model</h2>
-                  <p className="mt-1.5 text-[12.5px] leading-[1.7] text-muted">The provider {agentName} thinks with. Changeable any time.</p>
+                  <h2 className="m-0 text-[20px] font-bold">Pick its model</h2>
+                  <p className="mt-1.5 text-[13px] leading-[1.65] text-muted">The provider {agentName} thinks with. Changeable any time.</p>
                   {enabledModels.length === 0 ? (
-                    <div className="mt-5 rounded-xl border border-[#facc15]/40 bg-panel2 px-4 py-3 text-[12px] leading-[1.7] text-muted">
-                      No models are enabled yet. Finish here, then add one in <b className="text-text">Settings → Models</b> —
+                    <div className="mt-5 rounded-xl border border-danger/40 bg-surface px-4 py-3 text-[12px] leading-[1.65] text-muted">
+                      No models are enabled yet. Finish here, then add one in <b className="text-foreground">Settings → Models</b> —
                       nothing can run until you do.
                     </div>
                   ) : (
-                    <div className="mt-5 grid max-h-[300px] gap-2 overflow-y-auto pr-1">
+                    <div className="mt-5 grid max-h-[300px] gap-1.5 overflow-x-hidden overflow-y-auto pr-1">
                       {enabledModels.map((m) => {
                         const active = m.id === model;
                         return (
@@ -176,13 +173,15 @@ export function Onboarding({ manager, models, onFinish, onSkip }: {
                             key={m.id}
                             type="button"
                             onClick={() => setModel(m.id)}
-                            className={`flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors duration-150 ${active ? 'border-[var(--green)] bg-panel2' : 'border-line hover:border-mid'}`}
+                            className={`focus-ring flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3.5 py-2.5 text-left transition-colors duration-150 ${
+                              active ? 'border-foreground/40 bg-surface' : 'border-border hover:bg-surface'
+                            }`}
                           >
                             <span className="min-w-0">
-                              <b className="block truncate text-[13px]">{m.label}</b>
-                              <span className="block truncate font-mono text-[10.5px] text-muted">{m.id}</span>
+                              <b className="block truncate font-mono text-[11px] text-foreground">{m.label}</b>
+                              <span className="block truncate font-mono text-[10px] text-muted">{m.id}</span>
                             </span>
-                            <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{m.provider}</span>
+                            <span className="shrink-0 font-mono text-[10px] tracking-wider text-muted uppercase">{m.provider}</span>
                           </button>
                         );
                       })}
@@ -195,24 +194,20 @@ export function Onboarding({ manager, models, onFinish, onSkip }: {
         )}
       </div>
 
-      <footer className="relative z-10 flex shrink-0 items-center justify-between px-6 pb-7">
-        <button className="cursor-pointer border-0 bg-transparent p-0 text-[12px] text-muted transition-colors hover:text-text" onClick={onSkip}>
-          Skip setup
+      <footer className="relative z-10 flex shrink-0 items-center justify-between px-6 pb-6">
+        <button className="focus-ring cursor-pointer rounded border-0 bg-transparent font-mono text-[11px] lowercase text-muted transition-colors hover:text-foreground" onClick={onSkip}>
+          skip setup
         </button>
         <div className="flex items-center gap-2">
           {step > 0 && (
-            <button className="secondary" onClick={() => setStep((s) => s - 1)} disabled={saving}>
-              <ArrowLeft size={13} />Back
-            </button>
+            <Button icon={<ArrowLeft size={13} />} onClick={() => setStep((s) => s - 1)} disabled={saving}>back</Button>
           )}
           {step > 0 && (last ? (
-            <button className="primary" onClick={finish} disabled={saving}>
-              <Check size={13} />{saving ? 'Saving…' : `Start with ${name.trim() || 'your agent'}`}
-            </button>
+            <Button variant="accent" icon={<Check size={13} />} onClick={finish} disabled={saving}>
+              {saving ? 'saving…' : `start with ${name.trim() || 'your agent'}`}
+            </Button>
           ) : (
-            <button className="primary" onClick={() => setStep((s) => s + 1)}>
-              Next<ArrowRight size={13} />
-            </button>
+            <Button variant="accent" icon={<ArrowRight size={13} />} onClick={() => setStep((s) => s + 1)}>next</Button>
           ))}
         </div>
       </footer>
