@@ -40,6 +40,14 @@
   /* Destructive actions only */
   --color-danger: #ef4444;
 
+  /* Typed port tints. Deliberately desaturated so a port reads as a slight hue
+     on the surface, not a chip — and so a wire can inherit the meaning of the
+     port it leaves from without shouting. */
+  --color-port-text: #7d9ec4;
+  --color-port-ok: #7dae85;
+  --color-port-bad: #c07f7f;
+  --color-port-loop: #b09a70;
+
   /* Keep these neutral: primary/secondary are foreground/muted, never the
      accent. Pointing --color-primary at the accent is the single most common
      way to break this design language. */

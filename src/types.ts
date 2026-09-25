@@ -28,7 +28,9 @@ export type WorkflowNode = {
   id: string; type: WorkflowNodeType; agentId?: string; toolId?: string; label: string; x: number; y: number;
   config?: Record<string, unknown>;
 };
-export type WorkflowEdge = { id: string; from: string; to: string };
+// A wire leaves a named output port and lands on a named input port, so branch
+// outcomes (pass/fail, true/false, success/error) survive a save round-trip.
+export type WorkflowEdge = { id: string; from: string; to: string; fromPort?: string; toPort?: string };
 export type Workflow = { id: string; name: string; nodes: WorkflowNode[]; edges: WorkflowEdge[]; updatedAt: string };
 export type WorkflowRunStep = { nodeId: string; nodeLabel: string; output: string; promptTokens: number; completionTokens: number };
 export type WorkflowRunResult = { steps: WorkflowRunStep[]; finalOutput: string; totalPromptTokens: number; totalCompletionTokens: number };

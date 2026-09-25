@@ -34,9 +34,69 @@ const TYPE_META: Record<WorkflowNodeType, { label: string; icon: React.ReactNode
   NODE_TYPES.map((n) => [n.type, { label: n.label, icon: n.icon }])
 ) as Record<WorkflowNodeType, { label: string; icon: React.ReactNode }>;
 
+// ---- Node anatomy -----------------------------------------------------------
+// A node is a fixed-size module with four parts:
+//   header      type glyph + title + state dot
+//   description what the node is
+//   inner block the configuration it currently holds
+//   port band   typed connection points along the bottom edge
+// Every size below is a constant because the wire geometry is derived from it:
+// the rendered node and the edge endpoints have to agree to the pixel.
 const NODE_W = 200;
-const NODE_H = 84;
+const HEAD_H = 26;
+const DESC_H = 14;
+const WELL_MT = 6;
+const WELL_H = 38;
+const BAND_MT = 6;
+const ROW_H = 16;
+const BAND_PB = 8;
+const BAND_TOP = HEAD_H + DESC_H + WELL_MT + WELL_H + BAND_MT;
 const INSPECTOR_W = 300;
+
+// Port tones — one tint per meaning, all desaturated. A wire inherits the tone
+// of the port it leaves from, so a branch is readable without a legend.
+type Tone = 'text' | 'ok' | 'bad' | 'loop';
+type Port = { id: string; label: string; tone: Tone };
+
+const TONE: Record<Tone, string> = {
+  text: 'var(--color-port-text)',
+  ok: 'var(--color-port-ok)',
+  bad: 'var(--color-port-bad)',
+  loop: 'var(--color-port-loop)',
+};
+
+// Where each node type's wires attach. Branch states are real ports rather than
+// labels: a checker exposes pass/fail, a gate true/false, an agent
+// success/error — so an edge records which outcome it leaves from.
+const PORTS: Record<WorkflowNodeType, { in: Port[]; out: Port[] }> = {
+  trigger:     { in: [], out: [{ id: 'text', label: 'text', tone: 'text' }] },
+  agent:       { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'success', label: 'success', tone: 'ok' }, { id: 'error', label: 'error', tone: 'bad' }] },
+  subagent:    { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'success', label: 'success', tone: 'ok' }, { id: 'error', label: 'error', tone: 'bad' }] },
+  checker:     { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'pass', label: 'pass', tone: 'ok' }, { id: 'fail', label: 'fail', tone: 'bad' }] },
+  gate:        { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'true', label: 'true', tone: 'ok' }, { id: 'false', label: 'false', tone: 'bad' }] },
+  integration: { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'success', label: 'success', tone: 'ok' }, { id: 'error', label: 'error', tone: 'bad' }] },
+  loop:        { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'loop', label: 'loop', tone: 'loop' }, { id: 'done', label: 'done', tone: 'ok' }] },
+};
+
+const portRows = (t: WorkflowNodeType) => Math.max(1, PORTS[t].in.length, PORTS[t].out.length);
+const nodeHeight = (t: WorkflowNodeType) => BAND_TOP + 1 + portRows(t) * ROW_H + BAND_PB;
+// Vertical centre of a port row, relative to the node's top edge.
+const portY = (t: WorkflowNodeType, i: number) => BAND_TOP + 1 + i * ROW_H + ROW_H / 2;
+// Legacy edges (saved before ports existed) fall back to the first port.
+const portIndex = (t: WorkflowNodeType, side: 'in' | 'out', id?: string) => {
+  const list = PORTS[t][side];
+  if (!list.length) return 0;
+  const i = id ? list.findIndex((p) => p.id === id) : 0;
+  return i < 0 ? 0 : i;
+};
+
+// Curved wire between two ports. The control offset grows with the horizontal
+// gap so short hops stay tight and long runs stay smooth.
+const wire = (x1: number, y1: number, x2: number, y2: number) => {
+  const dx = Math.max(36, Math.abs(x2 - x1) * 0.5);
+  return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+};
+
 
 // Rule types available in the checker builder, with their editable fields.
 const RULE_TYPES: { type: string; label: string; fields: { key: string; label: string; placeholder?: string }[] }[] = [
@@ -192,7 +252,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
   const [drag, setDrag] = useState<{ type: WorkflowNodeType } | null>(null);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const [moving, setMoving] = useState<{ id: string; dx: number; dy: number } | null>(null);
-  const [drawingEdge, setDrawingEdge] = useState<{ from: string; x: number; y: number } | null>(null);
+  const [drawingEdge, setDrawingEdge] = useState<{ from: string; port: string; x: number; y: number } | null>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_W);
@@ -286,6 +346,73 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
 
   const agentName = (id?: string) => agents.find((a) => a.id === id)?.name ?? 'select agent…';
 
+  // A node's state: ready once the configuration it actually needs is present.
+  const nodeReady = (n: WorkflowNode) => {
+    switch (n.type) {
+      case 'agent':
+      case 'subagent': return !!n.agentId;
+      case 'checker': return ((n.config?.rules as unknown[] | undefined) ?? []).length > 0;
+      case 'gate': return String(n.config?.condition ?? '').trim().length > 0;
+      case 'integration': return !!n.config?.integrationId && !!n.config?.action;
+      default: return true;
+    }
+  };
+
+  // What the inner block reports — the configuration the node currently holds.
+  const wellFor = (n: WorkflowNode): { key: string; value: string } => {
+    switch (n.type) {
+      case 'trigger': return { key: 'input', value: String(n.config?.prompt ?? '').trim() || 'workflow input' };
+      case 'agent':
+      case 'subagent': return { key: 'agent', value: n.agentId ? agentName(n.agentId) : 'none assigned' };
+      case 'checker': {
+        const rules = (n.config?.rules as unknown[] | undefined) ?? [];
+        return { key: 'rules', value: rules.length ? `${rules.length} rule${rules.length === 1 ? '' : 's'}` : 'no rules yet' };
+      }
+      case 'gate': return { key: 'condition', value: String(n.config?.condition ?? '').trim() || 'always continue' };
+      case 'integration': {
+        const integ = integrations.find((i) => i.id === n.config?.integrationId);
+        return { key: 'action', value: integ ? `${integ.name} · ${String(n.config?.action ?? '') || 'no action'}` : 'not configured' };
+      }
+      case 'loop': return { key: 'iterations', value: `max ${String(n.config?.maxIterations ?? 3)}` };
+    }
+  };
+
+  // Start a wire from one specific output port. It lands on the input port of
+  // whichever node sits under the cursor when the pointer is released.
+  const startWire = (n: WorkflowNode, port: Port) => (e: React.PointerEvent) => {
+    e.stopPropagation(); e.preventDefault();
+    const rect0 = canvasRef.current?.getBoundingClientRect();
+    if (!rect0) return;
+    const w0 = screenToWorld(e.clientX - rect0.left, e.clientY - rect0.top);
+    setDrawingEdge({ from: n.id, port: port.id, x: w0.x, y: w0.y });
+    const onMove = (ev: PointerEvent) => {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const wm = screenToWorld(ev.clientX - rect.left, ev.clientY - rect.top);
+      setDrawingEdge({ from: n.id, port: port.id, x: wm.x, y: wm.y });
+    };
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      setDrawingEdge(null);
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const wu = screenToWorld(ev.clientX - rect.left, ev.clientY - rect.top);
+      const target = (current?.nodes ?? []).find((o) =>
+        o.id !== n.id && PORTS[o.type].in.length > 0 &&
+        wu.x >= o.x && wu.x <= o.x + NODE_W &&
+        wu.y >= o.y && wu.y <= o.y + nodeHeight(o.type));
+      if (!target) return;
+      // Land on whichever input port the cursor came down closest to.
+      const ins = PORTS[target.type].in;
+      let best = 0, bestD = Infinity;
+      ins.forEach((p, i) => { const d = Math.abs(wu.y - (target.y + portY(target.type, i))); if (d < bestD) { bestD = d; best = i; } });
+      update((w) => ({ ...w, edges: [...w.edges, { id: `e-${Date.now()}`, from: n.id, to: target.id, fromPort: port.id, toPort: ins[best].id }] }));
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   const save = async () => {
     if (!current) return;
     setSaving(true);
@@ -324,7 +451,12 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
       const w = screenToWorld(sx, sy);
       moveNode(moving.id, Math.round(w.x - moving.dx), Math.round(w.y - moving.dy));
     }
-    if (drawingEdge) setDrawingEdge({ from: drawingEdge.from, x: sx, y: sy });
+    if (drawingEdge) {
+      // The preview wire is drawn inside the world layer, so the cursor has to
+      // be converted too — screen coordinates would drift as soon as you pan.
+      const w = screenToWorld(sx, sy);
+      setDrawingEdge({ ...drawingEdge, x: w.x, y: w.y });
+    }
     if (panning) {
       setPan({ x: panning.origX + (e.clientX - panning.startX), y: panning.origY + (e.clientY - panning.startY) });
     }
@@ -444,14 +576,16 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
 
   const nodeEl = (n: WorkflowNode) => {
     const meta = TYPE_META[n.type];
+    const ports = PORTS[n.type];
+    const rows = portRows(n.type);
     const selected = selectedNodeId === n.id;
-    const isAgentNode = n.type === 'agent' || n.type === 'subagent' || n.type === 'checker';
-    const nodes = current?.nodes ?? [];
+    const ready = nodeReady(n);
+    const well = wellFor(n);
     return (
       <div
         key={n.id}
-        className={`absolute z-[2] w-[200px] cursor-grab rounded-xl border bg-surface p-3 text-left transition-colors ${selected ? 'border-accent' : 'border-border hover:border-foreground/30'}`}
-        style={{ left: n.x, top: n.y }}
+        className={`absolute z-[2] cursor-grab rounded-xl border bg-surface text-left transition-colors ${selected ? 'border-accent' : 'border-border hover:border-foreground/30'}`}
+        style={{ left: n.x, top: n.y, width: NODE_W, height: nodeHeight(n.type) }}
         onPointerDown={(e) => {
           e.stopPropagation();
           const rect = canvasRef.current?.getBoundingClientRect();
@@ -476,52 +610,48 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
           window.addEventListener('pointerup', onUp);
         }}
       >
-        <div className="flex items-center gap-1.5">
-          <span className="shrink-0 text-muted">{meta.icon}</span>
+        {/* Header — type glyph, title, overall state */}
+        <div className="flex items-center gap-1.5 px-2.5" style={{ height: HEAD_H }}>
+          <span className="grid h-[18px] w-[18px] shrink-0 place-items-center rounded bg-background text-muted">{meta.icon}</span>
           <b className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground">{n.label}</b>
-          <IconButton label="delete node" className="h-5 w-5" onClick={(e) => { e.stopPropagation(); deleteNode(n.id); }}><X size={10} /></IconButton>
+          <i className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: ready ? TONE.ok : TONE.loop }} />
         </div>
-        <div className="mt-2 truncate font-mono text-[10px] text-muted">
-          {isAgentNode ? (n.agentId ? agentName(n.agentId) : 'no agent assigned') : meta.label}
+        {/* Description */}
+        <p className="m-0 truncate px-2.5 font-mono text-[9px] text-muted" style={{ height: DESC_H, lineHeight: `${DESC_H}px` }}>{meta.desc}</p>
+        {/* Inner block — the configuration this node holds. Editing lives in the
+            inspector so the node itself stays a readable module. */}
+        <div className="mx-2.5 flex flex-col justify-center overflow-hidden rounded-lg border border-border bg-background px-2" style={{ marginTop: WELL_MT, height: WELL_H }}>
+          <span className="font-mono text-[8px] tracking-wider text-muted uppercase">{well.key}</span>
+          <span className="truncate font-mono text-[10px] text-foreground">{well.value}</span>
         </div>
-        <Tooltip label="drag to connect">
-          <div
-            className="absolute -right-[7px] top-1/2 z-[3] h-3.5 w-3.5 -translate-y-1/2 cursor-crosshair rounded-full border-2 border-border bg-background hover:border-accent"
-            onPointerDown={(e) => {
-              e.stopPropagation(); e.preventDefault();
-              const rect0 = canvasRef.current?.getBoundingClientRect();
-              if (!rect0) return;
-              const w0 = screenToWorld(e.clientX - rect0.left, e.clientY - rect0.top);
-              setDrawingEdge({ from: n.id, x: w0.x + NODE_W, y: w0.y + NODE_H / 2 });
-              const onMove = (ev: PointerEvent) => {
-                const rect = canvasRef.current?.getBoundingClientRect();
-                if (!rect) return;
-                const wm = screenToWorld(ev.clientX - rect.left, ev.clientY - rect.top);
-                setDrawingEdge({ from: n.id, x: wm.x, y: wm.y });
-              };
-              const onUp = (ev: PointerEvent) => {
-                window.removeEventListener('pointermove', onMove);
-                window.removeEventListener('pointerup', onUp);
-                const rect = canvasRef.current?.getBoundingClientRect();
-                if (!rect) { setDrawingEdge(null); return; }
-                const wu = screenToWorld(ev.clientX - rect.left, ev.clientY - rect.top);
-                const px = wu.x, py = wu.y;
-                let target: string | null = null;
-                for (const other of nodes) {
-                  if (other.id === n.id) continue;
-                  if (px >= other.x && px <= other.x + NODE_W && py >= other.y && py <= other.y + NODE_H) { target = other.id; break; }
-                }
-                if (target) {
-                  const edge: WorkflowEdge = { id: `e-${Date.now()}`, from: n.id, to: target };
-                  update((w) => ({ ...w, edges: [...w.edges, edge] }));
-                }
-                setDrawingEdge(null);
-              };
-              window.addEventListener('pointermove', onMove);
-              window.addEventListener('pointerup', onUp);
-            }}
-          />
-        </Tooltip>
+        {/* Port band — typed inputs on the left edge, branch outputs on the right */}
+        <div className="border-t border-border" style={{ marginTop: BAND_MT, paddingBottom: BAND_PB }}>
+          {Array.from({ length: rows }).map((_, i) => {
+            const inp = ports.in[i];
+            const out = ports.out[i];
+            return (
+              <div key={i} className="relative flex items-center justify-between gap-2 px-2.5" style={{ height: ROW_H }}>
+                {inp ? <span className="font-mono text-[9px] text-muted">{inp.label}</span> : <span />}
+                {inp && (
+                  <span
+                    className="pointer-events-none absolute top-1/2 left-0 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-surface"
+                    style={{ borderColor: TONE[inp.tone] }}
+                  />
+                )}
+                {out && (
+                  <button
+                    type="button"
+                    aria-label={`${out.label} port — drag to connect`}
+                    className="focus-ring absolute top-1/2 right-0 h-2.5 w-2.5 translate-x-1/2 -translate-y-1/2 cursor-crosshair rounded-full border-2 bg-surface transition-shadow hover:shadow-[0_0_0_3px_var(--color-border)]"
+                    style={{ borderColor: TONE[out.tone] }}
+                    onPointerDown={startWire(n, out)}
+                  />
+                )}
+                {out ? <span className="font-mono text-[9px] text-muted">{out.label}</span> : null}
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   };
@@ -589,15 +719,25 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
                   const from = current.nodes.find((n) => n.id === e.from);
                   const to = current.nodes.find((n) => n.id === e.to);
                   if (!from || !to) return null;
-                  const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2;
-                  const x2 = to.x, y2 = to.y + NODE_H / 2;
-                  const d = `M ${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`;
+                  // A wire leaves a named outcome port and lands on an input port,
+                  // so a branch keeps its meaning in both geometry and colour.
+                  const fi = portIndex(from.type, 'out', e.fromPort);
+                  const ti = portIndex(to.type, 'in', e.toPort);
+                  const x1 = from.x + NODE_W, y1 = from.y + portY(from.type, fi);
+                  const x2 = to.x, y2 = to.y + portY(to.type, ti);
+                  const d = wire(x1, y1, x2, y2);
+                  const tone = TONE[PORTS[from.type].out[fi]?.tone ?? 'text'];
                   const selected = selectedEdgeId === e.id;
                   return (
                     <g key={e.id} className="pointer-events-auto cursor-pointer" onClick={(ev) => { ev.stopPropagation(); setSelectedEdgeId(e.id); setSelectedNodeId(null); }}>
                       {/* Wide invisible hit area */}
                       <path d={d} className="fill-none stroke-transparent" strokeWidth={14} />
-                      <path d={d} className={`fill-none stroke-[1.5] ${selected ? 'stroke-[var(--color-accent)]' : 'stroke-[var(--color-border)]'}`} />
+                      <path
+                        d={d}
+                        className="fill-none"
+                        strokeWidth={1.5}
+                        style={{ stroke: selected ? 'var(--color-accent)' : tone, opacity: selected ? 1 : 0.8 }}
+                      />
                       {selected && (
                         <g transform={`translate(${(x1 + x2) / 2}, ${(y1 + y2) / 2})`} onClick={(ev) => { ev.stopPropagation(); deleteEdge(e.id); setSelectedEdgeId(null); }}>
                           <circle r={9} className="fill-surface stroke-border" strokeWidth={1.5} />
@@ -607,7 +747,21 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
                     </g>
                   );
                 })}
-                {drawingEdge && <path className="fill-none stroke-[var(--color-accent)] stroke-[1.5] [stroke-dasharray:5_5]" d={`M ${drawingEdge.x} ${drawingEdge.y} C ${drawingEdge.x + 40} ${drawingEdge.y}, ${drawingEdge.x - 40} ${drawingEdge.y}, ${drawingEdge.x} ${drawingEdge.y}`} />}
+                {drawingEdge && (() => {
+                  const src = current.nodes.find((n) => n.id === drawingEdge.from);
+                  if (!src) return null;
+                  const i = portIndex(src.type, 'out', drawingEdge.port);
+                  const x1 = src.x + NODE_W, y1 = src.y + portY(src.type, i);
+                  const tone = TONE[PORTS[src.type].out[i]?.tone ?? 'text'];
+                  return (
+                    <path
+                      d={wire(x1, y1, drawingEdge.x, drawingEdge.y)}
+                      className="fill-none [stroke-dasharray:5_5]"
+                      strokeWidth={1.5}
+                      style={{ stroke: tone }}
+                    />
+                  );
+                })()}
               </svg>
 
               {current.nodes.map(nodeEl)}
@@ -615,7 +769,10 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
               {drag && dragPos && (() => {
                 const w = screenToWorld(dragPos.x, dragPos.y);
                 return (
-                  <div className="pointer-events-none absolute z-[5] w-[200px] rounded-xl border border-accent border-dashed bg-surface/80 p-3 opacity-80" style={{ left: w.x - NODE_W / 2, top: w.y - 20 }}>
+                  <div
+                    className="pointer-events-none absolute z-[5] flex flex-col justify-center rounded-xl border border-dashed border-accent bg-surface/80 px-2.5 opacity-80"
+                    style={{ left: w.x - NODE_W / 2, top: w.y - 20, width: NODE_W, height: nodeHeight(drag.type) }}
+                  >
                     <b className="font-mono text-[11px] text-foreground">{TYPE_META[drag.type].label}</b>
                   </div>
                 );
@@ -627,7 +784,7 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
                 <div className="max-w-[360px] px-4 text-center text-muted">
                   <WorkflowIcon size={24} className="mx-auto mb-2 opacity-50" />
                   <p className="m-0 text-[12px] leading-relaxed">Drag nodes from the palette onto the canvas.</p>
-                  <p className="mt-1 mb-0 font-mono text-[10px] leading-relaxed">scroll to zoom · drag empty space to pan · connect ports to chain agents</p>
+                  <p className="mt-1 mb-0 font-mono text-[10px] leading-relaxed">scroll to zoom · drag empty space to pan · drag an output port onto another node to wire it</p>
                 </div>
               </div>
             )}
@@ -748,12 +905,28 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
                       <p className="mt-2 mb-0 text-[11px] leading-relaxed text-muted">The workflow's accumulated output is sent as the action's payload (content/title) where applicable.</p>
                     </>
                   )}
-                  <p className="mt-4 mb-0 text-[11px] leading-relaxed text-muted">{TYPE_META[node.type].label} node. Drag its port to connect output to another node.</p>
+                  <div className="mt-5">
+                    <span className={GROUP_LABEL_CLS}>ports</span>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      {PORTS[node.type].in.map((p) => (
+                        <span key={p.id} className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-[9px] text-muted">
+                          <i className="h-1.5 w-1.5 rounded-full border" style={{ borderColor: TONE[p.tone] }} />{p.label}
+                        </span>
+                      ))}
+                      {PORTS[node.type].in.length > 0 && <span className="font-mono text-[10px] text-muted">→</span>}
+                      {PORTS[node.type].out.map((p) => (
+                        <span key={p.id} className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-[9px] text-muted">
+                          <i className="h-1.5 w-1.5 rounded-full border" style={{ borderColor: TONE[p.tone] }} />{p.label}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="mt-2 mb-0 text-[11px] leading-relaxed text-muted">Drag an output port onto another node to wire it. Branch ports record which outcome a wire leaves from.</p>
+                  </div>
                 </div>
               );
             })() : (
               <div className="text-center text-muted">
-                <p className="m-0 text-[12px] leading-relaxed">Select a node to edit its config, or drag from a node's port to create a connection.</p>
+                <p className="m-0 text-[12px] leading-relaxed">Select a node to edit its config, or drag an output port to wire it to another node.</p>
               </div>
             )}
             {storedRuns.length > 0 && (

@@ -86,7 +86,16 @@ export default function App() {
     }, 4000);
     return () => clearTimeout(t);
   }, []);
-  const [view, setView] = useState<View>('home');
+  // Navigation is a history, so the chrome's back/forward buttons are real.
+  // The stack holds views only — the selected agent persists on its own, so
+  // stepping away from an agent window and back lands on the same agent.
+  const [nav, setNav] = useState<{ stack: View[]; i: number }>({ stack: ['home'], i: 0 });
+  const view = nav.stack[nav.i];
+  const setView = (v: View) => setNav((n) => (n.stack[n.i] === v ? n : { stack: [...n.stack.slice(0, n.i + 1), v], i: n.i + 1 }));
+  const canBack = nav.i > 0;
+  const canForward = nav.i < nav.stack.length - 1;
+  const goBack = () => setNav((n) => (n.i > 0 ? { ...n, i: n.i - 1 } : n));
+  const goForward = () => setNav((n) => (n.i < n.stack.length - 1 ? { ...n, i: n.i + 1 } : n));
   const [drawerForm, setDrawerForm] = useState<DrawerForm>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [workflowToOpen, setWorkflowToOpen] = useState<string | null>(null);
@@ -140,41 +149,44 @@ export default function App() {
   };
 
   return (
-    <div className="app-drag flex h-screen overflow-hidden">
-      {/* Left section: the action rail conjoined with the chat list — one panel,
-          one clean border. */}
-      <div className="app-no-drag my-3 ml-3 flex min-h-0 shrink-0 overflow-hidden rounded-xl border border-border bg-surface">
-        <Rail
-          collapsed={sidebarCollapsed}
-          onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
-          view={view}
-          setView={setView}
-          onNewAgent={addAgent}
-          onOpenGraph={() => setView('graph')}
-          graphActive={view === 'graph'}
-        />
-        <Sidebar
-          agents={agents}
-          view={view}
-          selectedAgentId={selectedAgentId}
-          onOpen={openAgent}
-          onSettings={openAgentSettings}
-          onTogglePin={(id, pinned) => {
-            const a = agents.find((x) => x.id === id);
-            if (a) void persistAgent({ ...a, pinned });
-          }}
-          onDelete={async (id) => {
-            await deleteAgent(id);
-            if (selectedAgentId === id) { setSelectedAgentId(null); setView('home'); }
-            toast('agent deleted', 'success');
-          }}
-          collapsed={sidebarCollapsed}
-        />
-      </div>
+    <div className="app-drag flex h-screen flex-col overflow-hidden">
+      <Topbar
+        collapsed={sidebarCollapsed}
+        onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+        canBack={canBack}
+        canForward={canForward}
+        onBack={goBack}
+        onForward={goForward}
+        onOpenGraph={() => setView('graph')}
+        graphActive={view === 'graph'}
+        onNewAgent={addAgent}
+      />
 
-      {/* Right section: free canvas — chrome floats on top, content is full-bleed. */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <Topbar />
+      <div className="flex min-h-0 flex-1">
+        {/* Left section: the action rail conjoined with the chat list — one
+            panel, one clean border. */}
+        <div className="app-no-drag my-3 ml-3 flex min-h-0 shrink-0 overflow-hidden rounded-xl border border-border bg-surface">
+          <Rail view={view} setView={setView} />
+          <Sidebar
+            agents={agents}
+            view={view}
+            selectedAgentId={selectedAgentId}
+            onOpen={openAgent}
+            onSettings={openAgentSettings}
+            onTogglePin={(id, pinned) => {
+              const a = agents.find((x) => x.id === id);
+              if (a) void persistAgent({ ...a, pinned });
+            }}
+            onDelete={async (id) => {
+              await deleteAgent(id);
+              if (selectedAgentId === id) { setSelectedAgentId(null); setView('home'); }
+              toast('agent deleted', 'success');
+            }}
+            collapsed={sidebarCollapsed}
+          />
+        </div>
+
+        {/* Right section: free canvas — content is full-bleed */}
         <main className="app-no-drag min-h-0 min-w-0 flex-1 overflow-hidden">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
           <div className={pane(view === 'home')}><HomeView agents={agents} tools={tools} workflows={workflows} runs={runs} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('workflows'); setWorkflowToOpen(id); }} /></div>
