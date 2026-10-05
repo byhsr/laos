@@ -95,7 +95,9 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   messages.extend(window);
 
   // Provider, endpoint, key and reasoning setting all resolve in one place now.
-  let resolved = provider::resolve(&conn, &agent.model, None)?;
+  let mut resolved = provider::resolve(&conn, &agent.model, None)?;
+  // The agent's own reasoning wins over the model's default.
+  provider::apply_agent_reasoning(&mut resolved, &agent.reasoning);
   let is_ollama = resolved.kind == provider::Kind::Ollama;
 
   // Tool-call rounds (non-streaming) run first, then the final reply streams.

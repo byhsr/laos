@@ -1,21 +1,25 @@
 // MCP connector: speaks JSON-RPC 2.0 over stdio to a Model Context Protocol
-// server process, so any server (Notion, filesystem, GitHub, …) can expose its
-// tools to agents. One process is spawned per operation — simple, and nothing
-// leaks between calls. The transport is isolated in spawn()/request(), so a
-// remote-HTTP transport can be added here later without touching callers.
+// server process, so any server (Notion, filesystem, GitHub, a browser, …) can
+// expose its tools to agents. One long-lived process is kept per configured
+// server and reused across calls, so stateful servers — a browser session, a DB
+// connection — keep their state between tool calls. The transport is isolated in
+// spawn_session()/rpc(), so a remote-HTTP transport can be added here later
+// without touching callers.
 
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::AppHandle;
 
 use crate::db::{db, now};
 use crate::models::*;
 
-// Hard cap on a single MCP operation; the watchdog kills a hung server.
+// Hard cap on a single MCP request; the watchdog kills a hung server, which ends
+// the read and lets the next call respawn it cleanly.
 const RPC_TIMEOUT: Duration = Duration::from_secs(45);
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const MASK: &str = "••••••••";
@@ -96,16 +100,36 @@ pub(crate) fn load_server(conn: &Connection, id: &str) -> Result<McpServer, Stri
   }
 }
 
-// A running MCP server plus the diagnostics needed to explain a failure: whether
-// the watchdog had to kill it, and whatever it wrote to stderr (which is where a
-// server reports a bad token or a missing module).
-pub(crate) struct Proc {
-  child: Arc<Mutex<Child>>,
-  timed_out: Arc<AtomicBool>,
+// ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+
+// One live MCP server process. stdio carries a single request/response stream, so
+// calls to the same server are serialized through the session lock rather than
+// interleaved. The child is behind its own lock so the watchdog can kill it
+// without touching the I/O handles.
+struct Session {
+  fingerprint: String,
+  kill: Arc<Mutex<Child>>,
+  stdin: ChildStdin,
+  reader: BufReader<ChildStdout>,
   stderr: Arc<Mutex<String>>,
+  timed_out: Arc<AtomicBool>,
+  next_id: u64,
 }
 
-impl Proc {
+impl Session {
+  fn is_dead(&self) -> bool {
+    match self.kill.lock() {
+      Ok(mut c) => matches!(c.try_wait(), Ok(Some(_))),
+      Err(_) => true,
+    }
+  }
+
+  fn kill_child(&mut self) {
+    if let Ok(mut c) = self.kill.lock() { let _ = c.kill(); let _ = c.wait(); }
+  }
+
   // Appends the timeout / stderr detail to an error so the reason is visible
   // instead of a bare "the server closed the connection".
   fn explain(&self, base: String) -> String {
@@ -126,27 +150,58 @@ impl Proc {
   }
 }
 
-// Spawns the server with a watchdog that kills it after RPC_TIMEOUT. The handles
-// are taken out of the Child so reading never contends with the watchdog's lock.
-fn spawn(server: &McpServer) -> Result<(Proc, ChildStdin, BufReader<ChildStdout>), String> {
-  // On Windows a bare name only resolves to an .exe, so command shims like
-  // `npx` (npx.cmd) or `uvx` need cmd /C — the same approach as run_command.
-  #[cfg(windows)]
-  let mut cmd = {
-    let mut c = Command::new("cmd");
-    c.arg("/C").arg(&server.command);
-    c
+// Identifies the exact configuration a session was spawned with, so editing a
+// server's command/args/env transparently restarts it on the next call.
+fn fingerprint(server: &McpServer) -> String {
+  format!("{}\u{1}{:?}\u{1}{:?}", server.command, server.args, server.env)
+}
+
+fn sessions() -> &'static Mutex<HashMap<String, Arc<Mutex<Session>>>> {
+  static SESSIONS: OnceLock<Mutex<HashMap<String, Arc<Mutex<Session>>>>> = OnceLock::new();
+  SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// Kills and forgets one server's session (called when the server is deleted).
+fn remove(id: &str) {
+  let arc = match sessions().lock() { Ok(mut m) => m.remove(id), Err(_) => None };
+  if let Some(arc) = arc {
+    if let Ok(mut s) = arc.lock() { s.kill_child(); }
+  }
+}
+
+// Kills every live session — called on app exit so no server process is orphaned.
+pub(crate) fn shutdown_all() {
+  let arcs: Vec<Arc<Mutex<Session>>> = match sessions().lock() {
+    Ok(mut m) => m.drain().map(|(_, v)| v).collect(),
+    Err(_) => Vec::new(),
   };
-  #[cfg(not(windows))]
-  let mut cmd = Command::new(&server.command);
+  for arc in arcs {
+    if let Ok(mut s) = arc.lock() { s.kill_child(); }
+  }
+}
+
+// On Windows a bare name only resolves to an .exe, so command shims like `npx`
+// (npx.cmd) or `uvx` need cmd /C — the same approach as run_command.
+#[cfg(windows)]
+fn build_command(server: &McpServer) -> Command {
+  let mut c = Command::new("cmd");
+  c.arg("/C").arg(&server.command);
+  c
+}
+#[cfg(not(windows))]
+fn build_command(server: &McpServer) -> Command {
+  Command::new(&server.command)
+}
+
+fn spawn_session(server: &McpServer) -> Result<Session, String> {
+  let mut cmd = build_command(server);
   cmd.args(&server.args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
   for (k, v) in &server.env { cmd.env(k, v); }
   let mut child = cmd.spawn().map_err(|e| format!("Could not start '{}': {e}", server.command))?;
   let stdin = child.stdin.take().ok_or("MCP server has no stdin")?;
   let stdout = child.stdout.take().ok_or("MCP server has no stdout")?;
   let stderr = child.stderr.take();
-  let child = Arc::new(Mutex::new(child));
-  let timed_out = Arc::new(AtomicBool::new(false));
+  let kill = Arc::new(Mutex::new(child));
   let err_buf = Arc::new(Mutex::new(String::new()));
   if let Some(mut handle) = stderr {
     let buf = err_buf.clone();
@@ -156,74 +211,131 @@ fn spawn(server: &McpServer) -> Result<(Proc, ChildStdin, BufReader<ChildStdout>
       if let Ok(mut b) = buf.lock() { *b = text; }
     });
   }
-  let killer = child.clone();
-  let flag = timed_out.clone();
-  std::thread::spawn(move || {
-    std::thread::sleep(RPC_TIMEOUT);
-    if let Ok(mut c) = killer.lock() {
-      if c.try_wait().ok().flatten().is_none() {
-        flag.store(true, Ordering::SeqCst);
-        let _ = c.kill();
-      }
-    }
-  });
-  Ok((Proc { child, timed_out, stderr: err_buf }, stdin, BufReader::new(stdout)))
+  Ok(Session {
+    fingerprint: fingerprint(server),
+    kill, stdin, reader: BufReader::new(stdout), stderr: err_buf,
+    timed_out: Arc::new(AtomicBool::new(false)), next_id: 1,
+  })
 }
 
-fn stop(child: &Arc<Mutex<Child>>) {
-  if let Ok(mut c) = child.lock() { let _ = c.kill(); let _ = c.wait(); }
+// Returns the live session for a server, spawning (and handshaking) one when
+// none exists, when the config changed, or when the previous process died.
+fn get_session(server: &McpServer) -> Result<Arc<Mutex<Session>>, String> {
+  let fp = fingerprint(server);
+  {
+    let map = sessions().lock().map_err(|_| "MCP session registry is poisoned.".to_string())?;
+    if let Some(existing) = map.get(&server.id).cloned() {
+      let fresh = match existing.lock() { Ok(s) => s.fingerprint == fp && !s.is_dead(), Err(_) => false };
+      if fresh { return Ok(existing); }
+    }
+  }
+  // Spawn outside the registry lock so a slow cold start (npx) never blocks other
+  // servers while it installs or boots.
+  let mut session = spawn_session(server)?;
+  if let Err(e) = handshake(&mut session) { session.kill_child(); return Err(e); }
+  let arc = Arc::new(Mutex::new(session));
+
+  let mut map = sessions().lock().map_err(|_| "MCP session registry is poisoned.".to_string())?;
+  // A concurrent call may have started a good session in the meantime; prefer it
+  // and drop the one we just built.
+  if let Some(existing) = map.get(&server.id).cloned() {
+    let fresh = match existing.lock() { Ok(s) => s.fingerprint == fp && !s.is_dead(), Err(_) => false };
+    if fresh {
+      if let Ok(mut s) = arc.lock() { s.kill_child(); }
+      return Ok(existing);
+    }
+  }
+  if let Some(old) = map.remove(&server.id) {
+    if let Ok(mut s) = old.lock() { s.kill_child(); }
+  }
+  map.insert(server.id.clone(), arc.clone());
+  Ok(arc)
+}
+
+// Runs `f` against the server's session, dropping a session whose process died so
+// the next call respawns instead of reusing a corpse. A tool that merely returns
+// an error keeps its session (the process is still healthy).
+fn with_session<T>(server: &McpServer, f: impl FnOnce(&mut Session) -> Result<T, String>) -> Result<T, String> {
+  let arc = get_session(server)?;
+  let mut session = arc.lock().map_err(|_| "MCP session is poisoned.".to_string())?;
+  let result = f(&mut session);
+  if result.is_err() && session.is_dead() {
+    drop(session);
+    remove(&server.id);
+  }
+  result
+}
+
+fn write_line(session: &mut Session, msg: &serde_json::Value) -> Result<(), String> {
+  let mut line = serde_json::to_string(msg).map_err(|e| e.to_string())?;
+  line.push('\n');
+  session.stdin.write_all(line.as_bytes()).map_err(|e| format!("MCP write failed: {e}"))?;
+  session.stdin.flush().map_err(|e| e.to_string())
+}
+
+// initialize + notifications/initialized — required once before list or call.
+fn handshake(session: &mut Session) -> Result<(), String> {
+  rpc(session, "initialize", serde_json::json!({
+    "protocolVersion": PROTOCOL_VERSION,
+    "capabilities": {},
+    "clientInfo": { "name": "local-agent-os", "version": env!("CARGO_PKG_VERSION") },
+  }))?;
+  write_line(session, &serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
 }
 
 // Writes one request and reads until its response id arrives, skipping
 // notifications and any unrelated traffic.
-fn request(proc: &Proc, stdin: &mut ChildStdin, reader: &mut BufReader<ChildStdout>, id: u64, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+fn rpc(session: &mut Session, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+  let id = session.next_id;
+  session.next_id += 1;
   let mut msg = serde_json::json!({ "jsonrpc": "2.0", "id": id, "method": method });
   if !params.is_null() { msg["params"] = params; }
-  let mut line = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
-  line.push('\n');
-  stdin.write_all(line.as_bytes()).map_err(|e| format!("MCP write failed: {e}"))?;
-  stdin.flush().map_err(|e| e.to_string())?;
+  write_line(session, &msg)?;
+
+  // Per-request watchdog: a hung server is killed, which ends the read below and
+  // lets the next call respawn it. A healthy idle session is never killed.
+  let done = Arc::new(AtomicBool::new(false));
+  session.timed_out.store(false, Ordering::SeqCst);
+  {
+    let kill = session.kill.clone();
+    let flag = session.timed_out.clone();
+    let done = done.clone();
+    std::thread::spawn(move || {
+      std::thread::sleep(RPC_TIMEOUT);
+      if !done.load(Ordering::SeqCst) {
+        flag.store(true, Ordering::SeqCst);
+        if let Ok(mut c) = kill.lock() { let _ = c.kill(); }
+      }
+    });
+  }
 
   let mut buf = String::new();
-  loop {
+  let outcome: Result<serde_json::Value, String> = loop {
     buf.clear();
-    let n = reader.read_line(&mut buf).map_err(|e| proc.explain(format!("MCP read failed: {e}")))?;
-    if n == 0 { return Err(proc.explain(format!("The MCP server closed the connection during '{method}'."))); }
+    let read = session.reader.read_line(&mut buf);
+    let n = match read {
+      Ok(n) => n,
+      Err(e) => break Err(session.explain(format!("MCP read failed: {e}"))),
+    };
+    if n == 0 { break Err(session.explain(format!("The MCP server closed the connection during '{method}'."))); }
     let trimmed = buf.trim();
     if trimmed.is_empty() { continue; }
     let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
     if v.get("id").and_then(|i| i.as_u64()) != Some(id) { continue; }
     if let Some(err) = v.get("error") {
       let m = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
-      return Err(format!("MCP '{method}' failed: {m}"));
+      break Err(format!("MCP '{method}' failed: {m}"));
     }
-    return Ok(v.get("result").cloned().unwrap_or(serde_json::Value::Null));
-  }
-}
-
-fn notify(stdin: &mut ChildStdin, method: &str) -> Result<(), String> {
-  let mut line = serde_json::to_string(&serde_json::json!({ "jsonrpc": "2.0", "method": method })).map_err(|e| e.to_string())?;
-  line.push('\n');
-  stdin.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
-  stdin.flush().map_err(|e| e.to_string())
-}
-
-// initialize + notifications/initialized — required before list or call.
-fn handshake(proc: &Proc, stdin: &mut ChildStdin, reader: &mut BufReader<ChildStdout>) -> Result<(), String> {
-  request(proc, stdin, reader, 1, "initialize", serde_json::json!({
-    "protocolVersion": PROTOCOL_VERSION,
-    "capabilities": {},
-    "clientInfo": { "name": "local-agent-os", "version": env!("CARGO_PKG_VERSION") },
-  }))?;
-  notify(stdin, "notifications/initialized")
+    break Ok(v.get("result").cloned().unwrap_or(serde_json::Value::Null));
+  };
+  done.store(true, Ordering::SeqCst);
+  outcome
 }
 
 // Lists the tools a server advertises.
 pub(crate) fn list_tools(server: &McpServer) -> Result<Vec<McpToolInfo>, String> {
-  let (proc, mut stdin, mut reader) = spawn(server)?;
-  let result = (|| {
-    handshake(&proc, &mut stdin, &mut reader)?;
-    let res = request(&proc, &mut stdin, &mut reader, 2, "tools/list", serde_json::json!({}))?;
+  with_session(server, |session| {
+    let res = rpc(session, "tools/list", serde_json::json!({}))?;
     let mut out = Vec::new();
     for t in res.get("tools").and_then(|t| t.as_array()).cloned().unwrap_or_default() {
       let name = t.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
@@ -235,17 +347,13 @@ pub(crate) fn list_tools(server: &McpServer) -> Result<Vec<McpToolInfo>, String>
       });
     }
     Ok(out)
-  })();
-  stop(&proc.child);
-  result
+  })
 }
 
 // Invokes a tool and flattens its content blocks into text.
 pub(crate) fn call_tool(server: &McpServer, tool: &str, arguments: serde_json::Value) -> Result<String, String> {
-  let (proc, mut stdin, mut reader) = spawn(server)?;
-  let result = (|| {
-    handshake(&proc, &mut stdin, &mut reader)?;
-    let res = request(&proc, &mut stdin, &mut reader, 2, "tools/call", serde_json::json!({ "name": tool, "arguments": arguments }))?;
+  with_session(server, |session| {
+    let res = rpc(session, "tools/call", serde_json::json!({ "name": tool, "arguments": arguments }))?;
     let mut text = String::new();
     for block in res.get("content").and_then(|c| c.as_array()).cloned().unwrap_or_default() {
       match block.get("type").and_then(|t| t.as_str()) {
@@ -258,9 +366,7 @@ pub(crate) fn call_tool(server: &McpServer, tool: &str, arguments: serde_json::V
       return Err(if text.trim().is_empty() { format!("'{tool}' reported an error.") } else { text.trim().to_string() });
     }
     Ok(if text.trim().is_empty() { "The tool returned no content.".to_string() } else { text.trim().to_string() })
-  })();
-  stop(&proc.child);
-  result
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +415,8 @@ pub fn save_mcp_server(app: AppHandle, server: McpServerRecord) -> Result<String
       now()
     ],
   ).map_err(|e| e.to_string())?;
+  // The running process (if any) keeps serving the old config until the next call
+  // notices the fingerprint changed and respawns — no restart needed here.
   Ok(id)
 }
 
@@ -318,6 +426,8 @@ pub fn delete_mcp_server(app: AppHandle, id: String) -> Result<(), String> {
   conn.execute("DELETE FROM mcp_servers WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
   // Its imported tools go with it.
   conn.execute("DELETE FROM tools WHERE kind='mcp' AND integration_id=?1", params![id]).map_err(|e| e.to_string())?;
+  // And its live process is stopped.
+  remove(&id);
   Ok(())
 }
 

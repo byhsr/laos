@@ -147,6 +147,13 @@ html:root[data-theme="cyber"] {
   animation: ip-panel 140ms var(--ease-panel) both;
 }
 
+/* Right-docked side panel: the same overlay grammar as Modal, but anchored to
+   its parent surface so it reads as a window beside the content, never a
+   full-screen view. */
+@utility side-panel {
+  animation: ip-slide 160ms var(--ease-panel) both;
+}
+
 /* ---------------------------------------------------------------------------
    Motion — short and tactile. Nothing over 250ms except brand moments.
    Springs for scale, tweens for opacity/position.
@@ -154,6 +161,7 @@ html:root[data-theme="cyber"] {
 @keyframes ip-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes ip-pop { from { opacity: 0; scale: 0.98; } to { opacity: 1; scale: 1; } }
 @keyframes ip-panel { from { opacity: 0; scale: 0.99; } to { opacity: 1; scale: 1; } }
+@keyframes ip-slide { from { opacity: 0; translate: 24px 0; } to { opacity: 1; translate: 0 0; } }
 @keyframes ip-toast { from { opacity: 0; translate: 0 -12px; } to { opacity: 1; translate: 0 0; } }
 
 @media (prefers-reduced-motion: reduce) {

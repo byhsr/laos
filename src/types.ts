@@ -2,7 +2,7 @@ export type Provider = 'ollama' | 'openrouter' | 'groq';
 // Per-model reasoning control. 'auto' sends nothing at all to the provider, which
 // is the safe default: models without reasoning support never see the parameter.
 export type Reasoning = 'auto' | 'off' | 'low' | 'medium' | 'high';
-export type Agent = { id: string; name: string; objective: string; model: string; toolIds: string[]; integrations: string[]; skillIds: string[]; memory: boolean; permissions: string[]; homePath: string; color: string; x: number; y: number; isManager?: boolean; description?: string; persona?: string; pinned?: boolean; avatar?: string };
+export type Agent = { id: string; name: string; objective: string; model: string; reasoning: Reasoning; toolIds: string[]; integrations: string[]; skillIds: string[]; memory: boolean; permissions: string[]; homePath: string; color: string; x: number; y: number; isManager?: boolean; description?: string; persona?: string; pinned?: boolean; avatar?: string };
 export type RunEvent = { time: string; type: 'thought' | 'tool' | 'result'; title: string; detail?: string };
 export type Run = { id: string; agentId: string; startedAt: string; endedAt?: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; model: string; input: string; events: RunEvent[]; output?: string; promptTokens?: number; completionTokens?: number };
 export type Edge = { id: string; from: string; to: string };

@@ -25,6 +25,13 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   if !agents_cols.iter().any(|c| c == "pinned") { conn.execute("ALTER TABLE agents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
   // Custom avatar as a data URL (empty = fall back to the persona animation).
   if !agents_cols.iter().any(|c| c == "avatar") { conn.execute("ALTER TABLE agents ADD COLUMN avatar TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  // Per-agent reasoning: the agent owns the setting, the model's value is only
+  // the default. Existing agents inherit their model's setting so an upgrade
+  // changes nothing for them.
+  if !agents_cols.iter().any(|c| c == "reasoning") {
+    conn.execute("ALTER TABLE agents ADD COLUMN reasoning TEXT NOT NULL DEFAULT 'auto'", []).map_err(|e| e.to_string())?;
+    conn.execute("UPDATE agents SET reasoning = COALESCE((SELECT reasoning FROM model_configs WHERE model_configs.id = agents.model), 'auto')", []).map_err(|e| e.to_string())?;
+  }
   let runs_cols = cols("runs")?;
   if !runs_cols.iter().any(|c| c == "prompt_tokens") { conn.execute("ALTER TABLE runs ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
   if !runs_cols.iter().any(|c| c == "completion_tokens") { conn.execute("ALTER TABLE runs ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }

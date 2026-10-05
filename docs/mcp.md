@@ -50,19 +50,28 @@ any other tool and `build_tools` needs only the `mcp` branch.
 
 ## How a call works
 
-`tools/mcp.rs::McpTool` → `mcp::call_tool`, which:
+`tools/mcp.rs::McpTool` → `mcp::call_tool`, which runs against a **long-lived session** held for
+that server:
 
-1. Spawns the server's command (stdin/stdout piped, stderr discarded) with a **45s watchdog**
-   thread that kills a hung process.
-2. Handshakes: `initialize` (protocol `2024-11-05`, clientInfo `local-agent-os`) then
-   `notifications/initialized`.
-3. Sends `tools/call` with `{name, arguments}` and reads until the matching response id,
-   skipping notifications and unrelated traffic.
-4. Flattens `result.content[]` text blocks; `isError: true` becomes an `Err`.
-5. Kills the process (a fresh process per call — nothing leaks between calls).
+1. **One process per server.** The first call spawns the command (stdin/stdout piped, stderr
+   captured) and handshakes once: `initialize` (protocol `2024-11-05`, clientInfo
+   `local-agent-os`) then `notifications/initialized`. The session lives in a process-wide
+   registry keyed by server id and is reused by every later `tools/list` / `tools/call`, so
+   **stateful servers keep their state** between calls (a browser session, a DB connection).
+2. Calls to the same server are **serialized** through the session lock — stdio is a single
+   request/response stream, so two calls never interleave.
+3. Each request writes one JSON-RPC message and reads until the matching response id, skipping
+   notifications and unrelated traffic; `result.content[]` text blocks are flattened and
+   `isError: true` becomes an `Err`.
+4. A **per-request 45s watchdog** kills a server that hangs; the session is then dropped and the
+   next call respawns it. A healthy idle session is never killed.
+5. A session whose process died (crash, kill) is detected and replaced on the next call. Editing
+   a server's command/args/env is picked up automatically — the config **fingerprint** no longer
+   matches, so the old process is stopped and a new one started.
 
-The round-trip is blocking, so `McpTool::run` runs it on `tokio::task::spawn_blocking` to
-avoid stalling the async runtime.
+The round-trip is blocking, so `McpTool::run` runs it on `tokio::task::spawn_blocking` to avoid
+stalling the async runtime. Sessions are stopped when the server is deleted and when the app
+exits (`RunEvent::Exit` → `mcp::shutdown_all`), so no child process is orphaned.
 
 ## Tool names
 
@@ -91,8 +100,29 @@ pages/databases with the integration** in Notion, or the token will see nothing.
 > `API-retrieve-a-page`, …).
 
 On Windows a command shim like `npx` is a `.cmd` file, which `Command::new` cannot launch
-directly — `spawn()` wraps the command in `cmd /C` there (the same approach as
+directly — `spawn_session()` wraps the command in `cmd /C` there (the same approach as
 `run_command`).
+
+## Browser control (Playwright)
+
+Persistent sessions are what make a real browser usable: the server launches one Chrome/Edge and
+every `navigate` → `click` → `type` → `extract` call drives the **same page** across the whole
+conversation. Add it as an MCP server:
+
+| Field | Value |
+| --- | --- |
+| command | `npx` |
+| args | `-y @playwright/mcp@latest` |
+| env | (none) |
+
+Save → tools import → attach to an agent (or just ask Laos). The agent gets tools like
+`browser_navigate`, `browser_click`, `browser_type`, `browser_snapshot`, and
+`browser_take_screenshot`, driven over the Chrome DevTools Protocol against a real browser.
+Requires Node/npx on the machine. `chrome-devtools-mcp`
+(`-y chrome-devtools-mcp@latest`) is an alternative that speaks CDP directly.
+
+> Before persistence this could not work — a fresh process per call launched a new browser every
+> time and lost the page. Now the browser stays open for the session.
 
 ## Permission & trust
 
@@ -106,7 +136,7 @@ server config as trusted input.
 
 - stdio only; no remote/HTTP transport yet.
 - Args are split on whitespace — quoted arguments aren't supported.
-- A fresh process per call: correct and leak-free, but `npx` cold starts cost seconds. A
-  long-lived child per server would be the optimization.
+- Sessions are long-lived for the app's lifetime and stopped on delete / exit; there is no idle
+  reaper yet, so many configured servers means many resident processes.
 - No OAuth helper: servers that require OAuth (not just a token) must be run through a
   wrapper or served remotely.

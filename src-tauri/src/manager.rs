@@ -204,7 +204,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   let conn = db(app)?;
   // Find the manager agent (is_manager=1); create a default if missing.
   let manager = {
-    let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, home_path, permissions, skill_ids FROM agents WHERE is_manager=1 LIMIT 1").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, home_path, permissions, skill_ids, reasoning FROM agents WHERE is_manager=1 LIMIT 1").map_err(|e| e.to_string())?;
     let mut rows = stmt.query_map([], |row| {
       let tool_ids: String = row.get(4)?;
       let integrations: String = row.get(5)?;
@@ -215,6 +215,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
         tool_ids: parse_json_vec(&tool_ids), integrations: parse_json_vec(&integrations),
         home_path: row.get(6)?, permissions: parse_json_vec(&permissions),
         skill_ids: parse_json_vec(&skill_ids),
+        reasoning: row.get(9)?,
       })
     }).map_err(|e| e.to_string())?;
     rows.next().transpose().map_err(|e| e.to_string())?
@@ -226,8 +227,9 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
       if model.is_empty() {
         return Err("No model configured. Add an enabled model in the Models tab first.".into());
       }
-      let m = AgentRequest { id: "manager".into(), name: "Laos".into(), objective: "You are Laos, the workspace orchestrator. Control the workspace and coordinate work.".into(), model: model.clone(), tool_ids: vec![], integrations: vec![], home_path: "agents/manager".into(), permissions: vec!["network".into()], skill_ids: vec![] };
-      conn.execute("INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, is_manager) VALUES (?1,?2,?3,?4,'[]','[]',1,?5,?6,'#22c55e',1)", params![m.id, m.name, m.objective, m.model, serde_json::to_string(&m.permissions).unwrap_or_else(|_| "[]".into()), m.home_path]).map_err(|e| e.to_string())?;
+      let reasoning = conn.query_row("SELECT reasoning FROM model_configs WHERE id=?1", params![model], |r| r.get::<_, String>(0)).unwrap_or_else(|_| default_reasoning());
+      let m = AgentRequest { id: "manager".into(), name: "Laos".into(), objective: "You are Laos, the workspace orchestrator. Control the workspace and coordinate work.".into(), model: model.clone(), tool_ids: vec![], integrations: vec![], home_path: "agents/manager".into(), permissions: vec!["network".into()], skill_ids: vec![], reasoning: reasoning.clone() };
+      conn.execute("INSERT INTO agents (id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, is_manager, reasoning) VALUES (?1,?2,?3,?4,'[]','[]',1,?5,?6,'#22c55e',1,?7)", params![m.id, m.name, m.objective, m.model, serde_json::to_string(&m.permissions).unwrap_or_else(|_| "[]".into()), m.home_path, reasoning]).map_err(|e| e.to_string())?;
       m
     }
   };
@@ -286,7 +288,9 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   // Endpoint, key and reasoning all resolve in one place. This path used to pass
   // `!is_groq` as its "is OpenRouter" flag, which routed an unknown prefix to
   // OpenRouter instead of failing.
-  let resolved = provider::resolve(&conn, &manager.model, None)?;
+  let mut resolved = provider::resolve(&conn, &manager.model, None)?;
+  // The Manager's own reasoning wins over the model's default.
+  provider::apply_agent_reasoning(&mut resolved, &manager.reasoning);
   let is_ollama = resolved.kind == provider::Kind::Ollama;
   let mut final_output = String::new();
 
@@ -415,12 +419,14 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       if name.is_empty() || objective.is_empty() || model.is_empty() { return Err("create_agent requires name, objective and model.".into()); }
       let arr = |k: &str| args.get(k).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect::<Vec<_>>()).unwrap_or_default();
       let id = format!("agent-{}", chrono::Utc::now().timestamp_millis());
+      // New agents seed their reasoning from the chosen model.
+      let reasoning = conn.query_row("SELECT reasoning FROM model_configs WHERE id=?1", params![model], |r| r.get::<_, String>(0)).unwrap_or_else(|_| default_reasoning());
       let agent = AgentRecord {
         id: id.clone(), name: name.clone(), objective, model,
         tool_ids: arr("toolIds"), integrations: arr("integrations"), memory: true, skill_ids: arr("skillIds"),
         permissions: arr("permissions").into_iter().filter(|p| p == "network" || p == "files").collect(),
         home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(), persona: "ai-orb".into(),
-        pinned: false, avatar: String::new(),
+        pinned: false, avatar: String::new(), reasoning,
       };
       save_agent(app.clone(), agent)?;
       Ok(format!("Created agent '{name}' (id: {id})."))
@@ -434,7 +440,7 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
       if agent_id.is_empty() { return Err("update_agent requires agentId.".into()); }
       let existing = {
-        let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona, skill_ids, pinned, avatar FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, memory, permissions, home_path, color, x, y, is_manager, description, persona, skill_ids, pinned, avatar, reasoning FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
         let mut rows = stmt.query_map(params![agent_id], |row| {
           let tool_ids: String = row.get(4)?;
           let integrations: String = row.get(5)?;
@@ -448,6 +454,7 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
             is_manager: row.get::<_, i64>(12)? != 0, description: row.get(13)?, persona: row.get(14)?,
             skill_ids: parse_json_vec(&skill_ids),
             pinned: row.get::<_, i64>(16)? != 0, avatar: row.get(17)?,
+            reasoning: row.get(18)?,
           })
         }).map_err(|e| e.to_string())?;
         rows.next().transpose().map_err(|e| e.to_string())?

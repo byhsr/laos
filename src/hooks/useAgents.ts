@@ -36,8 +36,11 @@ export const useAgentsStore = create<AgentsState>((set) => ({
     const id = `agent-${Date.now()}`;
     // Default to the first enabled model config (never a hardcoded model).
     const defaultModel = draft.model ?? useModelsStore.getState().models.find((m) => m.enabled)?.id ?? '';
+    // A new agent seeds its reasoning from the chosen model, then owns it.
+    const modelReasoning = useModelsStore.getState().models.find((m) => m.id === defaultModel)?.reasoning ?? 'auto';
     const agent: Agent = {
       id, name: draft.name ?? 'New Agent', objective: draft.objective ?? '', model: defaultModel,
+      reasoning: draft.reasoning ?? modelReasoning,
       toolIds: draft.toolIds ?? [], integrations: draft.integrations ?? [], skillIds: draft.skillIds ?? [], memory: true,
       permissions: draft.permissions ?? ['network'], homePath: `agents/${id}`, color: draft.color ?? '#22c55e',
       x: 160 + Math.random() * 160, y: 120 + Math.random() * 120,

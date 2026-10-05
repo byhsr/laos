@@ -494,7 +494,7 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
           current_input.clone()
         } else {
           let agent_opt = {
-            let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, home_path, permissions, skill_ids FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
+            let mut stmt = conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, home_path, permissions, skill_ids, reasoning FROM agents WHERE id=?1").map_err(|e| e.to_string())?;
             let mut rows = stmt.query_map(params![agent_id], |row| {
               let tool_ids: String = row.get(4)?;
               let integrations: String = row.get(5)?;
@@ -505,6 +505,7 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
                 tool_ids: parse_json_vec(&tool_ids), integrations: parse_json_vec(&integrations),
                 home_path: row.get(6)?, permissions: parse_json_vec(&permissions),
                 skill_ids: parse_json_vec(&skill_ids),
+                reasoning: row.get(9)?,
               })
             }).map_err(|e| e.to_string())?;
             rows.next().transpose().map_err(|e| e.to_string())?

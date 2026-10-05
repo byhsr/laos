@@ -4,6 +4,8 @@ import type { ModelConfig, Reasoning } from '../../types';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
+import { Slider } from '../ui/Slider';
+import { REASONING_STOPS } from '../../reasoning';
 import { Checkbox } from '../ui/Checkbox';
 import { Card } from '../ui/Card';
 import { FIELD_LABEL_CLS, INPUT_CLS } from '../ui/Input';
@@ -84,15 +86,10 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
       <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={form.provider === 'ollama' ? 'qwen3:8b' : form.provider === 'groq' ? 'llama-3.3-70b-versatile' : 'anthropic/claude-3.5-haiku'} className={INPUT_CLS} />
 
       <label className={`${FIELD_LABEL_CLS} mt-4`}>reasoning</label>
-      <Select
+      <Slider
         value={form.reasoning}
-        options={[
-          { value: 'auto', label: 'auto — leave it to the model' },
-          { value: 'off', label: 'off — answer directly' },
-          { value: 'low', label: 'low effort' },
-          { value: 'medium', label: 'medium effort' },
-          { value: 'high', label: 'high effort' },
-        ]}
+        stops={REASONING_STOPS}
+        ariaLabel="reasoning"
         onChange={(v) => setForm({ ...form, reasoning: v as Reasoning })}
       />
       <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">

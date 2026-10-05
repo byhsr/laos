@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, Check, ChevronRight, Lock, MessageSquarePlus, RotateCcw, Settings, Trash2 } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowLeft, Check, ChevronRight, History, Info, Lock, MessageSquare, MessageSquarePlus, RotateCcw, Settings, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from './ui/ContextMenu';
-import type { Agent, ChatMessage, ChatStep, ExecutionResult, Integration, ModelConfig, Run, Skill, Tool } from '../types';
+import type { Agent, ChatMessage, ChatStep, ExecutionResult, Integration, ModelConfig, Reasoning, Run, Skill, Tool } from '../types';
 import { Select } from './ui/Select';
+import { Slider } from './ui/Slider';
+import { REASONING_STOPS } from '../reasoning';
 import { MultiDropdown } from './ui/MultiDropdown';
 import { AgentAvatar, PersonaPicker } from './ui/AgentAvatar';
 import { Button } from './ui/Button';
+import { SidePanel } from './ui/SidePanel';
 import { StatusGlyph, StatusTag, statusClass } from './ui/Status';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, PROSE_CLS } from './ui/Input';
 import { ChatComposer } from './chat/ChatComposer';
@@ -30,8 +33,14 @@ const PERMISSIONS = [
   { key: 'host_fs', label: 'host filesystem', hint: 'whole device' },
 ] as const;
 
-// Collapsible config section — collapsed by default, so the rail reads as
-// name → model → prompt and everything else is one summarised line until asked
+// Secondary views, opened as a side window from the ⋯ menu rather than as
+// full-screen tabs — chat is always the surface behind them.
+type Panel = 'runs' | 'info' | 'config' | 'history';
+
+const PANEL_TITLES: Record<Panel, string> = { runs: 'runs', info: 'info', config: 'settings', history: 'history' };
+
+// Collapsible config section — collapsed by default, so the panel reads as
+// prompt → name → model and everything else is one summarised line until asked
 // for. Nothing is hidden, just quiet.
 function Section({ title, summary, defaultOpen = false, children }: {
   title: string; summary?: string; defaultOpen?: boolean; children: React.ReactNode;
@@ -74,11 +83,11 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   tabRequest?: { tab: 'chat' | 'config'; n: number };
 }) {
   const complete = isComplete(agent);
-  const [tab, setTab] = useState<'chat' | 'runs' | 'info' | 'config' | 'history'>(complete ? 'chat' : 'config');
+  const [panel, setPanel] = useState<Panel | null>(complete ? null : 'config');
 
-  // Honour an explicit tab request from the sidebar (Settings / reopen to chat).
+  // Honour an explicit request from the sidebar (Settings / reopen to chat).
   useEffect(() => {
-    if (tabRequest && tabRequest.n > 0) setTab(tabRequest.tab);
+    if (tabRequest && tabRequest.n > 0) setPanel(tabRequest.tab === 'config' ? 'config' : null);
   }, [tabRequest?.n]);
   // Chat messages live in the store so they survive navigating away and back.
   // useShallow prevents an infinite re-render loop when the conversation is
@@ -135,11 +144,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.id]);
 
-  const switchTab = (t: 'chat' | 'runs' | 'info' | 'config' | 'history') => {
-    if ((t === 'chat' || t === 'runs') && !complete) { setTab('config'); return; }
-    setTab(t);
-  };
-
   const toggleRun = (id: string) => {
     setExpandedRuns((prev) => {
       const next = new Set(prev);
@@ -149,11 +153,11 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   };
 
   useEffect(() => {
-    if (tab === 'history') {
+    if (panel === 'history') {
       listChatSessions(agent.id).then(setSessions).catch(() => setSessions([]));
       setViewingSession(null);
     }
-  }, [tab, agent.id]);
+  }, [panel, agent.id]);
 
   useStickToBottom(scrollRef, messages);
 
@@ -201,7 +205,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     await onSave(draft);
     setError(undefined);
     toast('agent saved', 'success');
-    if (startChat && isComplete(draft)) setTab('chat');
+    if (startChat && isComplete(draft)) setPanel(null);
   };
 
   const newChat = async () => {
@@ -214,7 +218,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     useManagerStore.setState((s) => ({ sessionIds: { ...s.sessionIds, [agent.id]: sess.id } }));
     setMessages(() => []);
     setViewingSession(null);
-    setTab('chat');
+    setPanel(null);
   };
 
   const resetMemory = async () => {
@@ -223,40 +227,32 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   };
 
   const menuItems: MenuItem[] = [
-    { key: 'config', label: 'settings', icon: <Settings size={13} />, onSelect: () => setTab('config') },
-    { key: 'new', label: 'new chat', icon: <MessageSquarePlus size={13} />, onSelect: () => { void newChat(); } },
+    { key: 'chat', label: 'chat', icon: <MessageSquare size={13} />, active: panel === null, onSelect: () => setPanel(null) },
+    { key: 'runs', label: 'runs', icon: <Activity size={13} />, active: panel === 'runs', onSelect: () => setPanel('runs') },
+    { key: 'info', label: 'info', icon: <Info size={13} />, active: panel === 'info', onSelect: () => setPanel('info') },
+    { key: 'settings', label: 'settings', icon: <Settings size={13} />, active: panel === 'config', onSelect: () => setPanel('config') },
+    { key: 'history', label: 'history', icon: <History size={13} />, active: panel === 'history', onSelect: () => setPanel('history') },
+    { key: 'new', label: 'new chat', icon: <MessageSquarePlus size={13} />, dividerBefore: true, onSelect: () => { void newChat(); } },
     { key: 'reset', label: 'reset memory', icon: <RotateCcw size={13} />, onSelect: () => { void resetMemory(); } },
     { key: 'delete', label: 'delete agent', icon: <Trash2 size={13} />, danger: true, onSelect: () => setConfirmDelete(true) },
   ];
 
-  const tabBtn = (active: boolean) =>
-    `focus-ring flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1 font-mono text-[11px] lowercase transition-colors ${active ? 'border-border bg-surface text-foreground' : 'border-transparent bg-transparent text-muted hover:bg-surface hover:text-foreground'}`;
+  const agentRuns = runs.filter((r) => r.agentId === agent.id).sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+  const dirty = JSON.stringify(draft) !== JSON.stringify(agent);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <header className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-        <div className="flex items-center gap-1">
-          {(['chat', 'runs', 'info', 'config', 'history'] as const).map((t) => {
-            const locked = !complete && (t === 'chat' || t === 'runs');
-            return (
-              <button key={t} className={tabBtn(tab === t)} onClick={() => switchTab(t)}>
-                {t}{locked && <Lock size={9} className="opacity-70" />}
-              </button>
-            );
-          })}
-          <ContextMenu items={menuItems} />
-        </div>
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+      <header className="flex shrink-0 items-center justify-end">
+        <ContextMenu items={menuItems} />
       </header>
 
-      {(tab === 'chat' || tab === 'runs') && !complete && (
+      {!complete ? (
         <div className="mt-4 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-surface text-center">
           <Lock size={18} className="text-muted" />
           <h3 className="m-0 font-mono text-xs lowercase text-foreground">finish setting up {agent.name}</h3>
-          <Button variant="primary" icon={<Check size={13} />} onClick={() => setTab('config')}>go to config</Button>
+          <Button variant="primary" icon={<Check size={13} />} onClick={() => setPanel('config')}>go to config</Button>
         </div>
-      )}
-
-      {tab === 'chat' && (
+      ) : (
         <div className="relative flex min-h-0 flex-1 flex-col">
           {/* Chat history — full height, no box; the composer overlays on top of it */}
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
@@ -280,115 +276,130 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
           <ChatComposer
             busy={running}
             modelId={agent.model}
+            reasoning={agent.reasoning}
             placeholder={`message ${agent.name}…`}
             onSend={send}
             onModelChange={(id) => void onSave({ ...agent, model: id })}
+            onReasoningChange={(r) => void onSave({ ...agent, reasoning: r })}
           />
         </div>
       )}
 
-      {tab === 'runs' && (
-        <div className="mt-4 min-h-0 flex-1 overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-background p-3 font-mono text-[11px] leading-relaxed">
-          {runs.filter((r) => r.agentId === agent.id).sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()).map((r) => {
-            const isOpen = expandedRuns.has(r.id);
-            const totalTokens = (r.promptTokens ?? 0) + (r.completionTokens ?? 0);
-            return (
-              <div key={r.id} className="border-b border-border last:border-0">
-                <button className="focus-ring flex w-full cursor-pointer items-center gap-3 border-0 bg-transparent px-1 py-2 text-left" onClick={() => toggleRun(r.id)}>
-                  <ChevronRight size={11} className={`shrink-0 text-muted transition-transform duration-150 ${isOpen ? 'rotate-90' : ''}`} />
-                  <span className={`shrink-0 ${statusClass(r.status)}`}><StatusGlyph status={r.status} /></span>
-                  <span className="shrink-0 text-muted">{fmtDate(r.startedAt)}</span>
-                  <span className="min-w-0 truncate text-muted">{r.model}</span>
-                  <span className="shrink-0 text-muted">{runDuration(r)}</span>
-                  {totalTokens > 0 && <span className="shrink-0 text-muted">{totalTokens.toLocaleString()} tok</span>}
-                  <span className="ml-auto shrink-0 lowercase"><StatusTag status={r.status} /></span>
-                </button>
-                {isOpen && (
-                  <div className="px-1 pb-3">
-                    <div className="my-1 text-foreground/80">$ {r.input}</div>
-                    {(r.events ?? []).map((ev, i) => (
-                      <div key={i} className="flex items-baseline gap-2">
-                        <span className="flex-none text-muted">{ev.time}</span>
-                        <span className="w-10 flex-none text-muted">{ev.type === 'tool' ? 'tool' : ev.type === 'thought' ? 'think' : 'out'}</span>
-                        <span className="min-w-0 flex-1 text-foreground/70">{ev.title}{ev.detail ? ` — ${ev.detail}` : ''}</span>
-                      </div>
-                    ))}
-                    {r.output && <pre className="mt-1.5 ml-12 max-w-full overflow-x-hidden whitespace-pre-wrap rounded border border-border bg-background p-2 text-[11px] text-foreground">{r.output}</pre>}
-                    {r.status === 'failed' && (
-                      <div className="flex items-baseline gap-2">
-                        <span className="flex-none text-muted" />
-                        <span className="w-10 flex-none text-danger">err</span>
-                        <span className="min-w-0 flex-1 text-muted">run failed — see agent chat for details.</span>
+      {panel && (
+        <SidePanel
+          title={PANEL_TITLES[panel]}
+          onClose={() => setPanel(null)}
+          headerAction={panel === 'config' ? (
+            <Button
+              variant="primary"
+              icon={<Check size={13} />}
+              onClick={() => save(true)}
+              disabled={!isComplete(draft) || !dirty}
+            >
+              save
+            </Button>
+          ) : undefined}
+        >
+          {panel === 'runs' && (
+            <div className="font-mono text-[11px] leading-relaxed">
+              {agentRuns.length === 0 ? (
+                <p className="m-0 px-1 font-mono text-[10px] text-muted">no runs yet</p>
+              ) : agentRuns.map((r) => {
+                const isOpen = expandedRuns.has(r.id);
+                const totalTokens = (r.promptTokens ?? 0) + (r.completionTokens ?? 0);
+                return (
+                  <div key={r.id} className="border-b border-border last:border-0">
+                    <button className="focus-ring flex w-full cursor-pointer items-center gap-3 border-0 bg-transparent px-1 py-2 text-left" onClick={() => toggleRun(r.id)}>
+                      <ChevronRight size={11} className={`shrink-0 text-muted transition-transform duration-150 ${isOpen ? 'rotate-90' : ''}`} />
+                      <span className={`shrink-0 ${statusClass(r.status)}`}><StatusGlyph status={r.status} /></span>
+                      <span className="min-w-0 flex-1 truncate text-muted">{fmtDate(r.startedAt)} · {r.model}</span>
+                      <span className="shrink-0 text-muted">{runDuration(r)}</span>
+                      {totalTokens > 0 && <span className="shrink-0 text-muted">{totalTokens.toLocaleString()} tok</span>}
+                      <span className="shrink-0 lowercase"><StatusTag status={r.status} /></span>
+                    </button>
+                    {isOpen && (
+                      <div className="px-1 pb-3">
+                        <div className="my-1 text-foreground/80">$ {r.input}</div>
+                        {(r.events ?? []).map((ev, i) => (
+                          <div key={i} className="flex items-baseline gap-2">
+                            <span className="flex-none text-muted">{ev.time}</span>
+                            <span className="w-10 flex-none text-muted">{ev.type === 'tool' ? 'tool' : ev.type === 'thought' ? 'think' : 'out'}</span>
+                            <span className="min-w-0 flex-1 text-foreground/70">{ev.title}{ev.detail ? ` — ${ev.detail}` : ''}</span>
+                          </div>
+                        ))}
+                        {r.output && <pre className="mt-1.5 ml-12 max-w-full overflow-x-hidden whitespace-pre-wrap rounded border border-border bg-background p-2 text-[11px] text-foreground">{r.output}</pre>}
+                        {r.status === 'failed' && (
+                          <div className="flex items-baseline gap-2">
+                            <span className="flex-none text-muted" />
+                            <span className="w-10 flex-none text-danger">err</span>
+                            <span className="min-w-0 flex-1 text-muted">run failed — see agent chat for details.</span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {tab === 'info' && (
-        <div className="mt-4 min-h-0 flex-1 overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-surface p-4">
-          <div className="mb-2 flex justify-between"><span className={GROUP_LABEL_CLS}>tools</span></div>
-          <div className="flex flex-wrap gap-1.5">{agent.toolIds.map((t) => <span key={t} className="rounded bg-background px-2 py-1 font-mono text-[10px] text-muted">{toolName(t)}</span>)}</div>
-          <div className="mt-5 mb-2 flex justify-between"><span className={GROUP_LABEL_CLS}>integrations</span></div>
-          <div className="flex flex-wrap gap-1.5">{agent.integrations.map((t) => <span key={t} className="rounded bg-background px-2 py-1 font-mono text-[10px] text-muted">{t}</span>)}</div>
-          <div className="mt-5 mb-2 flex justify-between"><span className={GROUP_LABEL_CLS}>permissions</span></div>
-          <div className="rounded-lg bg-background p-2.5 font-mono text-[10px] text-muted">{agent.permissions.join(', ') || 'none'}</div>
-          <div className="mt-5 mb-2 flex justify-between"><span className={GROUP_LABEL_CLS}>home</span></div>
-          <div className="rounded-lg bg-background p-2.5 font-mono text-[10px] text-muted">{agent.homePath}</div>
-          <div className="mt-5 mb-2 flex justify-between"><span className={GROUP_LABEL_CLS}>model</span></div>
-          <div className="rounded-lg bg-background p-2.5 font-mono text-[10px] text-muted">{agent.model}</div>
-        </div>
-      )}
-
-      {tab === 'history' && (
-        <div className="mt-4 min-h-0 flex-1 overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-surface p-4">
-          {viewingSession ? (
-            <div>
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <Button icon={<ArrowLeft size={12} />} onClick={() => setViewingSession(null)}>all chats</Button>
-                <Button onClick={async () => { await deleteChatSession(viewingSession); setViewingSession(null); listChatSessions(agent.id).then(setSessions); }}>delete chat</Button>
-              </div>
-              <div className="grid gap-3">
-                {history.map((m, i) => (
-                  <MessageBubble key={i} role={m.role === 'user' ? 'user' : 'assistant'} content={m.content} meta={m.role === 'user' ? 'you' : agent.name} />
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div>
-              <span className={GROUP_LABEL_CLS}>past chats</span>
-              {sessions.length === 0 ? null : (
-                <div className="mt-3 grid gap-1.5">
-                  {sessions.map((s) => (
-                    <button key={s.id} className="focus-ring flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2 text-left transition-colors hover:border-foreground/30" onClick={async () => { setViewingSession(s.id); const msgs = await getChatSession(s.id); setHistory(msgs.map((m, i) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: `#${i + 1}` }))); }}>
-                      <span className="min-w-0 truncate font-mono text-[11px] text-foreground">{s.title}</span>
-                      <span className="shrink-0 font-mono text-[10px] text-muted">{fmtDate(s.updatedAt)}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
+                );
+              })}
             </div>
           )}
-        </div>
-      )}
 
-      {tab === 'config' && (
-        <div className="mt-5 grid min-h-0 flex-1 grid-cols-1 items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-          {/* Prompt: content, so it leads and takes the dominant column */}
-          <textarea
-            value={draft.objective}
-            onChange={(e) => setDraft({ ...draft, objective: e.target.value })}
-            placeholder="Prompt — describe what this agent should do, its role, how it should behave, what format to return…"
-            className={`${PROSE_CLS} h-full`}
-          />
+          {panel === 'info' && (
+            <div>
+              <div className="mb-2"><span className={GROUP_LABEL_CLS}>tools</span></div>
+              <div className="flex flex-wrap gap-1.5">{agent.toolIds.map((t) => <span key={t} className="rounded bg-background px-2 py-1 font-mono text-[10px] text-muted">{toolName(t)}</span>)}</div>
+              <div className="mt-5 mb-2"><span className={GROUP_LABEL_CLS}>integrations</span></div>
+              <div className="flex flex-wrap gap-1.5">{agent.integrations.map((t) => <span key={t} className="rounded bg-background px-2 py-1 font-mono text-[10px] text-muted">{t}</span>)}</div>
+              <div className="mt-5 mb-2"><span className={GROUP_LABEL_CLS}>permissions</span></div>
+              <div className="rounded-lg bg-background p-2.5 font-mono text-[10px] text-muted">{agent.permissions.join(', ') || 'none'}</div>
+              <div className="mt-5 mb-2"><span className={GROUP_LABEL_CLS}>home</span></div>
+              <div className="rounded-lg bg-background p-2.5 font-mono text-[10px] text-muted">{agent.homePath}</div>
+              <div className="mt-5 mb-2"><span className={GROUP_LABEL_CLS}>model</span></div>
+              <div className="rounded-lg bg-background p-2.5 font-mono text-[10px] text-muted">{agent.model}</div>
+            </div>
+          )}
 
-          {/* Sister rail: everything else, save pinned to its bottom */}
-          <div className="relative flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-surface">
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto p-4 pb-16">
+          {panel === 'history' && (
+            viewingSession ? (
+              <div>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <Button icon={<ArrowLeft size={12} />} onClick={() => setViewingSession(null)}>all chats</Button>
+                  <Button onClick={async () => { await deleteChatSession(viewingSession); setViewingSession(null); listChatSessions(agent.id).then(setSessions); }}>delete chat</Button>
+                </div>
+                <div className="grid gap-3">
+                  {history.map((m, i) => (
+                    <MessageBubble key={i} role={m.role === 'user' ? 'user' : 'assistant'} content={m.content} meta={m.role === 'user' ? 'you' : agent.name} />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div>
+                <span className={GROUP_LABEL_CLS}>past chats</span>
+                {sessions.length === 0 ? null : (
+                  <div className="mt-3 grid gap-1.5">
+                    {sessions.map((s) => (
+                      <button key={s.id} className="focus-ring flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2 text-left transition-colors hover:border-foreground/30" onClick={async () => { setViewingSession(s.id); const msgs = await getChatSession(s.id); setHistory(msgs.map((m, i) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: `#${i + 1}` }))); }}>
+                        <span className="min-w-0 truncate font-mono text-[11px] text-foreground">{s.title}</span>
+                        <span className="shrink-0 font-mono text-[10px] text-muted">{fmtDate(s.updatedAt)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          )}
+
+          {panel === 'config' && (
+            <div className="grid gap-4">
+              <div>
+                <label className={FIELD_LABEL_CLS}>prompt</label>
+                <textarea
+                  value={draft.objective}
+                  onChange={(e) => setDraft({ ...draft, objective: e.target.value })}
+                  placeholder="Prompt — describe what this agent should do, its role, how it should behave, what format to return…"
+                  className={`${PROSE_CLS} min-h-[200px]`}
+                />
+              </div>
+
               <div>
                 <label className={FIELD_LABEL_CLS}>name</label>
                 <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Agent name" className={INPUT_CLS} />
@@ -400,6 +411,16 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                   value={draft.model}
                   options={models.map((m) => ({ value: m.id, label: m.label }))}
                   onChange={(v) => setDraft({ ...draft, model: v })}
+                />
+              </div>
+
+              <div>
+                <label className={FIELD_LABEL_CLS}>reasoning</label>
+                <Slider
+                  value={draft.reasoning}
+                  stops={REASONING_STOPS}
+                  ariaLabel="reasoning"
+                  onChange={(v) => setDraft({ ...draft, reasoning: v as Reasoning })}
                 />
               </div>
 
@@ -472,23 +493,8 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
               {error && <p className="m-0 font-mono text-[10px] leading-relaxed text-danger">{error}</p>}
             </div>
-
-            {/* The save bar sits at the rail's bottom; content scrolls beneath it */}
-            <div className="absolute right-0 bottom-0 left-0 flex items-center gap-3 border-t border-border bg-surface px-4 py-3">
-              <Button
-                variant="primary"
-                icon={<Check size={13} />}
-                onClick={() => save(true)}
-                disabled={!isComplete(draft) || JSON.stringify(draft) === JSON.stringify(agent)}
-              >
-                {isComplete(agent) ? 'save changes' : 'save & start chatting'}
-              </Button>
-              {JSON.stringify(draft) !== JSON.stringify(agent) && isComplete(draft) && (
-                <span className="font-mono text-[10px] text-muted">unsaved</span>
-              )}
-            </div>
-          </div>
-        </div>
+          )}
+        </SidePanel>
       )}
 
       {confirmDelete && (

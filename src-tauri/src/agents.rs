@@ -305,7 +305,9 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
   } else {
     format!("You are {}. Objective: {}\n{skills}\nTask: {}\n\nReturn a helpful, direct answer.", agent.name, agent.objective, input)
   };
-  let resolved = provider::resolve(&conn, &agent.model, api_key)?;
+  let mut resolved = provider::resolve(&conn, &agent.model, api_key)?;
+  // The agent's own reasoning wins over the model's default.
+  provider::apply_agent_reasoning(&mut resolved, &agent.reasoning);
   let label = match resolved.kind {
     provider::Kind::Ollama => "Ollama",
     provider::Kind::Groq => "Groq",

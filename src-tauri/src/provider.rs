@@ -102,6 +102,15 @@ pub(crate) fn resolve(conn: &Connection, model_id: &str, override_key: Option<&s
   Err(format!("Unknown model provider for \"{model_id}\"."))
 }
 
+/// Applies an agent's own reasoning setting over the model's default. An empty
+/// agent value leaves the model's setting in place, so an agent that never chose
+/// one still follows its model.
+pub(crate) fn apply_agent_reasoning(resolved: &mut Resolved, agent_reasoning: &str) {
+  if !agent_reasoning.trim().is_empty() {
+    resolved.reasoning = Reasoning::parse(agent_reasoning);
+  }
+}
+
 fn model_settings(conn: &Connection, model_id: &str) -> Result<(Option<String>, Option<String>, Reasoning), String> {
   let mut stmt = conn
     .prepare("SELECT host, api_key, reasoning FROM model_configs WHERE id=?1")

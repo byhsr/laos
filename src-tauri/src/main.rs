@@ -105,6 +105,13 @@ fn main() {
       telegram::telegram_tunnel_status,
       telegram::telegram_webhook_health,
     ])
-    .run(tauri::generate_context!())
-    .expect("error while running Local Agent OS");
+    .build(tauri::generate_context!())
+    .expect("error while running Local Agent OS")
+    .run(|_app, event| {
+      // MCP servers now run as long-lived child processes, so stop them explicitly
+      // on exit instead of leaving them orphaned.
+      if let tauri::RunEvent::Exit = event {
+        mcp::shutdown_all();
+      }
+    });
 }

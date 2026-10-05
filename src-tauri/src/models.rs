@@ -7,6 +7,8 @@ pub struct AgentRequest {
   pub id: String, pub name: String, pub objective: String, pub model: String,
   pub tool_ids: Vec<String>, pub integrations: Vec<String>, pub home_path: String, pub permissions: Vec<String>,
   #[serde(default)] pub skill_ids: Vec<String>,
+  // The agent's own reasoning control; empty falls back to the model's setting.
+  #[serde(default)] pub reasoning: String,
 }
 
 #[derive(Serialize)]
@@ -46,6 +48,8 @@ pub struct AgentRecord {
   #[serde(default)] pub pinned: bool,
   // Optional custom avatar (data URL); empty falls back to the persona animation.
   #[serde(default)] pub avatar: String,
+  // The agent's own reasoning control (overrides the model's default).
+  #[serde(default)] pub reasoning: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
