@@ -176,6 +176,16 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, memory_
     .map(|s| parse_json_vec(&s))
     .unwrap_or_default();
   let skills = skills_prompt(conn, &skill_ids);
+  // When the memory connector is present, tell the Manager which identity to file
+  // memories under so they land where the Memory view looks.
+  let memory_note = if conn
+    .query_row("SELECT COUNT(*) FROM tools WHERE kind='mcp' AND integration_id='memory' AND enabled=1", [], |r| r.get::<_, i64>(0))
+    .map(|c| c > 0).unwrap_or(false)
+  {
+    "You have a persistent memory. When you use a memory tool, pass agentId \"manager\" and scope {\"type\":\"agent\",\"id\":\"manager\"}.\n"
+  } else {
+    ""
+  };
   // Long-term memory only. The time-based context (last chat summary, today,
   // yesterday) stays out of the prompt so a new chat starts clean; recall_memory
   // still returns the full bundle on demand.
@@ -191,7 +201,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, memory_
      - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent â€” file access is just a permission value in the create_agent call.\n\
      - Never store secrets (API keys/tokens) without the user's explicit approval in the confirmation popup.\n\
      - Delegate domain work to agents rather than doing it inline.\n\n\
-     Workspace context:\n{context}\n\n{memory_blob}\n{skills}\
+     Workspace context:\n{context}\n\n{memory_blob}\n{skills}{memory_note}\
      Return a concise, helpful reply to the user."
   ))
 }

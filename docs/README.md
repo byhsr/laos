@@ -22,7 +22,7 @@ tool registry, workflow execution, memory, and the Telegram adapter.
 | [tool-calls.md](./tool-calls.md) | Tool registry + kinds, permission gating, the end-to-end tool-call lifecycle, dispatch, and the confirmation gate |
 | [integrations.md](./integrations.md) | Integration catalog, how providers become tools, credential storage/masking, OAuth, testing |
 | [mcp.md](./mcp.md) | The generic MCP connector: servers, tool discovery/import, how a call runs, limits |
-| [memory.md](./memory.md) | Context assembly, the rolling window, summarization, long-term facts, chat sessions, day context, recall |
+| [memory.md](./memory.md) | Context assembly, the rolling window, summarization, long-term facts, chat sessions, day context, recall, and the built-in `agent-memory` (fox) connector |
 | [webhooks.md](./webhooks.md) | Telegram tunnel + webhook receiver + long-poll, the OAuth loopback, health checks and logs |
 | [data-model.md](./data-model.md) | SQLite schema, migrations, record types, memory keys, ID conventions |
 
@@ -140,6 +140,7 @@ Find the row for what you're changing, update the listed code and doc together.
 | OAuth scopes, redirect port, or token exchange | `src-tauri/src/integrations.rs` | [integrations.md](./integrations.md), [webhooks.md](./webhooks.md) |
 | Telegram tunnel/webhook/polling/receiver | `src-tauri/src/telegram.rs`, `src-tauri/src/tg_markdown.rs` | [webhooks.md](./webhooks.md) |
 | Memory, context assembly, or summarization | `src-tauri/src/memory.rs`, `src-tauri/src/chat.rs` | [memory.md](./memory.md) |
+| The memory connector (fox/`agent-memory`), its capture/active-context/distill/feedback loop, or the Memory view | `src-tauri/src/fox.rs`, `src-tauri/src/storage.rs` (`ensure_memory_server`), `src-tauri/src/chat.rs`, `src-tauri/src/memory.rs`, `src-tauri/src/mcp.rs` (`call_mcp_tool`), `src/components/views/MemoryView.tsx` | [memory.md](./memory.md) |
 | A table, column, or migration | `src-tauri/src/db.rs` (+ the owning module's SQL) | [data-model.md](./data-model.md) |
 | A Tauri command (add/rename/remove) | `src-tauri/src/main.rs` + the module, `src/runtime.ts` | [architecture.md](./architecture.md) |
 | A view, store, or nav entry | `src/App.tsx`, `src/components/views/*`, `src/hooks/*` | [architecture.md](./architecture.md) |

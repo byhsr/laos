@@ -7,12 +7,25 @@ export type ManagerConfirmRequest = { requestId: string; tool: string; args: Rec
 // A live step event: either a discrete phase (kind + text) or a chunk of the
 // model's own reasoning, which the caller appends to the growing thought.
 export type StreamStep = { kind: string; text: string; append?: boolean };
+
+// A per-turn id so a cancel targets exactly the turn the user is watching.
+export function newChatStreamId(): string {
+  return `stream-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Asks the backend to stop an in-flight turn. The turn returns cleanly, keeping
+// whatever it had already produced.
+export async function cancelChatStream(streamId: string): Promise<void> {
+  try { await invoke('cancel_chat', { streamId }); } catch { /* browser preview: no Tauri backend */ }
+}
+
 export async function streamChat(
   agent: Agent, input: string, isManager: boolean,
   onDelta: (d: string) => void,
   onConfirm?: (r: ManagerConfirmRequest) => void,
   sessionId?: string,
   onStep?: (s: StreamStep) => void,
+  streamId?: string,
 ): Promise<void> {
   const channel = new Channel<string>();
   channel.onmessage = (raw) => {
@@ -39,7 +52,7 @@ export async function streamChat(
     }
     onDelta(raw);
   };
-  await invoke('stream_chat', { agent, input, isManager, onEvent: channel, sessionId: sessionId ?? null });
+  await invoke('stream_chat', { agent, input, isManager, onEvent: channel, sessionId: sessionId ?? null, streamId: streamId ?? null });
 }
 
 // Chat session management (bifurcated history).
@@ -278,6 +291,20 @@ export async function testMcpServer(id: string): Promise<McpToolInfo[]> {
 }
 export async function importMcpTools(id: string): Promise<number> {
   return await invoke<number>('import_mcp_tools', { id });
+}
+
+// A good/bad signal on a reply: the host records it as experience and reinforces
+// or dampens the memories that informed the turn. Best-effort.
+export async function rateTurn(agentId: string, signal: 'up' | 'down', content?: string): Promise<void> {
+  try { await invoke('rate_turn', { agentId, signal, content: content ?? null }); } catch { /* best-effort */ }
+}
+
+// Invokes an MCP server's tool directly (no agent in the loop) — used by surfaces
+// like the Memory view to read a server's data. Returns parsed JSON when the
+// server responded with JSON, otherwise the raw text.
+export async function callMcpTool(serverId: string, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const text = await invoke<string>('call_mcp_tool', { serverId, tool, arguments: args });
+  try { return JSON.parse(text); } catch { return text; }
 }
 
 export async function listIntegrations(): Promise<Integration[]> {

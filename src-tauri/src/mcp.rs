@@ -468,3 +468,12 @@ pub fn import_mcp_tools(app: AppHandle, id: String) -> Result<usize, String> {
   tx.commit().map_err(|e| e.to_string())?;
   Ok(count)
 }
+
+// Invokes a server's tool directly, for UI surfaces (e.g. the Memory view) that
+// read a server's data without routing through an agent. Returns flattened text.
+#[tauri::command]
+pub fn call_mcp_tool(app: AppHandle, server_id: String, tool: String, arguments: serde_json::Value) -> Result<String, String> {
+  let conn = db(&app)?;
+  let server = load_server(&conn, &server_id)?;
+  call_tool(&server, &tool, arguments)
+}

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
-import { Send } from 'lucide-react';
+import { CircleStop, Pause, Send, Trash2 } from 'lucide-react';
 import { IconButton } from '../ui/Button';
+import { ContextMenu } from '../ui/ContextMenu';
 import { ComposerSettings } from './ComposerSettings';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import type { Reasoning } from '../../types';
@@ -11,7 +12,7 @@ import type { Reasoning } from '../../types';
 //
 // Two rows: what you're writing, then what you can do with it — the "+" that
 // holds every per-turn setting (model, reasoning) and the send action.
-export function ChatComposer({ placeholder, busy, modelId, reasoning, onSend, onModelChange, onReasoningChange }: {
+export function ChatComposer({ placeholder, busy, modelId, reasoning, onSend, onModelChange, onReasoningChange, onCancel }: {
   placeholder: string;
   busy: boolean;
   modelId: string;
@@ -19,6 +20,7 @@ export function ChatComposer({ placeholder, busy, modelId, reasoning, onSend, on
   onSend: (text: string) => void | Promise<void>;
   onModelChange: (modelId: string) => void;
   onReasoningChange: (reasoning: Reasoning) => void;
+  onCancel?: (action: 'pause' | 'delete') => void;
 }) {
   const [input, setInput] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -58,9 +60,21 @@ export function ChatComposer({ placeholder, busy, modelId, reasoning, onSend, on
           />
           <div className="flex items-center justify-end gap-2 px-2.5 pt-1 pb-2.5">
             <ComposerSettings modelId={modelId} reasoning={reasoning} onModelChange={onModelChange} onReasoningChange={onReasoningChange} />
-            <IconButton label="send" className="h-[30px] w-[30px] shrink-0" disabled={busy || !input.trim()} onClick={submit}>
-              <Send size={13} />
-            </IconButton>
+            {busy && onCancel ? (
+              <ContextMenu
+                title="cancel request"
+                trigger={<CircleStop size={14} />}
+                triggerClassName="control icon-btn h-[30px] w-[30px]"
+                items={[
+                  { key: 'pause', label: 'pause', icon: <Pause size={13} />, onSelect: () => onCancel?.('pause') },
+                  { key: 'delete', label: 'delete', icon: <Trash2 size={13} />, danger: true, dividerBefore: true, onSelect: () => onCancel?.('delete') },
+                ]}
+              />
+            ) : (
+              <IconButton label="send" className="h-[30px] w-[30px] shrink-0" disabled={busy || !input.trim()} onClick={submit}>
+                <Send size={13} />
+              </IconButton>
+            )}
           </div>
         </div>
       </div>

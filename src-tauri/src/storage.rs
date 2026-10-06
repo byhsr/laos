@@ -1,10 +1,13 @@
 // Persistent app data: SQLite-backed CRUD for knowledge docs, model configs,
 // tools, agents and workflows, plus the Manager bootstrap and default model.
 
-use rusqlite::{params, Connection};
-use tauri::AppHandle;
+use std::fs;
+use std::path::Path;
 
-use crate::db::db;
+use rusqlite::{params, Connection};
+use tauri::{AppHandle, Manager};
+
+use crate::db::{db, now};
 use crate::models::*;
 
 // Ensures the Manager system agent exists; creates it if missing.
@@ -25,10 +28,63 @@ fn ensure_manager(conn: &Connection) -> Result<(), String> {
   Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Built-in memory connector (fox / `agent-memory`)
+// ---------------------------------------------------------------------------
+
+// The memory engine is fox's `agent-memory` package, run as an MCP server. It is
+// seeded here so memory works with no manual setup. The fox checkout is located
+// via `AGENT_MEMORY_HOME`, falling back to the dev checkout; the resulting server
+// row is editable in Workshop → Integrations → MCP servers.
+const MEMORY_SERVER_ID: &str = "memory";
+
+fn fox_dir() -> String {
+  std::env::var("AGENT_MEMORY_HOME").ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+    .unwrap_or_else(|| r"A:\code\Projects\fox".to_string())
+}
+
+// Inserts the memory MCP server row if missing. Its database lives in the app
+// data dir so it travels with the rest of the app's state.
+fn ensure_memory_server(app: &AppHandle, conn: &Connection) -> Result<(), String> {
+  let memory_dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("memory");
+  fs::create_dir_all(&memory_dir).map_err(|e| e.to_string())?;
+  let db_path = memory_dir.join("agent-memory.db");
+  let server_js = Path::new(&fox_dir()).join("dist").join("mcp").join("server.js");
+  let args = serde_json::json!([server_js.to_string_lossy().to_string()]).to_string();
+  let env = serde_json::json!({ "AGENT_MEMORY_DB": db_path.to_string_lossy().to_string() }).to_string();
+  conn.execute(
+    "INSERT INTO mcp_servers (id, name, command, args, env, enabled, updated_at) VALUES (?1,'memory','node',?2,?3,1,?4)
+     ON CONFLICT(id) DO NOTHING",
+    params![MEMORY_SERVER_ID, args, env, now()],
+  ).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+// Imports the memory tools into the registry once, so agents — and the Manager,
+// which receives every enabled MCP tool — can use memory without a manual sync.
+// Best-effort: if fox isn't built or node is missing this silently does nothing,
+// and the Memory view / MCP panel surfaces the reason.
+fn import_memory_tools_once(app: &AppHandle) {
+  let count: i64 = match db(app) {
+    Ok(conn) => conn
+      .query_row("SELECT COUNT(*) FROM tools WHERE kind='mcp' AND integration_id=?1", params![MEMORY_SERVER_ID], |r| r.get(0))
+      .unwrap_or(0),
+    Err(_) => return,
+  };
+  if count > 0 { return; }
+  let _ = crate::mcp::import_mcp_tools(app.clone(), MEMORY_SERVER_ID.to_string());
+}
+
 #[tauri::command]
 pub fn initialize_storage(app: AppHandle) -> Result<(), String> {
-  let conn = db(&app)?;
-  ensure_manager(&conn)?;
+  {
+    let conn = db(&app)?;
+    ensure_manager(&conn)?;
+    ensure_memory_server(&app, &conn)?;
+  }
+  import_memory_tools_once(&app);
   Ok(())
 }
 

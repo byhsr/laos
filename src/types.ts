@@ -38,7 +38,7 @@ export type Task = { id: string; requester: string; assignedAgent: string; statu
 
 // 'builder' is the workflow canvas, kept distinct from the 'workflows' list so
 // opening a workflow is a real navigation step the chrome can go back from.
-export type View = 'home' | 'graph' | 'agents' | 'workflows' | 'builder' | 'manager' | 'tasks' | 'runs' | 'telegram' | 'agent' | 'workshop' | 'settings';
+export type View = 'home' | 'graph' | 'agents' | 'workflows' | 'builder' | 'manager' | 'tasks' | 'runs' | 'telegram' | 'agent' | 'workshop' | 'settings' | 'memory';
 
 export type DrawerForm =
   | { kind: 'tool'; editing: Tool; isNew: boolean }

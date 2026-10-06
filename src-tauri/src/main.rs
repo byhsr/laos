@@ -2,6 +2,7 @@
 mod agents;
 mod chat;
 mod db;
+mod fox;
 mod http;
 mod integrations;
 mod manager;
@@ -68,6 +69,7 @@ fn main() {
       mcp::delete_mcp_server,
       mcp::test_mcp_server,
       mcp::import_mcp_tools,
+      mcp::call_mcp_tool,
       // Agent + workflow execution
       agents::execute_agent,
       workflows::execute_workflow,
@@ -82,6 +84,9 @@ fn main() {
       manager::manager_message,
       manager::confirm_manager_tool,
       chat::stream_chat,
+      chat::cancel_chat,
+      // Built-in memory connector (fox) — host-driven feedback
+      fox::rate_turn,
       // Memory + chat sessions
       memory::get_conversation,
       memory::clear_agent_memory,

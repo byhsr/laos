@@ -14,7 +14,7 @@ import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, PROSE_CLS } from './ui/Inp
 import { ChatComposer } from './chat/ChatComposer';
 import { MessageBubble } from './chat/MessageBubble';
 import { toast } from '../hooks/useToast';
-import { listChatSessions, getChatSession, createChatSession, deleteChatSession, closeSession, streamChat, type StreamStep } from '../runtime';
+import { listChatSessions, getChatSession, createChatSession, deleteChatSession, closeSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, type StreamStep } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
 import { useManagerStore, type ChatEntry } from '../hooks/useManager';
 import { useConfirmStore } from '../hooks/useConfirm';
@@ -118,6 +118,12 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   ];
   const scrollRef = useRef<HTMLDivElement>(null);
   const avatarRef = useRef<HTMLInputElement>(null);
+  // The id of the in-flight turn, plus a flag so a cancel stops the delta
+  // batcher from painting over the message we just removed or marked. The token
+  // guards a turn's late callbacks from touching a newer turn's state.
+  const streamIdRef = useRef<string | null>(null);
+  const cancelledRef = useRef(false);
+  const turnSeq = useRef(0);
 
   // Custom avatar: read the file as a data URL and keep it on the agent record.
   const onPickAvatar = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -163,6 +169,10 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
   const send = async (text: string) => {
     if (!text.trim() || running) return;
+    const myTurn = ++turnSeq.current;
+    cancelledRef.current = false;
+    const streamId = newChatStreamId();
+    streamIdRef.current = streamId;
     setRunning(true); setError(undefined); setSteps([]);
     const userMsg: ChatEntry = { role: 'user', content: text, time: new Date().toLocaleTimeString() };
     const assistantMsg: ChatEntry = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
@@ -178,6 +188,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     }
     // Batch the streamed deltas — see src/streamBuffer.ts for why.
     const batcher = createDeltaBuffer((text) => {
+      if (cancelledRef.current || turnSeq.current !== myTurn) return;
       setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: text } : m)));
     });
     let failed = false;
@@ -185,7 +196,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       await streamChat(agentToRun, text, false, (delta) => batcher.push(delta), (confirmReq) => {
         // Agent tools that need approval (e.g. run_command) pop the same panel.
         useConfirmStore.getState().request(confirmReq);
-      }, sid, pushStep);
+      }, sid, pushStep, streamId);
       useRunsStore.getState().loadRuns();
     } catch (e) {
       failed = true;
@@ -193,11 +204,36 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       setError(message);
       setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: `**run failed:** ${message}` } : m)));
     } finally {
+      // A newer turn owns the state now — its own finally will clean up.
+      if (turnSeq.current !== myTurn) return;
+      streamIdRef.current = null;
       // Only flush the tail on success, so a late flush can't overwrite the error.
       if (!failed) batcher.end();
       setRunning(false);
       setSteps([]);
     }
+  };
+
+  // Pause keeps what has streamed so far (marked as stopped); delete drops the
+  // user turn and its reply entirely. Both halt the backend turn first.
+  const cancel = (action: 'pause' | 'delete') => {
+    const id = streamIdRef.current;
+    if (!id || cancelledRef.current) return;
+    cancelledRef.current = true;
+    void cancelChatStream(id);
+    // Dismiss any pending tool-approval popup so the backend isn't left waiting.
+    useConfirmStore.setState({ pending: null });
+    if (action === 'delete') {
+      setMessages((prev) => prev.slice(0, -2));
+    } else {
+      setMessages((prev) => prev.map((m, i) =>
+        i === prev.length - 1 && m.role === 'assistant'
+          ? { ...m, content: m.content ? `${m.content}\n\n_(stopped)_` : '_(stopped)_' }
+          : m,
+      ));
+    }
+    setRunning(false);
+    setSteps([]);
   };
 
   const save = async (startChat = false) => {
@@ -264,6 +300,9 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                   content={m.content}
                   steps={steps}
                   streaming={running && i === messages.length - 1 && m.role === 'assistant'}
+                  onRate={m.role === 'assistant' && i === messages.length - 1 && !running
+                    ? (signal) => void rateTurn(agent.id, signal, m.content)
+                    : undefined}
                 />
               ))}
             </div>
@@ -279,6 +318,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             reasoning={agent.reasoning}
             placeholder={`message ${agent.name}…`}
             onSend={send}
+            onCancel={cancel}
             onModelChange={(id) => void onSave({ ...agent, model: id })}
             onReasoningChange={(r) => void onSave({ ...agent, reasoning: r })}
           />

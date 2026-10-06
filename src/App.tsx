@@ -26,6 +26,7 @@ import { TelegramView } from './components/views/TelegramView';
 import { RunsConsole } from './components/views/RunsConsole';
 import { Onboarding, type OnboardingPatch } from './components/Onboarding';
 import { WorkshopView } from './components/views/WorkshopView';
+import { MemoryView } from './components/views/MemoryView';
 import { SkillFormDrawer } from './components/views/SkillsView';
 import { Toaster } from './components/ui/Toaster';
 import { UpdatePrompt } from './components/ui/UpdatePrompt';
@@ -229,6 +230,7 @@ export default function App() {
             />
           </div>
           <div className={pane(view === 'manager')}><ManagerView agents={agents} integrations={integrations} models={models} openConfigRequest={configRequest.id === leadAgent?.id ? configRequest.n : 0} /></div>
+          <div className={pane(view === 'memory')}><MemoryView /></div>
           <div className={pane(view === 'tasks')}><TasksView agents={agents} /></div>
           <div className={pane(view === 'telegram')}><TelegramView /></div>
           <div className={pane(view === 'runs')}>

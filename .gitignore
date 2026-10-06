@@ -44,3 +44,6 @@ Thumbs.db
 # Command Code — local state stays out, but the skills we ship with the repo are tracked
 .commandcode/*
 !.commandcode/skills/
+
+# Command Code session scratchpad — throwaway working files, never committed
+scratchpad/

@@ -27,7 +27,7 @@ pub(crate) fn load_memory(conn: &Connection, agent_id: &str) -> Vec<(String, Str
 }
 
 // Non-streaming single-shot completion used for summarization. Returns the text.
-async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &str) -> Result<String, String> {
+async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &str, max_tokens: u64) -> Result<String, String> {
   let conn = db(app)?;
   // A utility call, so no reasoning is applied even when the model is set to
   // think: a summary gains nothing from it and it would multiply the per-turn
@@ -41,9 +41,9 @@ async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &str) -> Resu
     serde_json::json!({ "model": resolved.model, "messages": [{ "role": "user", "content": prompt }] })
   };
   if is_ollama {
-    provider::apply_ollama_options(&mut body, http::SUMMARY_MAX_TOKENS);
+    provider::apply_ollama_options(&mut body, max_tokens);
   } else {
-    http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, http::SUMMARY_MAX_TOKENS);
+    http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, max_tokens);
   }
 
   let url = if is_ollama { resolved.generate_url() } else { resolved.chat_url() };
@@ -85,7 +85,7 @@ pub(crate) async fn summarize_old_turns(app: &AppHandle, agent_id: &str, model: 
   let prompt = format!(
     "You maintain a running memory summary for an assistant.\n\nExisting summary:\n{previous}\n\nNew turns to fold in:\n{transcript}\n\nReturn an updated summary (max 150 words) capturing decisions, requests, results and anything important to remember, then 2-5 durable facts.\nReply as:\nSUMMARY: <summary>\nFACTS:\n- fact1\n- fact2"
   );
-  if let Ok(reply) = one_shot_completion(app, model, &prompt).await {
+  if let Ok(reply) = one_shot_completion(app, model, &prompt, http::SUMMARY_MAX_TOKENS).await {
     let (summary, facts) = match reply.split_once("FACTS:") {
       Some((s, f)) => (s.trim().trim_start_matches("SUMMARY:").trim().to_string(), f.to_string()),
       None => (reply.trim().to_string(), String::new()),
@@ -269,7 +269,7 @@ async fn close_chat_session(app: &AppHandle, session_id: &str, agent_id: &str, m
   let prompt = format!(
     "Summarize this chat conversation as a compact memory for the agent. Capture what was discussed, decided, requested, and any open threads. Max 200 words.\n\nConversation:\n{joined}"
   );
-  let summary = one_shot_completion(app, model, &prompt).await.unwrap_or_default();
+  let summary = one_shot_completion(app, model, &prompt, http::SUMMARY_MAX_TOKENS).await.unwrap_or_default();
   if !summary.is_empty() {
     let day = today_key();
     let now = chrono::Utc::now().to_rfc3339();
@@ -283,7 +283,41 @@ async fn close_chat_session(app: &AppHandle, session_id: &str, agent_id: &str, m
       params![agent_id, day, merged, now],
     ).map_err(|e| e.to_string())?;
   }
+  // Distill the finished chat into durable memory — the agent's own typed
+  // memories and self-model — so it learns from the session without being asked.
+  distill_session(app, agent_id, model, &joined).await;
+
   Ok(summary)
+}
+
+const DISTILL_MAX_TOKENS: u64 = 1200;
+
+// Turns a finished chat into durable memory: asks the model for the agent's own
+// self-knowledge and know-how (not a recap), then writes it straight into the
+// memory connector. This is how the agent learns from a session on its own.
+async fn distill_session(app: &AppHandle, agent_id: &str, model: &str, transcript: &str) {
+  if transcript.trim().is_empty() { return; }
+  let transcript: String = transcript.chars().take(MAX_SUMMARY_INPUT_CHARS).collect();
+  let prompt = format!(
+    "You are updating an AI agent's long-term memory after a chat. Capture only durable, reusable knowledge about the agent itself and how it works — its identity, values, goals, preferences, procedures and policies — not a recap of the conversation. Favour self-knowledge and know-how over facts about the user.\n\n\
+     Return STRICT JSON only, with no prose and no code fences:\n\
+     {{\"self\":[{{\"key\":\"identity|values|goals|current_focus|capabilities\",\"value\":\"...\"}}],\"memories\":[{{\"kind\":\"semantic|procedural|policy|preference|reflection\",\"title\":\"...\",\"content\":\"...\",\"tags\":[\"...\"],\"importance\":0.0,\"confidence\":0.0}}]}}\n\
+     Only include items clearly supported by the chat. Empty arrays are fine.\n\nConversation:\n{transcript}"
+  );
+  let Ok(reply) = one_shot_completion(app, model, &prompt, DISTILL_MAX_TOKENS).await else { return; };
+  let Some(json) = extract_json(&reply) else { return; };
+  let app = app.clone();
+  let agent_id = agent_id.to_string();
+  let _ = tauri::async_runtime::spawn_blocking(move || { crate::fox::write_distilled(&app, &agent_id, &json); }).await;
+}
+
+// Pulls the first JSON object out of a model reply that may be wrapped in prose
+// or ```json fences.
+fn extract_json(text: &str) -> Option<serde_json::Value> {
+  let start = text.find('{')?;
+  let end = text.rfind('}')?;
+  if end <= start { return None; }
+  serde_json::from_str(&text[start..=end]).ok()
 }
 
 #[tauri::command]

@@ -2,6 +2,8 @@
 // deltas, including tool-call rounds (the Manager's app-control tools, or a
 // regular agent's own tools) and confirmation gating.
 
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
@@ -24,11 +26,52 @@ use crate::provider;
 use crate::tools::{AgentTool, MAX_TOOL_ROUNDS};
 use crate::tooltext::{parse_text_tool_calls, ToolCallLeakFilter};
 
+// Turns the user asked to cancel, keyed by a per-turn id the frontend generates,
+// so a cancel can only ever affect the turn it belongs to. The entry is removed
+// the moment that turn ends, however it ends.
+static CANCELLED_STREAMS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+fn cancelled_streams() -> &'static Mutex<HashSet<String>> {
+  CANCELLED_STREAMS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+fn is_cancelled(stream_id: Option<&str>) -> bool {
+  match stream_id {
+    Some(id) => cancelled_streams().lock().map(|set| set.contains(id)).unwrap_or(false),
+    None => false,
+  }
+}
+
+// Marks a turn for cancellation. The running turn notices on its next check.
+#[tauri::command]
+pub fn cancel_chat(stream_id: String) {
+  if let Ok(mut set) = cancelled_streams().lock() { set.insert(stream_id); }
+}
+
+// Resolves as soon as the turn is cancelled. With no id to watch it pends
+// forever, so it is safe to race inside a select! either way.
+async fn wait_for_cancel(stream_id: Option<String>) {
+  match stream_id {
+    None => std::future::pending::<()>().await,
+    Some(id) => loop {
+      if is_cancelled(Some(&id)) { return; }
+      tokio::time::sleep(Duration::from_millis(120)).await;
+    },
+  }
+}
+
 // Streams a chat completion from the configured provider as token deltas.
 // Ollama uses NDJSON; Groq/OpenRouter use SSE `data:` lines. Context is a rolling
 // window of the last ROLLING_WINDOW persisted messages.
 #[tauri::command]
-pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>) -> Result<(), String> {
+pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>) -> Result<(), String> {
+  let result = stream_chat_inner(app, agent, input, is_manager, on_event, session_id, stream_id.clone()).await;
+  // Clear the cancel flag for this turn so the registry can't grow unbounded.
+  if let Some(id) = &stream_id {
+    if let Ok(mut set) = cancelled_streams().lock() { set.remove(id); }
+  }
+  result
+}
+
+async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>) -> Result<(), String> {
   let conn = db(&app)?;
 
   // Rolling window: the CURRENT CHAT's turns. A new session starts empty, so a
@@ -82,13 +125,33 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
     build_tools(&conn, &agent, &home)?
   };
 
-  let system = if is_manager {
+  let mut system = if is_manager {
     build_manager_system_prompt(&conn, &agent.name, &full_memory)?
   } else {
     // Long-term memory only — the conversation itself is the rolling window.
     let tool_note = if tools.is_empty() { String::new() } else { "\nYou have tools available: call one when it helps, wait for the result, then continue.".to_string() };
-    format!("You are {}. Objective: {}\n\n{full_memory}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
+    // When the memory connector is attached, tell the agent which identity to file
+    // memories under, so they land in the namespace the Memory view reads.
+    let memory_note = if agent.tool_ids.iter().any(|t| t.starts_with("mcp:memory:")) {
+      format!("\nYou have a persistent memory. When you use a memory tool, pass agentId \"{id}\" and scope {{\"type\":\"agent\",\"id\":\"{id}\"}}.", id = agent.id)
+    } else {
+      String::new()
+    };
+    format!("You are {}. Objective: {}\n\n{full_memory}{memory_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
+
+  // Active context: the host compiles a lean block from durable memory and injects
+  // it, so memory is present without the model having to ask. Durable state stays
+  // in fox, outside the window — only this budgeted slice rides in the prompt.
+  {
+    let app_ctx = app.clone();
+    let id_ctx = agent.id.clone();
+    let active = tauri::async_runtime::spawn_blocking(move || crate::fox::active_context(&app_ctx, &id_ctx))
+      .await.unwrap_or_default();
+    if !active.trim().is_empty() {
+      system.push_str(&format!("\n\n## Memory (active context)\n{active}"));
+    }
+  }
 
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
   let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({ "role": "system", "content": system })];
@@ -104,6 +167,7 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   if !tools.is_empty() {
     let client = http::client();
     for _ in 0..MAX_TOOL_ROUNDS {
+      if is_cancelled(stream_id.as_deref()) { return Ok(()); }
       emit_status(&on_event, "think", "Thinking…");
       let mut body = serde_json::json!({
         "model": resolved.model,
@@ -150,7 +214,7 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
         messages.push(serde_json::json!({ "role": "assistant", "content": content }));
         for call in text_calls {
           emit_status(&on_event, "tool", &format!("Calling {}…", call.name));
-          let result = run_tool(&app, &tools, is_manager, &call.name, &call.args, &on_event).await?;
+          let result = run_tool(&app, &tools, is_manager, &call.name, &call.args, &on_event, stream_id.as_deref()).await?;
           messages.push(serde_json::json!({ "role": "user", "content": format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, result) }));
         }
         continue;
@@ -164,13 +228,17 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
       messages.push(assistant_msg);
       for (call_id, name, args) in tool_calls {
         emit_status(&on_event, "tool", &format!("Calling {name}…"));
-        let result = run_tool(&app, &tools, is_manager, &name, &args, &on_event).await?;
+        let result = run_tool(&app, &tools, is_manager, &name, &args, &on_event, stream_id.as_deref()).await?;
         let mut tool_msg = serde_json::json!({ "role": "tool", "content": result });
         if !call_id.is_empty() { tool_msg["tool_call_id"] = serde_json::json!(call_id); }
         messages.push(tool_msg);
       }
     }
   }
+
+  // A cancel that landed during a tool round stops here rather than starting the
+  // final reply.
+  if is_cancelled(stream_id.as_deref()) { return Ok(()); }
 
   emit_status(&on_event, "write", "Writing the reply…");
   let client = http::stream_client();
@@ -196,11 +264,17 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   let mut completion_tokens = 0u64;
   loop {
     // A stalled upstream (OpenRouter switching providers, a dropped connection)
-    // must surface as an error rather than an indefinite wait.
-    let chunk = match tokio::time::timeout(http::STREAM_IDLE_TIMEOUT, stream.next()).await {
-      Err(_) => return Err(format!("The model provider stopped responding (no data for {}s).", http::STREAM_IDLE_TIMEOUT.as_secs())),
-      Ok(None) => break,
-      Ok(Some(chunk)) => chunk.map_err(|e| e.to_string())?,
+    // must surface as an error rather than an indefinite wait. The cancel arm
+    // races it so a user cancel takes effect at once, not on the next token.
+    let ready = tokio::select! {
+      r = tokio::time::timeout(http::STREAM_IDLE_TIMEOUT, stream.next()) => Some(r),
+      _ = wait_for_cancel(stream_id.clone()) => None,
+    };
+    let chunk = match ready {
+      None => return Ok(()),
+      Some(Err(_)) => return Err(format!("The model provider stopped responding (no data for {}s).", http::STREAM_IDLE_TIMEOUT.as_secs())),
+      Some(Ok(None)) => break,
+      Some(Ok(Some(chunk))) => chunk.map_err(|e| e.to_string())?,
     };
     buffer.push_str(&String::from_utf8_lossy(&chunk));
     // Ollama NDJSON: one JSON object per line. OpenAI-compatible: SSE `data:` lines.
@@ -241,6 +315,16 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   let tail = leak.finish();
   if !tail.is_empty() { delta.push_str(&tail); on_event.send(tail).map_err(|e| e.to_string())?; }
 
+  // Passive capture: this exchange becomes experience in the agent's durable
+  // memory — no tool call, no instruction from the user.
+  if !delta.trim().is_empty() {
+    let app_cap = app.clone();
+    let id_cap = agent.id.clone();
+    let user_cap = input.clone();
+    let reply_cap = delta.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || crate::fox::record_turn(&app_cap, &id_cap, &user_cap, &reply_cap));
+  }
+
   // Persist the run and the conversation.
   let run_id = format!("{}-{}", agent.id, chrono::Utc::now().timestamp_millis());
   let started = chrono::Utc::now().to_rfc3339();
@@ -280,7 +364,7 @@ fn emit_reasoning(on_event: &tauri::ipc::Channel<String>, text: &str) {
 
 // Runs a single tool call. State-changing tools go through the confirmation popup
 // first; everything else executes immediately.
-async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value, on_event: &tauri::ipc::Channel<String>) -> Result<String, String> {
+async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value, on_event: &tauri::ipc::Channel<String>, stream_id: Option<&str>) -> Result<String, String> {
   if !requires_confirmation(name) {
     return Ok(execute_tool(app, tools, is_manager, name, args).await);
   }
@@ -290,6 +374,9 @@ async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: boo
   on_event.send(event.to_string()).map_err(|e| e.to_string())?;
   let deadline = Instant::now() + Duration::from_secs(120);
   let decision = loop {
+    // A cancel while the approval popup is open must not leave this waiting the
+    // full deadline; bail out and let the turn unwind.
+    if is_cancelled(stream_id) { return Ok(String::new()); }
     {
       let mut map = approvals().lock().map_err(|e| e.to_string())?;
       if let Some(a) = map.remove(&request_id) { break a; }

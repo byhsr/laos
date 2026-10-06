@@ -19,7 +19,7 @@ import { ChatComposer } from '../chat/ChatComposer';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { MessageBubble } from '../chat/MessageBubble';
 import { toast } from '../../hooks/useToast';
-import { deleteChatSession, getChatSession, listChatSessions } from '../../runtime';
+import { deleteChatSession, getChatSession, listChatSessions, rateTurn } from '../../runtime';
 
 const fieldLabel = `${FIELD_LABEL_CLS} mt-4`;
 
@@ -38,6 +38,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
   const currentAgentId = useManagerStore((s) => s.currentAgentId);
   const setCurrentAgent = useManagerStore((s) => s.setCurrentAgent);
   const send = useManagerStore((s) => s.send);
+  const cancel = useManagerStore((s) => s.cancel);
   const loadHistory = useManagerStore((s) => s.loadHistory);
   const reset = useManagerStore((s) => s.reset);
   const newSession = useManagerStore((s) => s.newSession);
@@ -171,6 +172,9 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
                 content={m.content}
                 steps={steps}
                 streaming={busy && i === messages.length - 1 && m.role === 'assistant'}
+                onRate={m.role === 'assistant' && i === messages.length - 1 && !busy
+                  ? (signal) => void rateTurn(managerId, signal, m.content)
+                  : undefined}
               />
             ))}
           </div>
@@ -181,6 +185,7 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
           reasoning={managerAgent.reasoning}
           placeholder={`message ${leadName}…  (/agents, /tasks, /switch, /help)`}
           onSend={submit}
+          onCancel={cancel}
           onModelChange={(id) => void persistAgent({ ...managerAgent, model: id })}
           onReasoningChange={(r) => void persistAgent({ ...managerAgent, reasoning: r })}
         />

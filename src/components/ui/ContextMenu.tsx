@@ -37,9 +37,12 @@ function MenuRows({ items, onDone }: { items: MenuItem[]; onDone: () => void }) 
   ));
 }
 
-// Three-dot overflow menu. Portalled with the shared popover shell so it can
-// never be buried under the chat or clipped by a scroll container.
-export function ContextMenu({ items, title = 'more' }: { items: MenuItem[]; title?: string }) {
+// The same menu, opened from any trigger. Defaults to the three-dot overflow
+// control; pass `trigger` (plus `triggerClassName`) to reuse the popover from a
+// different button, such as the composer's cancel action.
+export function ContextMenu({ items, title = 'more', trigger, triggerClassName = '' }: {
+  items: MenuItem[]; title?: string; trigger?: ReactNode; triggerClassName?: string;
+}) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -47,6 +50,12 @@ export function ContextMenu({ items, title = 'more' }: { items: MenuItem[]; titl
   useDismiss(open, () => setOpen(false), anchor, panel);
 
   if (items.length === 0) return null;
+
+  const triggerCls = trigger
+    ? `focus-ring shrink-0 cursor-pointer ${triggerClassName}`
+    : `focus-ring grid h-[26px] w-[26px] cursor-pointer place-items-center rounded-lg transition-colors ${
+        open ? 'bg-background text-foreground' : 'text-muted hover:bg-background hover:text-foreground'
+      }`;
 
   return (
     <>
@@ -57,12 +66,10 @@ export function ContextMenu({ items, title = 'more' }: { items: MenuItem[]; titl
           aria-haspopup="menu"
           aria-expanded={open}
           aria-label={title}
-          className={`focus-ring grid h-[26px] w-[26px] cursor-pointer place-items-center rounded-lg transition-colors ${
-            open ? 'bg-background text-foreground' : 'text-muted hover:bg-background hover:text-foreground'
-          }`}
+          className={triggerCls}
           onClick={() => setOpen((o) => !o)}
         >
-          <MoreHorizontal size={14} />
+          {trigger ?? <MoreHorizontal size={14} />}
         </button>
       </Tooltip>
 
