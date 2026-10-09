@@ -72,7 +72,10 @@ export default function App() {
   const loadRuns = useRunsStore((s) => s.loadRuns);
 
   useEffect(() => {
-    loadAgents(); loadModels(); loadTools(); loadSkills(); loadWorkspace(); loadWorkflows(); loadIntegrations(); loadRuns();
+    loadAgents(); loadModels(); loadTools(); loadSkills(); loadWorkflows(); loadIntegrations(); loadRuns();
+    // Reload tools after the storage bootstrap so MCP tools imported on first run
+    // (browser/memory) are present in the picker.
+    void loadWorkspace().then(() => loadTools());
   }, [loadAgents, loadModels, loadTools, loadSkills, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns]);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);

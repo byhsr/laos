@@ -181,11 +181,16 @@ pub(crate) fn shutdown_all() {
 }
 
 // On Windows a bare name only resolves to an .exe, so command shims like `npx`
-// (npx.cmd) or `uvx` need cmd /C — the same approach as run_command.
+// (npx.cmd) or `uvx` need cmd /C — the same approach as run_command. The app is a
+// GUI process, so CREATE_NO_WINDOW is required or every spawned server flashes a
+// console window.
 #[cfg(windows)]
 fn build_command(server: &McpServer) -> Command {
+  use std::os::windows::process::CommandExt;
+  const CREATE_NO_WINDOW: u32 = 0x0800_0000;
   let mut c = Command::new("cmd");
   c.arg("/C").arg(&server.command);
+  c.creation_flags(CREATE_NO_WINDOW);
   c
 }
 #[cfg(not(windows))]

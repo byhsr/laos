@@ -124,15 +124,20 @@ fn import_browser_tools_once(app: &AppHandle) {
 }
 
 #[tauri::command]
-pub fn initialize_storage(app: AppHandle) -> Result<(), String> {
+pub async fn initialize_storage(app: AppHandle) -> Result<(), String> {
   {
     let conn = db(&app)?;
     ensure_manager(&conn)?;
     ensure_memory_server(&app, &conn)?;
     ensure_browser_server(&app, &conn)?;
   }
-  import_memory_tools_once(&app);
-  import_browser_tools_once(&app);
+  // Importing MCP tools spawns their servers (fox via node, the browser via npx,
+  // which may download on first run), so run it off the main thread — a cold
+  // start must never block the UI or flash a console.
+  tauri::async_runtime::spawn_blocking(move || {
+    import_memory_tools_once(&app);
+    import_browser_tools_once(&app);
+  }).await.map_err(|e| e.to_string())?;
   Ok(())
 }
 
