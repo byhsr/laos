@@ -34,6 +34,7 @@ async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &str, max_tok
   // background cost.
   let resolved = provider::resolve(&conn, model, None)?;
   let is_ollama = resolved.kind == provider::Kind::Ollama;
+  let is_anthropic = resolved.kind == provider::Kind::Anthropic;
 
   let mut body = if is_ollama {
     serde_json::json!({ "model": resolved.model, "prompt": prompt, "stream": false })
@@ -45,10 +46,12 @@ async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &str, max_tok
   } else {
     http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, max_tokens);
   }
+  if is_anthropic { body = crate::anthropic::to_wire(&body); }
 
   let url = if is_ollama { resolved.generate_url() } else { resolved.chat_url() };
   let response = http::send_model_request(&http::client(), &resolved, &url, &body, http::MODEL_ATTEMPTS).await?;
-  let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+  let mut json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+  if is_anthropic { json = crate::anthropic::normalize_response(&json); }
   Ok(if is_ollama {
     json["response"].as_str().unwrap_or("").to_string()
   } else {

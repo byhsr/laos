@@ -55,7 +55,7 @@ fn backoff_delay(attempt: usize) -> Duration {
 
 // The request fields that ask a model to reason. Support varies per provider and
 // per model, and can't be queried up front.
-const REASONING_KEYS: [&str; 3] = ["think", "reasoning", "reasoning_effort"];
+const REASONING_KEYS: [&str; 4] = ["think", "reasoning", "reasoning_effort", "thinking"];
 
 fn has_reasoning(body: &serde_json::Value) -> bool {
   REASONING_KEYS.iter().any(|key| body.get(key).is_some())
@@ -73,8 +73,18 @@ fn strip_reasoning(body: &serde_json::Value) -> serde_json::Value {
 
 fn build_model_request(client: &reqwest::Client, resolved: &provider::Resolved, url: &str, body: &serde_json::Value) -> reqwest::RequestBuilder {
   let mut req = client.post(url).json(body);
-  if let Some(key) = &resolved.key {
-    req = req.header("Authorization", format!("Bearer {key}"));
+  match resolved.kind {
+    // Anthropic authenticates with a header key and a pinned API version.
+    provider::Kind::Anthropic => {
+      if let Some(key) = &resolved.key {
+        req = req.header("x-api-key", key).header("anthropic-version", "2023-06-01");
+      }
+    }
+    _ => {
+      if let Some(key) = &resolved.key {
+        req = req.header("Authorization", format!("Bearer {key}"));
+      }
+    }
   }
   if resolved.kind == provider::Kind::OpenRouter {
     req = req.header("HTTP-Referer", "https://local-agent-os.app").header("X-Title", "Local Agent OS");

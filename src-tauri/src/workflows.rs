@@ -218,6 +218,7 @@ async fn run_llm_judge(app: &AppHandle, rule: &serde_json::Value, input_value: &
   // Ollama still uses its chat endpoint here, because the judge needs `format`.
   let resolved = provider::resolve(&conn, &model, api_key)?;
   let is_ollama = resolved.kind == provider::Kind::Ollama;
+  let is_anthropic = resolved.kind == provider::Kind::Anthropic;
   let url = resolved.chat_url();
 
   let mut last_err = "LLM judge returned no text".to_string();
@@ -238,10 +239,12 @@ async fn run_llm_judge(app: &AppHandle, rule: &serde_json::Value, input_value: &
     } else {
       http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, http::SUMMARY_MAX_TOKENS);
     }
+    if is_anthropic { body = crate::anthropic::to_wire(&body); }
     let resp = http::send_model_request(&http::client(), &resolved, &url, &body, http::MODEL_ATTEMPTS)
       .await
       .map_err(|e| format!("LLM judge: {e}"))?;
-    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let mut json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    if is_anthropic { json = crate::anthropic::normalize_response(&json); }
     let result = if is_ollama {
       json["message"]["content"].as_str().unwrap_or("").to_string()
     } else {

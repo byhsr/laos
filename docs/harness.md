@@ -113,11 +113,15 @@ Endpoints in use:
 | OpenAI | `https://api.openai.com/v1/chat/completions` |
 | Google (Gemini) | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` |
 | xAI | `https://api.x.ai/v1/chat/completions` |
+| Anthropic | `https://api.anthropic.com/v1/messages` |
 
 OpenAI, Google and xAI are OpenAI-compatible (Google via its OpenAI-compatibility endpoint),
 so they share the Groq/OpenRouter transport — a `Kind` arm each in `provider::resolve` and the
-`reasoning_effort` reasoning mapping. OpenRouter requests also send
-`HTTP-Referer: https://local-agent-os.app` and `X-Title: Local Agent OS`.
+`reasoning_effort` reasoning mapping. Anthropic is **not** OpenAI-compatible: it authenticates
+with `x-api-key` + `anthropic-version: 2023-06-01` (not Bearer) and its body/response shape
+differs, so `anthropic.rs` translates both directions (`to_wire` / `normalize_response`, with
+the streaming deltas mapped in `chat.rs`) and the call sites stay OpenAI-shaped. OpenRouter
+requests also send `HTTP-Referer: https://local-agent-os.app` and `X-Title: Local Agent OS`.
 
 ## Provider message shapes
 
@@ -158,6 +162,9 @@ returns the output budget to use.
 - **`auto` writes nothing.** Thinking is *on by default* in both Ollama and Groq for models
   that support it, so a model with no reasoning support is never sent a parameter it would
   reject.
+- **OpenAI / Google / xAI** send `reasoning_effort` exactly like Groq. **Anthropic** sends
+  `thinking: {type:"enabled", budget_tokens}` (low/medium/high ≈ 1024/4096/8192) and raises
+  `max_tokens` above that budget, which the API requires; `off` sends `{type:"disabled"}`.
 - **Reasoning tokens bill against `max_tokens`.** At `CHAT_MAX_TOKENS = 2048` a model can
   spend the whole budget thinking and return empty content, so an enabled level raises the
   budget to `REASONING_MAX_TOKENS` for that request.

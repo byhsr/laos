@@ -16,6 +16,7 @@ const MODEL_PLACEHOLDER: Record<string, string> = {
   openai: 'gpt-4o-mini',
   google: 'gemini-2.0-flash',
   xai: 'grok-3',
+  anthropic: 'claude-sonnet-4-5',
   groq: 'llama-3.3-70b-versatile',
   openrouter: 'anthropic/claude-3.5-haiku',
 };
@@ -23,6 +24,7 @@ const KEY_PLACEHOLDER: Record<string, string> = {
   openai: 'sk-…',
   google: 'AIza…',
   xai: 'xai-…',
+  anthropic: 'sk-ant-…',
   groq: 'gsk_…',
   openrouter: 'sk-or-v1-…',
 };
@@ -95,6 +97,7 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
         options={[
           { value: 'ollama', label: 'Ollama (local)' },
           { value: 'openai', label: 'OpenAI' },
+          { value: 'anthropic', label: 'Anthropic' },
           { value: 'google', label: 'Google (Gemini)' },
           { value: 'xai', label: 'xAI (Grok)' },
           { value: 'groq', label: 'Groq' },

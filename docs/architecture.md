@@ -27,7 +27,8 @@ crosses `src/runtime.ts`. The backend has no knowledge of React; it returns plai
 | --- | --- |
 | `main.rs` | Declares modules, spawns the 3 background tasks, registers every `#[tauri::command]`. |
 | `db.rs` | Opens `local-agent-os.sqlite3`, runs idempotent `CREATE TABLE IF NOT EXISTS` + column migrations. Exposes `db(app)` and `now()`. |
-| `provider.rs` | Model provider dispatch: resolves a `"<provider>:<model>"` id to endpoint/credentials, and maps the per-model reasoning setting and Ollama tuning onto request bodies. Used by every model-calling path. |
+| `provider.rs` | Model provider dispatch: resolves a `"<provider>:<model>"` id (`ollama`, `groq`, `openrouter`, `openai`, `google`, `xai`, `anthropic`) to endpoint/credentials, and maps the per-model reasoning setting and Ollama tuning onto request bodies. Used by every model-calling path. |
+| `anthropic.rs` | Anthropic Messages API adapter: converts OpenAI-shaped request bodies to `/v1/messages` and normalizes responses (and streaming deltas) back, so call sites stay OpenAI-shaped. |
 | `models.rs` | Shared `serde` record/DTO types only (no logic). |
 | `storage.rs` | CRUD commands for knowledge docs, models, tools, skills, agents, workflows; Manager bootstrap; seeds the built-in memory + browser MCP servers; `manager_default_model`. |
 | `http.rs` | The shared provider HTTP layer: clients, timeouts, retry/backoff, request defaults. |

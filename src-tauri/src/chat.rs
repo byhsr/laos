@@ -145,6 +145,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   // The agent's own reasoning wins over the model's default.
   provider::apply_agent_reasoning(&mut resolved, &agent.reasoning);
   let is_ollama = resolved.kind == provider::Kind::Ollama;
+  let is_anthropic = resolved.kind == provider::Kind::Anthropic;
 
   // Tool-call rounds (non-streaming) run first, then the final reply streams.
   // Usage is accumulated across every round (and the final stream) so a run's
@@ -171,8 +172,12 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
       } else {
         http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
       }
+      // Anthropic isn't OpenAI-compatible: translate the body out, and the
+      // response back into the OpenAI shape the parser below expects.
+      if is_anthropic { body = crate::anthropic::to_wire(&body); }
       let response = http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
-      let parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+      let mut parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+      if is_anthropic { parsed = crate::anthropic::normalize_response(&parsed); }
       // Ollama reports prompt_eval_count/eval_count; OpenAI-compatible usage.{prompt,completion}_tokens.
       prompt_tokens += parsed["prompt_eval_count"].as_u64()
         .or_else(|| parsed["usage"]["prompt_tokens"].as_u64())
@@ -253,6 +258,8 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     if is_openrouter { body["usage"] = serde_json::json!({ "include": true }); }
     else { body["stream_options"] = serde_json::json!({ "include_usage": true }); }
   }
+  // Anthropic's own stream shape; translate the body (its usage fields are OpenAI-only).
+  if is_anthropic { body = crate::anthropic::to_wire(&body); }
   let response = http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
   let mut stream = response.bytes_stream();
   let mut buffer = String::new();
@@ -297,14 +304,31 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
         let Some(data) = line.strip_prefix("data:").map(|s| s.trim()) else { continue };
         if data == "[DONE]" { continue; }
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
-          // OpenAI-compatible providers stream reasoning separately from content.
-          if let Some(t) = v["choices"][0]["delta"]["reasoning_content"].as_str() { if !t.is_empty() { emit_reasoning(&on_event, t); } }
-          if let Some(d) = v["choices"][0]["delta"]["content"].as_str() {
-            let safe = leak.feed(d);
-            if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
+          if is_anthropic {
+            // Anthropic SSE: named events carry text deltas, thinking, and usage.
+            match v["type"].as_str() {
+              Some("content_block_delta") => {
+                if let Some(t) = v["delta"]["text"].as_str() {
+                  let safe = leak.feed(t);
+                  if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
+                } else if let Some(t) = v["delta"]["thinking"].as_str() {
+                  if !t.is_empty() { emit_reasoning(&on_event, t); }
+                }
+              }
+              Some("message_start") => { prompt_tokens = v["message"]["usage"]["input_tokens"].as_u64().unwrap_or(prompt_tokens); }
+              Some("message_delta") => { completion_tokens = v["usage"]["output_tokens"].as_u64().unwrap_or(completion_tokens); }
+              _ => {}
+            }
+          } else {
+            // OpenAI-compatible providers stream reasoning separately from content.
+            if let Some(t) = v["choices"][0]["delta"]["reasoning_content"].as_str() { if !t.is_empty() { emit_reasoning(&on_event, t); } }
+            if let Some(d) = v["choices"][0]["delta"]["content"].as_str() {
+              let safe = leak.feed(d);
+              if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
+            }
+            prompt_tokens = v["usage"]["prompt_tokens"].as_u64().unwrap_or(prompt_tokens);
+            completion_tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or(completion_tokens);
           }
-          prompt_tokens = v["usage"]["prompt_tokens"].as_u64().unwrap_or(prompt_tokens);
-          completion_tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or(completion_tokens);
         }
       }
     }

@@ -17,13 +17,14 @@ const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
 // Google's OpenAI-compatibility endpoint (tools included) rather than generateContent.
 const GOOGLE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 const XAI_URL: &str = "https://api.x.ai/v1/chat/completions";
+const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 
 // Ollama unloads an idle model after a few minutes, so without this every turn
 // after a pause pays a multi-second reload.
 pub(crate) const OLLAMA_KEEP_ALIVE: &str = "30m";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Kind { Ollama, Groq, OpenRouter, OpenAi, Google, Xai }
+pub(crate) enum Kind { Ollama, Groq, OpenRouter, OpenAi, Google, Xai, Anthropic }
 
 // Maps to the stored `model_configs.reasoning` value.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -115,6 +116,10 @@ pub(crate) fn resolve(conn: &Connection, model_id: &str, override_key: Option<&s
     let key = key.ok_or("xAI requires an API key. Add one in Settings → Models.")?;
     return Ok(Resolved { kind: Kind::Xai, base: XAI_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
   }
+  if let Some(model) = model_id.strip_prefix("anthropic:") {
+    let key = key.ok_or("Anthropic requires an API key. Add one in Settings → Models.")?;
+    return Ok(Resolved { kind: Kind::Anthropic, base: ANTHROPIC_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
+  }
   Err(format!("Unknown model provider for \"{model_id}\"."))
 }
 
@@ -182,6 +187,23 @@ pub(crate) fn apply_reasoning(body: &mut serde_json::Value, resolved: &Resolved,
         Some(level) => serde_json::json!(level),
         None => serde_json::json!("none"),
       };
+    }
+    Kind::Anthropic => {
+      // Extended thinking. `max_tokens` must exceed `budget_tokens`, so an
+      // enabled level returns a budget large enough to hold the trace plus the
+      // answer (apply_openai_defaults writes that into max_tokens).
+      let budget = match reasoning.level() {
+        Some("low") => 1024u64,
+        Some("medium") => 4096,
+        Some(_) => 8192,
+        None => 0,
+      };
+      if budget == 0 {
+        body["thinking"] = serde_json::json!({ "type": "disabled" });
+        return base_max_tokens;
+      }
+      body["thinking"] = serde_json::json!({ "type": "enabled", "budget_tokens": budget });
+      return budget + base_max_tokens;
     }
   }
 

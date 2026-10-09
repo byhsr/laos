@@ -28,4 +28,4 @@ The browser command (`npm.cmd run dev`) is for UI iteration only. It cannot call
   screen capture, windows, clipboard, app launch. Opt-in per agent, Windows-first, and
   screenshots are sent to the configured model; see [docs/pc-control.md](./docs/pc-control.md).
 
-Provider calls (`ollama:`, `groq:`, `openrouter:`) share one tool-calling and streaming path, and API keys are stored in the local database.
+Provider calls (`ollama:`, `groq:`, `openrouter:`, `openai:`, `google:`, `xai:`, `anthropic:`) share one tool-calling and streaming path, and API keys are stored in the local database.

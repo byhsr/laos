@@ -307,6 +307,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   // The Manager's own reasoning wins over the model's default.
   provider::apply_agent_reasoning(&mut resolved, &manager.reasoning);
   let is_ollama = resolved.kind == provider::Kind::Ollama;
+  let is_anthropic = resolved.kind == provider::Kind::Anthropic;
   let mut final_output = String::new();
 
   for _round in 0..MAX_TOOL_ROUNDS {
@@ -317,8 +318,10 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     } else {
       http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
     }
+    if is_anthropic { body = crate::anthropic::to_wire(&body); }
     let response = http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
-    let parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    let mut parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    if is_anthropic { parsed = crate::anthropic::normalize_response(&parsed); }
     // Support both Ollama (message.tool_calls) and OpenAI-compatible shapes.
     let calls_arr = parsed["message"]["tool_calls"].as_array()
       .or_else(|| parsed["choices"][0]["message"]["tool_calls"].as_array())

@@ -1,5 +1,6 @@
 ﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod agents;
+mod anthropic;
 mod chat;
 mod db;
 mod fox;

@@ -241,8 +241,10 @@ async fn run_openai_tool_chat(resolved: &provider::Resolved, prompt: &str, agent
     let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "tools": tool_schemas(tools), "stream": false });
     let budget = provider::apply_reasoning(&mut body, resolved, http::CHAT_MAX_TOKENS);
     http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
+    if resolved.kind == provider::Kind::Anthropic { body = crate::anthropic::to_wire(&body); }
     let response = http::send_model_request(&client, resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
-    let parsed: serde_json::Value = response.json().await.map_err(|e| format!("Could not parse the tool response: {e}"))?;
+    let mut parsed: serde_json::Value = response.json().await.map_err(|e| format!("Could not parse the tool response: {e}"))?;
+    if resolved.kind == provider::Kind::Anthropic { parsed = crate::anthropic::normalize_response(&parsed); }
     prompt_tokens += parsed["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
     completion_tokens += parsed["usage"]["completion_tokens"].as_u64().unwrap_or(0);
     let message = parsed["choices"][0]["message"].clone();
@@ -318,6 +320,7 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
     provider::Kind::OpenAi => "OpenAI",
     provider::Kind::Google => "Google",
     provider::Kind::Xai => "xAI",
+    provider::Kind::Anthropic => "Anthropic",
   };
   let tools = build_tools(&conn, agent, &home)?;
   events.push(ExecutionEvent {
@@ -356,8 +359,10 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
     let mut body = serde_json::json!({ "model": resolved.model, "messages": [{ "role": "user", "content": prompt }] });
     let budget = provider::apply_reasoning(&mut body, &resolved, http::CHAT_MAX_TOKENS);
     http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
+    if resolved.kind == provider::Kind::Anthropic { body = crate::anthropic::to_wire(&body); }
     let response = http::send_model_request(&http::client(), &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
-    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    let mut json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    if resolved.kind == provider::Kind::Anthropic { json = crate::anthropic::normalize_response(&json); }
     (
       json["choices"][0]["message"]["content"].as_str().unwrap_or("The provider returned no text.").to_string(),
       json["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
