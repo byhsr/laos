@@ -159,7 +159,7 @@ pub(crate) async fn run_manager_tool(app: &AppHandle, tools: &[Box<dyn AgentTool
 
 // Builds the Manager's system prompt by enumerating its actual tools, so its
 // capabilities are always in sync with the code and never need hand-writing.
-pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_tool_ids: &[String]) -> Result<String, String> {
+pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_tool_ids: &[String], pc_control: bool) -> Result<String, String> {
   let context = build_workspace_context(conn)?;
   let mut tool_list = String::new();
   for t in manager_tools() {
@@ -169,6 +169,12 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
   // offered) — attaching them in its config is the opt-in.
   for t in mcp_tools_for(conn, mcp_tool_ids) {
     tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
+  }
+  // PC control tools, only when the Manager holds the pc_control permission.
+  if pc_control {
+    for t in crate::tools::desktop_tools() {
+      tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
+    }
   }
   // Skills attached to the Manager itself (same mechanism as regular agents).
   let skill_ids: Vec<String> = conn
@@ -187,6 +193,12 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
   } else {
     ""
   };
+  // PC control guidance, only when the Manager can actually control the PC.
+  let pc_note = if pc_control {
+    "You can see and control the screen. To act on it: call screen_capture first, then pass mouse coordinates in that image's pixel space (origin top-left); use type_text / press_keys for the keyboard.\n"
+  } else {
+    ""
+  };
   // Memory is pull-only: nothing about prior context is injected here. The
   // Manager brings it in on demand via recall_memory (or any memory tool it
   // holds), so a new chat starts clean.
@@ -202,7 +214,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
      - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent â€” file access is just a permission value in the create_agent call.\n\
      - Never store secrets (API keys/tokens) without the user's explicit approval in the confirmation popup.\n\
      - Delegate domain work to agents rather than doing it inline.\n\n\
-     Workspace context:\n{context}\n\n{skills}{memory_note}\
+     Workspace context:\n{context}\n\n{skills}{memory_note}{pc_note}\
      Return a concise, helpful reply to the user."
   ))
 }
@@ -271,12 +283,14 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   // Memory is pull-only (matching the streaming path): nothing about prior
   // context is injected. recall_memory (and any memory tool the Manager holds)
   // brings it in on demand.
-  let context = build_manager_system_prompt(&conn, &manager.name, &manager.tool_ids)?;
+  let pc_control = manager.permissions.iter().any(|p| p == "pc_control");
+  let context = build_manager_system_prompt(&conn, &manager.name, &manager.tool_ids, pc_control)?;
   let prompt = format!("{context}\n\nUser message: {message}");
 
   // The Manager's built-in tools plus only the MCP tools it was opted into.
   let tools: Vec<Box<dyn AgentTool>> = {
     let mut t = manager_tools();
+    if pc_control { t.extend(crate::tools::desktop_tools()); }
     t.extend(mcp_tools_for(&conn, &manager.tool_ids));
     t
   };
@@ -425,7 +439,7 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       let agent = AgentRecord {
         id: id.clone(), name: name.clone(), objective, model,
         tool_ids: arr("toolIds"), integrations: arr("integrations"), memory: true, skill_ids: arr("skillIds"),
-        permissions: arr("permissions").into_iter().filter(|p| p == "network" || p == "files").collect(),
+        permissions: arr("permissions").into_iter().filter(|p| matches!(p.as_str(), "network" | "files" | "host_fs" | "pc_control")).collect(),
         home_path: format!("agents/{id}"), color: "#22c55e".into(), x: 100.0, y: 100.0, is_manager: false, description: "".into(), persona: "ai-orb".into(),
         pinned: false, avatar: String::new(), reasoning,
       };
@@ -657,7 +671,10 @@ pub(crate) fn requires_confirmation(tool: &str) -> bool {
     "create_agent" | "update_agent" | "delete_agent"
     | "create_workflow" | "update_workflow" | "delete_workflow" | "run_workflow"
     | "configure_integration" | "create_task" | "cancel_task" | "delegate_task"
-    | "run_command")
+    | "run_command"
+    // PC control: the coarse/system actions confirm; low-level input and
+    // read-only actions do not (a vision loop needs many of them).
+    | "launch_app" | "close_window" | "lock_screen" | "write_clipboard" | "open_path")
 }
 
 #[tauri::command]

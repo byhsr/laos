@@ -23,7 +23,7 @@ use crate::memory::{
 };
 use crate::models::*;
 use crate::provider;
-use crate::tools::{AgentTool, MAX_TOOL_ROUNDS};
+use crate::tools::{AgentTool, ToolOutput, MAX_TOOL_ROUNDS};
 use crate::tooltext::{parse_text_tool_calls, ToolCallLeakFilter};
 
 // Turns the user asked to cancel, keyed by a per-turn id the frontend generates,
@@ -105,8 +105,10 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   // Tools: the Manager gets its app-control tools plus the MCP tools it was
   // opted into; a regular agent gets its own.
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
+  let pc_control = agent.permissions.iter().any(|p| p == "pc_control");
   let tools: Vec<Box<dyn AgentTool>> = if is_manager {
     let mut manager = manager_tools();
+    if pc_control { manager.extend(crate::tools::desktop_tools()); }
     manager.extend(mcp_tools_for(&conn, &agent.tool_ids));
     manager
   } else {
@@ -114,7 +116,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   };
 
   let system = if is_manager {
-    build_manager_system_prompt(&conn, &agent.name, &agent.tool_ids)?
+    build_manager_system_prompt(&conn, &agent.name, &agent.tool_ids, pc_control)?
   } else {
     // The conversation itself is the rolling window; no memory is injected.
     let tool_note = if tools.is_empty() { String::new() } else { "\nYou have tools available: call one when it helps, wait for the result, then continue.".to_string() };
@@ -125,7 +127,13 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     } else {
       String::new()
     };
-    format!("You are {}. Objective: {}\n\n{memory_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
+    // PC control guidance, only when the agent can actually control the PC.
+    let pc_note = if pc_control {
+      "\nYou can see and control the screen. To act: call screen_capture first, then give mouse coordinates in that image's pixel space (origin top-left); use type_text / press_keys for the keyboard."
+    } else {
+      ""
+    };
+    format!("You are {}. Objective: {}\n\n{memory_note}{pc_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
 
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
@@ -148,6 +156,9 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     for _ in 0..MAX_TOOL_ROUNDS {
       if is_cancelled(stream_id.as_deref()) { return Ok(()); }
       emit_status(&on_event, "think", "Thinking…");
+      // Keep only the latest screenshot in the request; older ones are dropped so
+      // a vision loop doesn't re-send every image on every round.
+      strip_old_images(&mut messages);
       let mut body = serde_json::json!({
         "model": resolved.model,
         "messages": messages,
@@ -200,8 +211,9 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
         messages.push(serde_json::json!({ "role": "assistant", "content": content }));
         for call in text_calls {
           emit_status(&on_event, "tool", &format!("Calling {}…", call.name));
-          let result = run_tool(&app, &tools, is_manager, &call.name, &call.args, &on_event, stream_id.as_deref()).await?;
-          messages.push(serde_json::json!({ "role": "user", "content": format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, result) }));
+          let output = run_tool(&app, &tools, is_manager, &call.name, &call.args, &on_event, stream_id.as_deref()).await?;
+          messages.push(serde_json::json!({ "role": "user", "content": format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, output.text) }));
+          push_images(&mut messages, is_ollama, &output.images);
         }
         continue;
       }
@@ -214,10 +226,11 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
       messages.push(assistant_msg);
       for (call_id, name, args) in tool_calls {
         emit_status(&on_event, "tool", &format!("Calling {name}…"));
-        let result = run_tool(&app, &tools, is_manager, &name, &args, &on_event, stream_id.as_deref()).await?;
-        let mut tool_msg = serde_json::json!({ "role": "tool", "content": result });
+        let output = run_tool(&app, &tools, is_manager, &name, &args, &on_event, stream_id.as_deref()).await?;
+        let mut tool_msg = serde_json::json!({ "role": "tool", "content": output.text });
         if !call_id.is_empty() { tool_msg["tool_call_id"] = serde_json::json!(call_id); }
         messages.push(tool_msg);
+        push_images(&mut messages, is_ollama, &output.images);
       }
     }
   }
@@ -227,6 +240,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   if is_cancelled(stream_id.as_deref()) { return Ok(()); }
 
   emit_status(&on_event, "write", "Writing the reply…");
+  strip_old_images(&mut messages);
   let client = http::stream_client();
   let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "stream": true });
   let budget = provider::apply_reasoning(&mut body, &resolved, http::CHAT_MAX_TOKENS);
@@ -348,7 +362,7 @@ fn emit_reasoning(on_event: &tauri::ipc::Channel<String>, text: &str) {
 
 // Runs a single tool call. State-changing tools go through the confirmation popup
 // first; everything else executes immediately.
-async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value, on_event: &tauri::ipc::Channel<String>, stream_id: Option<&str>) -> Result<String, String> {
+async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value, on_event: &tauri::ipc::Channel<String>, stream_id: Option<&str>) -> Result<ToolOutput, String> {
   if !requires_confirmation(name) {
     return Ok(execute_tool(app, tools, is_manager, name, args).await);
   }
@@ -360,7 +374,7 @@ async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: boo
   let decision = loop {
     // A cancel while the approval popup is open must not leave this waiting the
     // full deadline; bail out and let the turn unwind.
-    if is_cancelled(stream_id) { return Ok(String::new()); }
+    if is_cancelled(stream_id) { return Ok(ToolOutput::text("")); }
     {
       let mut map = approvals().lock().map_err(|e| e.to_string())?;
       if let Some(a) = map.remove(&request_id) { break a; }
@@ -368,19 +382,68 @@ async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: boo
     if Instant::now() > deadline { break Approval { approved: false, edited_args: serde_json::json!({}) }; }
     tokio::time::sleep(Duration::from_millis(200)).await;
   };
-  if !decision.approved { return Ok("The user declined this action.".to_string()); }
+  if !decision.approved { return Ok(ToolOutput::text("The user declined this action.")); }
   Ok(execute_tool(app, tools, is_manager, name, &decision.edited_args).await)
 }
 
-async fn execute_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value) -> String {
+async fn execute_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value) -> ToolOutput {
   if is_manager {
-    // The Manager's own tools dispatch by name; the MCP tools it also holds run
-    // like any other agent tool.
-    run_manager_tool(app, tools, name, args).await.unwrap_or_else(|e| e)
+    // The Manager's own tools dispatch by name; anything else it holds — MCP tools
+    // and the PC control tools — runs like any agent tool (and may return images).
+    if !crate::manager::is_manager_builtin(name) {
+      if let Some(t) = tools.iter().find(|t| t.name() == name) {
+        return t.run_with_images(args).await.unwrap_or_else(|e| ToolOutput::text(format!("Error: {e}")));
+      }
+    }
+    ToolOutput::text(run_manager_tool(app, tools, name, args).await.unwrap_or_else(|e| e))
   } else {
     match tools.iter().find(|t| t.name() == name) {
-      Some(t) => t.run(args).await.unwrap_or_else(|e| format!("Error: {e}")),
-      None => format!("Unknown tool '{name}'."),
+      Some(t) => t.run_with_images(args).await.unwrap_or_else(|e| ToolOutput::text(format!("Error: {e}"))),
+      None => ToolOutput::text(format!("Unknown tool '{name}'.")),
     }
   }
+}
+
+// Appends the model-visible image turn for a tool that returned images. OpenAI-
+// compatible providers take a content array on a user message; Ollama takes an
+// `images` array. Uses a user turn because a `tool` role can't carry images.
+fn push_images(messages: &mut Vec<serde_json::Value>, is_ollama: bool, images: &[String]) {
+  if images.is_empty() { return; }
+  if is_ollama {
+    messages.push(serde_json::json!({ "role": "user", "content": "[current screen]", "images": images }));
+  } else {
+    let mut content = vec![serde_json::json!({ "type": "text", "text": "[current screen]" })];
+    for b64 in images {
+      content.push(serde_json::json!({ "type": "image_url", "image_url": { "url": format!("data:image/png;base64,{b64}") } }));
+    }
+    messages.push(serde_json::json!({ "role": "user", "content": content }));
+  }
+}
+
+// Keeps only the last image-carrying message; earlier ones become text so a
+// vision loop doesn't re-send every screenshot on every round.
+fn strip_old_images(messages: &mut [serde_json::Value]) {
+  let mut last = None;
+  for (i, m) in messages.iter().enumerate() {
+    if message_has_image(m) { last = Some(i); }
+  }
+  for (i, m) in messages.iter_mut().enumerate() {
+    if Some(i) == last || !message_has_image(m) { continue; }
+    if m.get("images").is_some() {
+      if let Some(obj) = m.as_object_mut() { obj.remove("images"); }
+      m["content"] = serde_json::json!("[previous screen]");
+    } else if let Some(arr) = m.get_mut("content").and_then(|v| v.as_array_mut()) {
+      arr.retain(|p| p.get("type").and_then(|t| t.as_str()) != Some("image_url"));
+      if arr.is_empty() { m["content"] = serde_json::json!("[previous screen]"); }
+    }
+  }
+}
+
+fn message_has_image(m: &serde_json::Value) -> bool {
+  if let Some(a) = m.get("images").and_then(|v| v.as_array()) {
+    if !a.is_empty() { return true; }
+  }
+  m.get("content").and_then(|v| v.as_array())
+    .map(|a| a.iter().any(|p| p.get("type").and_then(|t| t.as_str()) == Some("image_url")))
+    .unwrap_or(false)
 }
