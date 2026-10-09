@@ -9,14 +9,16 @@ Related: [harness.md](./harness.md) (the summarization call), [data-model.md](./
 
 ## The three tiers
 
-| Tier | Stored in | Injected per turn? | Purpose |
+| Tier | Stored in | In the prompt? | Purpose |
 | --- | --- | --- | --- |
-| **1. Rolling window** | `agent_conversations.messages` (JSON) | Yes — last `ROLLING_WINDOW` messages | Coherent recent conversation. |
-| **2. Long-term memory** | `memory` rows: `__summary__` + `fact:*` | Yes (summary + facts) | The agent's evolving "brain". |
-| **3. Time-based context** | `chat_sessions.summary`, `day_contexts` | Yes — `build_day_context` | Older chat/day summaries. |
+| **1. Rolling window** | `agent_conversations.messages` (JSON) / a session's `chat_messages` | Yes — last `ROLLING_WINDOW` messages of the **current session** | Coherent recent conversation. |
+| **2. Long-term memory** | `memory` rows: `__summary__` + `fact:*` | **No — pull only** | The agent's evolving "brain". |
+| **3. Time-based context** | `chat_sessions.summary`, `day_contexts` | **No — pull only** | Older chat/day summaries. |
 
-All three tiers are injected on every turn. `recall_memory` (Manager only) still returns the
-full bundle on demand.
+**Memory is pull-only.** Nothing durable (tiers 2 and 3, or fox's active context) is injected
+into a turn by default: a fresh session starts clean, and memory enters the window only when
+the agent asks for it — the Manager's `recall_memory`, an attached memory tool, or the Memory
+view's search. Tiers 2 and 3 are still written in the background; they are just not pushed.
 
 ## Constants & keys
 
@@ -35,20 +37,19 @@ full bundle on demand.
 
 Per streaming turn (`chat.rs`):
 
-1. `load_conversation(agent_id)` → append the new user turn.
+1. Load the **current session's** messages (`load_session_messages`), or the agent-level
+   conversation when a call carries no session; append the new user turn.
 2. If history exceeds `ROLLING_WINDOW + 1`, spawn a **background** summarization (never in
    front of the reply the user is waiting for).
-3. `load_memory` → render `[Memory summary: …]` plus `- fact: value` lines into the system prompt.
-4. `build_day_context` → append `## Last chat summary`, `## Today's context`, and
-   `## Yesterday's context` (whichever exist).
-5. Take the last `ROLLING_WINDOW` messages as the window.
+3. Take the last `ROLLING_WINDOW` messages as the window.
 
-So the system prompt contains: agent objective + **memory summary + facts** + **day context** +
-tool note.
+So the system prompt contains only: agent objective (+ a tool note, and a memory-usage note
+when a memory tool is attached). No memory summary, facts, day context, or fox active context
+is injected — memory is pull-only.
 
 > The Manager path (`build_manager_system_prompt`, used by both `stream_chat` and
-> `manager_turn`) injects the same summary + facts + day context. `recall_memory` still returns
-> the full bundle on demand.
+> `manager_turn`) is likewise clean: it injects no memory. `recall_memory` still returns the
+> full bundle on demand.
 
 ## Summarization (`summarize_old_turns`)
 
@@ -104,8 +105,9 @@ Where each step is triggered:
 | `recall_memory` (full context bundle) | `manager_tools()` | **Manager only** |
 | Reset | `useManagerStore.reset` → `clear_agent_memory` | per agent |
 
-All three tiers now run for every agent, and all three are injected on every turn. The Manager
-additionally has `recall_memory` for pulling the full bundle on demand.
+All three tiers are still written for every agent, but only the rolling window is sent —
+tiers 2 and 3 are pull-only. The Manager additionally has `recall_memory` for pulling the full
+bundle on demand.
 
 ## Day context
 
@@ -143,18 +145,18 @@ asks "what have we done/talked about" or wants to continue prior work. `recall_m
 
 | Path | Window | Summary + facts | Day / last-chat context |
 | --- | --- | --- | --- |
-| `stream_chat` | ✔ (last 4) | ✔ injected | ✔ injected |
-| `manager_turn` (command + Telegram) | ✖ (single message) | ✔ injected | ✔ injected |
+| `stream_chat` | ✔ (last 4, current session) | ✖ pull only | ✖ pull only |
+| `manager_turn` (command + Telegram) | ✖ (single message) | ✖ pull only | ✖ pull only |
 | `run_agent_once` (one-shot / workflow / task) | ✖ | skills only | ✖ |
 
 ## Wiring notes
 
 - Sessions are keyed **per agent** (`useManagerStore.sessionIds`), so switching agents never
   attaches to another agent's session.
-- Only the Manager has `recall_memory`; regular agents rely on the automatically injected day
-  context instead.
-- `manager_turn` (Telegram / `manager_message`) injects tier-2 facts + summary and the day
-  context like the streaming path; it still has no rolling window (it receives a single message).
+- Only the Manager has `recall_memory`; regular agents pull memory through an attached memory
+  tool (or the Memory view), since nothing is injected automatically.
+- `manager_turn` (Telegram / `manager_message`) injects no memory either (matching the
+  streaming path); it still has no rolling window (it receives a single message).
 
 ## The `agent-memory` connector (fox) — the agent's own memory
 
@@ -167,14 +169,14 @@ conversation context.
 
 fox is a pull layer by design: it never pushes context and it does not manage the
 host's window — the host has to drive it. lup is that host (`src-tauri/src/fox.rs`), so
-memory is learned and used **without the user or the model asking for it**:
+memory is **learned** in the background without anyone asking, and **recalled** on demand:
 
 | Phase | Where | What happens |
 | --- | --- | --- |
 | **Capture** | `chat.rs` (`stream_chat_inner`) | After every turn, the user turn + reply are written as `user_message`/`assistant_message` **events**. No tool call, no instruction. |
-| **Active context** | `chat.rs` before the prompt | `compile_context` builds a lean, token-budgeted block (self-model, policies, procedures, facts, recent episodes) that is injected into the system prompt each turn. Durable state stays in fox; only this slice rides in the window. |
+| **Recall (on demand)** | attached memory tools / Memory view | fox holds all durable state, but nothing is injected into the prompt. `search`/`compile_context` (or the Manager's `recall_memory`) bring a slice in only when asked. |
 | **Distill** | `memory.rs` (`close_chat_session` → `distill_session`) | When a chat closes, one model call extracts the agent's own **self-model entries + typed memories** from the transcript and writes them into fox. This is how it learns from a session on its own. |
-| **Feedback loop** | `fox::rate_turn` + `MessageBubble` | A good/bad signal on a reply is recorded as an `outcome` event; good nudges the importance of the memories that informed that turn, bad dampens them and triggers `reflect` (recurring failures → procedures/policies). |
+| **Feedback loop** | `fox::rate_turn` + `MessageBubble` | A good/bad signal on a reply is recorded as an `outcome` event; a bad one triggers `reflect` (recurring failures → procedures/policies). |
 
 Setup / wiring:
 

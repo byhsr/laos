@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RotateCcw, Settings, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from '../ui/ContextMenu';
-import type { Agent, Integration, ModelConfig, Reasoning, Task } from '../../types';
+import type { Agent, Integration, ModelConfig, Reasoning, Task, Tool } from '../../types';
 import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
 import { useTasksStore } from '../../hooks/useTasks';
 import { useAgentsStore } from '../../hooks/useAgents';
@@ -13,6 +13,7 @@ import { REASONING_STOPS } from '../../reasoning';
 import { SidePanel } from '../ui/SidePanel';
 import { AgentAvatar, PersonaPicker } from '../ui/AgentAvatar';
 import { Checkbox } from '../ui/Checkbox';
+import { MultiDropdown } from '../ui/MultiDropdown';
 import { StatusTag } from '../ui/Status';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, PROSE_CLS } from '../ui/Input';
 import { ChatComposer } from '../chat/ChatComposer';
@@ -25,7 +26,7 @@ const fieldLabel = `${FIELD_LABEL_CLS} mt-4`;
 
 // The lead agent (Laos). Like every agent window, chat is the surface and the
 // secondary views (info, config) open as a side window from the ⋯ menu.
-export function ManagerView({ agents, integrations, models, openConfigRequest = 0 }: { agents: Agent[]; integrations: Integration[]; models: ModelConfig[]; openConfigRequest?: number }) {
+export function ManagerView({ agents, integrations, models, tools, openConfigRequest = 0 }: { agents: Agent[]; integrations: Integration[]; models: ModelConfig[]; tools: Tool[]; openConfigRequest?: number }) {
   const managerId = agents.find((a) => a.isManager)?.id ?? 'manager';
   // The lead agent's configured name is the only name shown anywhere — nothing
   // user-facing hardcodes it.
@@ -71,6 +72,17 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
     reasoning: models.find((m) => m.enabled)?.reasoning ?? 'auto', toolIds: [],
     integrations: [], skillIds: [], memory: true, permissions: ['network'], homePath: 'agents/manager', color: '', x: 0, y: 0, isManager: true,
   };
+
+  // Tools the Manager can be opted into — grouped by MCP server, same shape as
+  // the agent window's picker. MCP tools are opt-in: attaching one offers it to
+  // the Manager (and only then is it listed in, and sent with, its prompt).
+  const enabledTools = tools.filter((t) => t.enabled);
+  const toolOptions = [
+    ...enabledTools.filter((t) => t.kind !== 'mcp').map((t) => ({ value: t.id, label: t.name })),
+    ...enabledTools.filter((t) => t.kind === 'mcp')
+      .map((t) => ({ value: t.id, label: t.name, group: `mcp · ${String(t.config.serverName ?? t.integrationId)}` }))
+      .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label)),
+  ];
 
   const openConfig = () => {
     const m = agents.find((a) => a.isManager) ?? managerAgent;
@@ -269,6 +281,14 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
                         <span className={`block truncate font-mono text-[11px] ${s.id === sessionId ? 'text-foreground' : 'text-muted'}`}>{s.id === sessionId ? 'current chat' : s.title}</span>
                         <span className="block font-mono text-[10px] text-muted">{s.updatedAt ? (() => { const d = new Date(s.updatedAt); return isNaN(d.getTime()) ? '' : d.toLocaleString(); })() : ''}</span>
                       </button>
+                      <button title="continue this chat" className="cursor-pointer border-0 bg-transparent p-1 text-muted transition-colors hover:text-foreground" onClick={async () => {
+                        // Make this the active session so the next message appends
+                        // to it instead of starting a fresh chat.
+                        const msgs = await getChatSession(s.id);
+                        const entries: ChatEntry[] = msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: m.time }));
+                        useManagerStore.getState().resumeSession(managerId, s.id, entries);
+                        setPanel(null);
+                      }}><CornerDownLeft size={11} /></button>
                       <button className="cursor-pointer border-0 bg-transparent p-1 text-muted transition-colors hover:text-danger" onClick={async () => { await deleteChatSession(s.id); listChatSessions(agents.find((a) => a.isManager)?.id ?? 'manager').then(setSessions); }}><Trash2 size={11} /></button>
                     </div>
                   ))}
@@ -343,6 +363,14 @@ export function ManagerView({ agents, integrations, models, openConfigRequest = 
             rows={6}
             placeholder={`Describe ${leadName}'s role…`}
             className={PROSE_CLS}
+          />
+
+          <label className={fieldLabel}>tools</label>
+          <MultiDropdown
+            values={mgrDraft.toolIds}
+            options={toolOptions}
+            onChange={(v) => setMgrDraft({ ...mgrDraft, toolIds: v })}
+            placeholder="none attached"
           />
 
           <label className={fieldLabel}>permissions</label>

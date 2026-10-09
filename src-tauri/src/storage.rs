@@ -62,6 +62,32 @@ fn ensure_memory_server(app: &AppHandle, conn: &Connection) -> Result<(), String
   Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Built-in browser connector (Playwright MCP)
+// ---------------------------------------------------------------------------
+
+// Browser control ships built in: a Playwright MCP server is seeded on startup so
+// browser tools are available with no manual setup. It is a normal `mcp_servers`
+// row, editable in Workshop → Integrations → MCP servers. Requires Node/npx.
+const BROWSER_SERVER_ID: &str = "browser";
+
+// Inserts the browser MCP server row unless a Playwright-backed server already
+// exists (an upgraded install may have added one by hand), so we never create a
+// duplicate.
+fn ensure_browser_server(_app: &AppHandle, conn: &Connection) -> Result<(), String> {
+  let existing: i64 = conn
+    .query_row("SELECT COUNT(*) FROM mcp_servers WHERE lower(args) LIKE '%playwright%'", [], |r| r.get(0))
+    .unwrap_or(0);
+  if existing > 0 { return Ok(()); }
+  let args = serde_json::json!(["-y", "@playwright/mcp@latest"]).to_string();
+  conn.execute(
+    "INSERT INTO mcp_servers (id, name, command, args, env, enabled, updated_at) VALUES (?1,'Browser','npx',?2,'{}',1,?3)
+     ON CONFLICT(id) DO NOTHING",
+    params![BROWSER_SERVER_ID, args, now()],
+  ).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 // Imports the memory tools into the registry once, so agents — and the Manager,
 // which receives every enabled MCP tool — can use memory without a manual sync.
 // Best-effort: if fox isn't built or node is missing this silently does nothing,
@@ -77,14 +103,36 @@ fn import_memory_tools_once(app: &AppHandle) {
   let _ = crate::mcp::import_mcp_tools(app.clone(), MEMORY_SERVER_ID.to_string());
 }
 
+// Imports the browser tools once so they appear in the tool picker with no manual
+// sync. Targets the browser server that exists — the seeded `browser` row, or an
+// existing Playwright-backed row (an upgraded install may have added one by hand).
+// Best-effort: the first import downloads Playwright via npx, so an offline launch
+// just leaves it un-imported and the next launch retries.
+fn import_browser_tools_once(app: &AppHandle) {
+  let conn = match db(app) { Ok(c) => c, Err(_) => return };
+  let server_id: String = match conn.query_row(
+    "SELECT id FROM mcp_servers WHERE id=?1 OR lower(args) LIKE '%playwright%'
+     ORDER BY CASE WHEN id=?1 THEN 0 ELSE 1 END LIMIT 1",
+    params![BROWSER_SERVER_ID], |r| r.get(0),
+  ) { Ok(id) => id, Err(_) => return };
+  let count: i64 = conn
+    .query_row("SELECT COUNT(*) FROM tools WHERE kind='mcp' AND integration_id=?1", params![server_id], |r| r.get(0))
+    .unwrap_or(0);
+  if count > 0 { return; }
+  drop(conn);
+  let _ = crate::mcp::import_mcp_tools(app.clone(), server_id);
+}
+
 #[tauri::command]
 pub fn initialize_storage(app: AppHandle) -> Result<(), String> {
   {
     let conn = db(&app)?;
     ensure_manager(&conn)?;
     ensure_memory_server(&app, &conn)?;
+    ensure_browser_server(&app, &conn)?;
   }
   import_memory_tools_once(&app);
+  import_browser_tools_once(&app);
   Ok(())
 }
 

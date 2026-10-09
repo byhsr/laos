@@ -6,11 +6,11 @@ use async_trait::async_trait;
 use rusqlite::{params, Connection};
 use tauri::{AppHandle, Manager};
 
-use crate::agents::{all_mcp_tools, build_workspace_context, skills_prompt, tool_schemas};
+use crate::agents::{build_workspace_context, mcp_tools_for, skills_prompt, tool_schemas};
 use crate::db::{db, now};
 use crate::http;
 use crate::integrations::{integration_definitions, save_integration_config};
-use crate::memory::{build_context_bundle, load_memory, MEMORY_SUMMARY_KEY};
+use crate::memory::build_context_bundle;
 use crate::models::*;
 use crate::provider;
 use crate::storage::{manager_default_model, parse_json_vec, save_agent, save_workflow};
@@ -159,14 +159,15 @@ pub(crate) async fn run_manager_tool(app: &AppHandle, tools: &[Box<dyn AgentTool
 
 // Builds the Manager's system prompt by enumerating its actual tools, so its
 // capabilities are always in sync with the code and never need hand-writing.
-pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, memory_blob: &str) -> Result<String, String> {
+pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_tool_ids: &[String]) -> Result<String, String> {
   let context = build_workspace_context(conn)?;
   let mut tool_list = String::new();
   for t in manager_tools() {
     tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
   }
-  // Imported MCP tools are available to the Manager too, so list them as well.
-  for t in all_mcp_tools(conn) {
+  // Only the MCP tools the Manager was explicitly opted into are listed (and
+  // offered) — attaching them in its config is the opt-in.
+  for t in mcp_tools_for(conn, mcp_tool_ids) {
     tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
   }
   // Skills attached to the Manager itself (same mechanism as regular agents).
@@ -186,9 +187,9 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, memory_
   } else {
     ""
   };
-  // Long-term memory only. The time-based context (last chat summary, today,
-  // yesterday) stays out of the prompt so a new chat starts clean; recall_memory
-  // still returns the full bundle on demand.
+  // Memory is pull-only: nothing about prior context is injected here. The
+  // Manager brings it in on demand via recall_memory (or any memory tool it
+  // holds), so a new chat starts clean.
 
   Ok(format!(
     "You are {name}, the lead agent of a real, running agent workspace application. You are NOT a simulated or virtual entity â€” you have real tools and real effects on the user's machine.\n\n\
@@ -201,7 +202,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, memory_
      - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent â€” file access is just a permission value in the create_agent call.\n\
      - Never store secrets (API keys/tokens) without the user's explicit approval in the confirmation popup.\n\
      - Delegate domain work to agents rather than doing it inline.\n\n\
-     Workspace context:\n{context}\n\n{memory_blob}\n{skills}{memory_note}\
+     Workspace context:\n{context}\n\n{skills}{memory_note}\
      Return a concise, helpful reply to the user."
   ))
 }
@@ -267,26 +268,16 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     }
   }
 
-  // Inject the Manager's compact long-term memory (tier 2), matching the
-  // streaming path. Day/last-chat context stays retrieval-only (recall_memory)
-  // so it never leaks across chats.
-  let memory = load_memory(&conn, &manager.id);
-  let mut memory_blob = String::new();
-  for (k, v) in &memory {
-    if k == MEMORY_SUMMARY_KEY {
-      memory_blob.push_str(&format!("[Memory summary: {v}]\n"));
-    } else if let Some(fact) = k.strip_prefix("fact:") {
-      memory_blob.push_str(&format!("- {fact}: {v}\n"));
-    }
-  }
-  let context = build_manager_system_prompt(&conn, &manager.name, &memory_blob)?;
+  // Memory is pull-only (matching the streaming path): nothing about prior
+  // context is injected. recall_memory (and any memory tool the Manager holds)
+  // brings it in on demand.
+  let context = build_manager_system_prompt(&conn, &manager.name, &manager.tool_ids)?;
   let prompt = format!("{context}\n\nUser message: {message}");
 
-  // Manager tools plus every imported MCP tool, so the Manager can use any
-  // configured MCP server (it has no per-agent tool picker).
+  // The Manager's built-in tools plus only the MCP tools it was opted into.
   let tools: Vec<Box<dyn AgentTool>> = {
     let mut t = manager_tools();
-    t.extend(all_mcp_tools(&conn));
+    t.extend(mcp_tools_for(&conn, &manager.tool_ids));
     t
   };
 

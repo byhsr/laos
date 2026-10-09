@@ -108,23 +108,21 @@ fn mcp_tool_from_config(conn: &Connection, config: &serde_json::Value) -> Option
   }))
 }
 
-// Every enabled MCP tool in the registry. The Manager has no per-agent tool
-// picker, so it gets all of them — any configured MCP server is usable from it.
-pub(crate) fn all_mcp_tools(conn: &Connection) -> Vec<Box<dyn AgentTool>> {
-  let configs: Vec<serde_json::Value> = {
-    let mut out = Vec::new();
-    if let Ok(mut stmt) = conn.prepare("SELECT config_json FROM tools WHERE kind='mcp' AND enabled=1 ORDER BY name") {
-      if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-        for row in rows {
-          if let Ok(json) = row {
-            if let Ok(value) = serde_json::from_str(&json) { out.push(value); }
-          }
-        }
+// The MCP tools an agent explicitly attached, resolved from its tool ids. The
+// Manager uses this so it holds only the MCP tools it was opted into — not every
+// enabled server's tools, which bloated every tool round with dozens of unused
+// schemas and was the main token cost.
+pub(crate) fn mcp_tools_for(conn: &Connection, tool_ids: &[String]) -> Vec<Box<dyn AgentTool>> {
+  let mut out: Vec<Box<dyn AgentTool>> = Vec::new();
+  let Ok(mut stmt) = conn.prepare("SELECT config_json FROM tools WHERE id=?1 AND kind='mcp' AND enabled=1") else { return out };
+  for id in tool_ids {
+    if let Ok(config_json) = stmt.query_row(params![id], |row| row.get::<_, String>(0)) {
+      if let Ok(value) = serde_json::from_str::<serde_json::Value>(&config_json) {
+        if let Some(tool) = mcp_tool_from_config(conn, &value) { out.push(tool); }
       }
     }
-    out
-  };
-  configs.iter().filter_map(|c| mcp_tool_from_config(conn, c)).collect()
+  }
+  out
 }
 
 pub(crate) fn tool_schemas(tools: &[Box<dyn AgentTool>]) -> Vec<serde_json::Value> {

@@ -229,7 +229,7 @@ export default function App() {
               onRunWorkflow={runWorkflow}
             />
           </div>
-          <div className={pane(view === 'manager')}><ManagerView agents={agents} integrations={integrations} models={models} openConfigRequest={configRequest.id === leadAgent?.id ? configRequest.n : 0} /></div>
+          <div className={pane(view === 'manager')}><ManagerView agents={agents} integrations={integrations} models={models} tools={tools} openConfigRequest={configRequest.id === leadAgent?.id ? configRequest.n : 0} /></div>
           <div className={pane(view === 'memory')}><MemoryView /></div>
           <div className={pane(view === 'tasks')}><TasksView agents={agents} /></div>
           <div className={pane(view === 'telegram')}><TelegramView /></div>

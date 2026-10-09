@@ -48,12 +48,15 @@ non-tool content. They differ only in request/message encoding.
 ### Path 2 — streaming chat (`chat.rs`)
 
 The reference implementation. It:
-1. Loads conversation history, appends the user turn (rolling window; see [memory.md](./memory.md)).
-2. Builds the system prompt (Manager prompt, or agent prompt + memory facts).
+1. Loads the current session's messages (or the agent-level conversation when a call carries no
+   session) and appends the user turn (rolling window; see [memory.md](./memory.md)).
+2. Builds the system prompt (Manager prompt, or agent prompt). Memory is **not** injected — it
+   is pull-only.
 3. Runs the **tool-call loop** with `stream: false` rounds — this loop already handles both
    Ollama and OpenAI-compatible response shapes in one branch.
 4. Streams the final answer (`stream: true`) and emits deltas over a Tauri `Channel`.
-5. Persists the `runs` row and the conversation (+ chat session).
+5. Persists the `runs` row and the conversation (+ chat session). Token usage is summed across
+   every tool round plus the final stream, so a run reflects the whole turn.
 
 ### Path 3 — Manager turn (`manager.rs`)
 
@@ -184,7 +187,7 @@ Handled in `chat::stream_chat`:
 | Path | Where counted | Persisted |
 | --- | --- | --- |
 | `execute_agent` | summed across tool rounds in `run_*_chat` | `runs.prompt_tokens` / `completion_tokens` on completion |
-| `stream_chat` | accumulated from stream usage | inserted into `runs` at the end |
+| `stream_chat` | summed across every tool round **and** the final stream | inserted into `runs` at the end |
 | `execute_workflow` | sums only agent/subagent node tokens | **per-step token fields are always 0** — only the workflow totals are populated |
 | Manager turn / summarization / judge | not persisted as runs | — |
 

@@ -44,9 +44,9 @@ any other tool and `build_tools` needs only the `mcp` branch.
 4. **Attach** it to an agent in the agent's Tools list. MCP tools group under their server in
    the picker, and need no `network` permission — attaching one is the opt-in.
 
-> The Manager (Laos) has no per-agent tool picker, so it holds **every** enabled MCP tool
-> (`agents::all_mcp_tools`) alongside its own — any imported server is usable from it directly,
-> and its system prompt lists them.
+> The Manager (Laos) holds its built-in tools plus **only the MCP tools attached to it** in its
+> config (Tools picker) — attaching one is the opt-in. It no longer auto-holds every enabled
+> MCP tool, which shipped dozens of unused schemas on every tool round and dominated token cost.
 
 ## How a call works
 
@@ -105,9 +105,16 @@ directly — `spawn_session()` wraps the command in `cmd /C` there (the same app
 
 ## Browser control (Playwright)
 
+Browser control ships **built in**: startup seeds a Playwright MCP server (`storage.rs::ensure_browser_server`,
+id `browser`) and imports its tools once, so there is no manual setup. When a Playwright-backed
+server already exists (an upgraded install may have added one by hand), it is reused instead of
+duplicated, and its tools are imported too. It is a
+normal `mcp_servers` row (editable in Workshop), and its tools appear in every agent's picker —
+attach them to an agent, or to the Manager in its config, to enable browser control.
+
 Persistent sessions are what make a real browser usable: the server launches one Chrome/Edge and
 every `navigate` → `click` → `type` → `extract` call drives the **same page** across the whole
-conversation. Add it as an MCP server:
+conversation. The seeded server is equivalent to adding this by hand:
 
 | Field | Value |
 | --- | --- |
@@ -115,10 +122,10 @@ conversation. Add it as an MCP server:
 | args | `-y @playwright/mcp@latest` |
 | env | (none) |
 
-Save → tools import → attach to an agent (or just ask Laos). The agent gets tools like
+Attach the imported tools to an agent and it gets tools like
 `browser_navigate`, `browser_click`, `browser_type`, `browser_snapshot`, and
 `browser_take_screenshot`, driven over the Chrome DevTools Protocol against a real browser.
-Requires Node/npx on the machine. `chrome-devtools-mcp`
+Requires Node/npx on the machine (the first import downloads Playwright). `chrome-devtools-mcp`
 (`-y chrome-devtools-mcp@latest`) is an alternative that speaks CDP directly.
 
 > Before persistence this could not work — a fresh process per call launched a new browser every

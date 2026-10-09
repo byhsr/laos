@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { cancelChatStream, clearAgentMemory, closeSession, createChatSession, getChatSession, listChatSessions, newChatStreamId, renameChatSession, streamChat } from '../runtime';
+import { cancelChatStream, clearAgentMemory, closeSession, createChatSession, newChatStreamId, renameChatSession, streamChat } from '../runtime';
 import { useConfirmStore } from './useConfirm';
 import { useRunsStore } from './useRuns';
 import type { Agent, ChatStep } from '../types';
@@ -32,6 +32,7 @@ type ManagerState = {
   setCurrentAgent: (agentId: string | null) => void;
   newSession: (agentId: string, model: string) => Promise<void>;
   loadHistory: (agentId: string) => Promise<void>;
+  resumeSession: (agentId: string, sessionId: string, entries: ChatEntry[]) => void;
   reset: (agentId: string) => Promise<void>;
   send: (message: string, managerAgent: Agent) => Promise<void>;
   cancel: (action: 'pause' | 'delete') => void;
@@ -53,17 +54,25 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
   },
 
   loadHistory: async (agentId) => {
-    // Load the most recent chat session's messages for this agent (fresh chat
-    // starts empty; old chats stay in History).
-    const sessions = await listChatSessions(agentId).catch(() => []);
-    const session = sessions[0];
-    let entries: ChatEntry[] = [];
-    let sessionId: string | null = null;
-    if (session) {
-      sessionId = session.id;
-      const msgs = await getChatSession(session.id).catch(() => []);
-      entries = msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: m.time }));
-    }
+    // A fresh start: never adopt a previous session as the live chat. Old chats
+    // stay in History and are only continued when the user explicitly asks for
+    // one. If we already hold an in-memory conversation for this agent (e.g.
+    // switching back to it mid-session), keep it rather than wiping it.
+    set((s) => {
+      const entries = s.conversations[agentId] ?? [];
+      const sessionId = s.sessionIds[agentId] ?? null;
+      return {
+        conversations: { ...s.conversations, [agentId]: entries },
+        sessionIds: { ...s.sessionIds, [agentId]: sessionId },
+        messages: (s.currentAgentId === agentId || agentId === 'manager') ? entries : s.messages,
+      };
+    });
+  },
+
+  // Continue a past chat on demand: make it the active session and load its
+  // messages into the view, so the next message appends to it. Nothing is
+  // adopted unless the user asks.
+  resumeSession: (agentId, sessionId, entries) => {
     set((s) => {
       const conv = { ...s.conversations, [agentId]: entries };
       return {

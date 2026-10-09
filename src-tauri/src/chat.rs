@@ -10,7 +10,7 @@ use futures_util::StreamExt;
 use rusqlite::params;
 use tauri::{AppHandle, Manager};
 
-use crate::agents::{all_mcp_tools, build_tools, tool_schemas};
+use crate::agents::{build_tools, mcp_tools_for, tool_schemas};
 use crate::db::db;
 use crate::http;
 use crate::manager::{
@@ -18,8 +18,8 @@ use crate::manager::{
   run_manager_tool, Approval,
 };
 use crate::memory::{
-  append_session_message, load_conversation, load_memory, load_session_messages, save_conversation,
-  summarize_old_turns, MEMORY_SUMMARY_KEY, ROLLING_WINDOW,
+  append_session_message, load_conversation, load_session_messages, save_conversation,
+  summarize_old_turns, ROLLING_WINDOW,
 };
 use crate::models::*;
 use crate::provider;
@@ -97,38 +97,26 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     });
   }
 
-  // Long-term memory (durable facts + running summary) is the ONLY thing that
-  // crosses chat boundaries. Today's/yesterday's condensed context and the last
-  // chat's summary deliberately stay out of the prompt — a new chat should feel
-  // new, and force-feeding old context is what made it hallucinate. It remains
-  // reachable on demand through recall_memory.
-  let memory = load_memory(&conn, &agent.id);
-  let mut memory_blob = String::new();
-  for (k, v) in &memory {
-    if k == MEMORY_SUMMARY_KEY {
-      memory_blob.push_str(&format!("[Memory summary: {v}]\n"));
-    } else if let Some(fact) = k.strip_prefix("fact:") {
-      memory_blob.push_str(&format!("- {fact}: {v}\n"));
-    }
-  }
-  let full_memory = memory_blob;
+  // Memory is pull-only: nothing durable is injected here. A new chat starts
+  // clean, and memory only enters the window when the agent asks for it (a
+  // recall/search memory tool, or the Manager's recall_memory). This is what
+  // keeps a fresh session truly fresh.
 
-  // Tools: the Manager gets its app-control tools; a regular agent gets its own.
+  // Tools: the Manager gets its app-control tools plus the MCP tools it was
+  // opted into; a regular agent gets its own.
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
   let tools: Vec<Box<dyn AgentTool>> = if is_manager {
-    // The Manager keeps its app-control tools and also gets every imported MCP
-    // tool, so a configured MCP server is usable from the lead agent too.
     let mut manager = manager_tools();
-    manager.extend(all_mcp_tools(&conn));
+    manager.extend(mcp_tools_for(&conn, &agent.tool_ids));
     manager
   } else {
     build_tools(&conn, &agent, &home)?
   };
 
-  let mut system = if is_manager {
-    build_manager_system_prompt(&conn, &agent.name, &full_memory)?
+  let system = if is_manager {
+    build_manager_system_prompt(&conn, &agent.name, &agent.tool_ids)?
   } else {
-    // Long-term memory only — the conversation itself is the rolling window.
+    // The conversation itself is the rolling window; no memory is injected.
     let tool_note = if tools.is_empty() { String::new() } else { "\nYou have tools available: call one when it helps, wait for the result, then continue.".to_string() };
     // When the memory connector is attached, tell the agent which identity to file
     // memories under, so they land in the namespace the Memory view reads.
@@ -137,21 +125,8 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     } else {
       String::new()
     };
-    format!("You are {}. Objective: {}\n\n{full_memory}{memory_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
+    format!("You are {}. Objective: {}\n\n{memory_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
-
-  // Active context: the host compiles a lean block from durable memory and injects
-  // it, so memory is present without the model having to ask. Durable state stays
-  // in fox, outside the window — only this budgeted slice rides in the prompt.
-  {
-    let app_ctx = app.clone();
-    let id_ctx = agent.id.clone();
-    let active = tauri::async_runtime::spawn_blocking(move || crate::fox::active_context(&app_ctx, &id_ctx))
-      .await.unwrap_or_default();
-    if !active.trim().is_empty() {
-      system.push_str(&format!("\n\n## Memory (active context)\n{active}"));
-    }
-  }
 
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
   let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({ "role": "system", "content": system })];
@@ -164,6 +139,10 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   let is_ollama = resolved.kind == provider::Kind::Ollama;
 
   // Tool-call rounds (non-streaming) run first, then the final reply streams.
+  // Usage is accumulated across every round (and the final stream) so a run's
+  // recorded token counts reflect the whole turn, not just the last call.
+  let mut prompt_tokens = 0u64;
+  let mut completion_tokens = 0u64;
   if !tools.is_empty() {
     let client = http::client();
     for _ in 0..MAX_TOOL_ROUNDS {
@@ -183,6 +162,13 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
       }
       let response = http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
       let parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+      // Ollama reports prompt_eval_count/eval_count; OpenAI-compatible usage.{prompt,completion}_tokens.
+      prompt_tokens += parsed["prompt_eval_count"].as_u64()
+        .or_else(|| parsed["usage"]["prompt_tokens"].as_u64())
+        .unwrap_or(0);
+      completion_tokens += parsed["eval_count"].as_u64()
+        .or_else(|| parsed["usage"]["completion_tokens"].as_u64())
+        .unwrap_or(0);
 
       // Support both Ollama (message.tool_calls) and OpenAI-compatible
       // (choices[0].message.tool_calls) response shapes.
@@ -260,8 +246,6 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   // Even the final (tool-less) stream can carry text-protocol markup; never let
   // it reach the chat bubble.
   let mut leak = ToolCallLeakFilter::new();
-  let mut prompt_tokens = 0u64;
-  let mut completion_tokens = 0u64;
   loop {
     // A stalled upstream (OpenRouter switching providers, a dropped connection)
     // must surface as an error rather than an indefinite wait. The cancel arm

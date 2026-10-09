@@ -403,7 +403,18 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               <div>
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <Button icon={<ArrowLeft size={12} />} onClick={() => setViewingSession(null)}>all chats</Button>
-                  <Button onClick={async () => { await deleteChatSession(viewingSession); setViewingSession(null); listChatSessions(agent.id).then(setSessions); }}>delete chat</Button>
+                  <div className="flex items-center gap-2">
+                    <Button onClick={() => {
+                      // Continue this chat: make it the active session so the next
+                      // message appends to it (otherwise a fresh session starts).
+                      if (!viewingSession) return;
+                      const entries: ChatEntry[] = history.map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content, time: m.time ?? '' }));
+                      useManagerStore.getState().resumeSession(agent.id, viewingSession, entries);
+                      setViewingSession(null);
+                      setPanel(null);
+                    }}>continue chat</Button>
+                    <Button onClick={async () => { await deleteChatSession(viewingSession); setViewingSession(null); listChatSessions(agent.id).then(setSessions); }}>delete chat</Button>
+                  </div>
                 </div>
                 <div className="grid gap-3">
                   {history.map((m, i) => (

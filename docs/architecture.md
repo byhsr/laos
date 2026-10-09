@@ -29,12 +29,12 @@ crosses `src/runtime.ts`. The backend has no knowledge of React; it returns plai
 | `db.rs` | Opens `local-agent-os.sqlite3`, runs idempotent `CREATE TABLE IF NOT EXISTS` + column migrations. Exposes `db(app)` and `now()`. |
 | `provider.rs` | Model provider dispatch: resolves a `"<provider>:<model>"` id to endpoint/credentials, and maps the per-model reasoning setting and Ollama tuning onto request bodies. Used by every model-calling path. |
 | `models.rs` | Shared `serde` record/DTO types only (no logic). |
-| `storage.rs` | CRUD commands for knowledge docs, models, tools, skills, agents, workflows; Manager bootstrap; `manager_default_model`. |
+| `storage.rs` | CRUD commands for knowledge docs, models, tools, skills, agents, workflows; Manager bootstrap; seeds the built-in memory + browser MCP servers; `manager_default_model`. |
 | `http.rs` | The shared provider HTTP layer: clients, timeouts, retry/backoff, request defaults. |
 | `agents.rs` | One-shot agent execution (`execute_agent`), toolset assembly (`build_tools`), tool schemas, skills prompt, workspace context. |
 | `chat.rs` | Streaming chat (`stream_chat`) + the shared tool-call round loop and the confirmation gate. |
 | `manager.rs` | The "Laos" system agent: system prompt builder, non-streaming turn loop, `dispatch_manager_tool`, approvals. |
-| `memory.rs` | Conversations, rolling window, summarization, chat sessions, day context, `build_context_bundle`. |
+| `memory.rs` | Conversations, rolling window, chat sessions, summarization (background); long-term facts/summary are pull-only (`build_context_bundle` for on-demand recall). |
 | `mcp.rs` | MCP connector: JSON-RPC over stdio to a local MCP server; tool discovery, import, and calls. |
 | `tools/` | `AgentTool` trait + implementations (`api.rs`, `filesystem.rs`, `integration.rs`, `web.rs`). |
 | `updater.rs` | In-app updater: checks the signed release manifest, installs an update, restarts. |
@@ -82,6 +82,7 @@ points into the same underlying model layer — see [harness.md](./harness.md).
 | Composition root | `App.tsx` | Wires stores + views. Views are kept mounted and CSS-hidden when inactive so in-flight streaming and per-agent state survive navigation. Drawer forms for tool/model/skill are hosted here. |
 | Backend bridge | `runtime.ts` | One typed wrapper per command. `streamChat` wraps a Tauri `Channel`; structured events arrive as JSON strings, token deltas as plain text. |
 | Stores | `hooks/useAgents.ts`, `useRuns.ts`, `useModels.ts`, `useTools.ts`, `useSkills.ts`, `useWorkflows.ts`, `useWorkspace.ts`, `useIntegrations.ts`, `useManager.ts`, `useTasks.ts`, `useConfirm.ts`, `useToast.ts` | One Zustand store per domain; loaded once on mount in `App.tsx`. |
+| Chat sessions | `hooks/useManager.ts`, `components/AgentWindow.tsx`, `components/views/ManagerView.tsx` | Each agent/Manager gets a lazily-created `chat_session`. Opening the app starts a **fresh** session — `loadHistory` never adopts a previous one; past chats live in History and are continued explicitly via **continue chat** (which makes the session active again). |
 | Views | `components/views/*` | Home, Agents (browse), Canvas (workflows), Manager (Laos), Tasks, Runs, Telegram, Workshop (Skills/Tools/Integrations/Knowledge), Settings (General/Models), the agent window, and first-run `Onboarding`. |
 | Shell | `components/Topbar.tsx`, `components/Sidebar.tsx` | The topbar carries **every** section (Home, Laos, Agents, Workflows, Tasks, Workshop, Runs, Telegram, Settings) + Graph + New agent + window controls; the sidebar is purely the **agent chat list** — lead agent first (never deletable), then pinned, then the rest. Rows are full width with **right-click** for open chat / settings / pin / delete (delete needs the name typed). Section names are user-editable via `hooks/useNavLabels.ts`; the lead's *own* name comes from its agent record. |
 | Primitives | `components/ui/*` | Drawer (resizable right panel), Dropdown/MultiDropdown (portaled), Checkbox, ConfirmDialog, DeleteConfirm (app-wide typed-name gate), Tooltip (shell icon controls), ContextMenu/ContextMenuAt, `agentMenu.tsx` (the shared agent menu), AgentAvatar/PersonaPicker, ReasoningPicker (composer reasoning level), Toaster. |
