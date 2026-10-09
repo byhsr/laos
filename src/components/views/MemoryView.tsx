@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, RefreshCw, Search, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronRight, Download, RefreshCw, Search, Upload, X } from 'lucide-react';
 import { useAgentsStore } from '../../hooks/useAgents';
 import { callMcpTool } from '../../runtime';
+import { toast } from '../../hooks/useToast';
 import { Select } from '../ui/Select';
 import { IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -80,6 +81,58 @@ export function MemoryView() {
 
   useEffect(() => { void load(); }, [load]);
 
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Export/import the agent's durable memory (memories + self-model) as JSON, so
+  // it can be moved between agents/machines.
+  const exportMemory = async () => {
+    if (!agentId) return;
+    const scope = { type: 'agent', id: agentId };
+    try {
+      const [mem, self] = await Promise.all([
+        callMcpTool(MEMORY_SERVER, 'list_memories', { agentId, scope, scopeMode: 'inherit', limit: 1000 }),
+        callMcpTool(MEMORY_SERVER, 'get_self_model', { agentId }),
+      ]);
+      const doc = { version: 1, kind: 'lup-memory', agentId, exportedAt: new Date().toISOString(), memories: mem, selfModel: self };
+      const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `memory-${agentId}.json`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const importMemory = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !agentId) return;
+    const scope = { type: 'agent', id: agentId };
+    try {
+      const doc = JSON.parse(await file.text());
+      const memories: FoxMemory[] = Array.isArray(doc?.memories) ? doc.memories : [];
+      const self: FoxSelfEntry[] = Array.isArray(doc?.selfModel) ? doc.selfModel : [];
+      let n = 0;
+      for (const m of memories) {
+        await callMcpTool(MEMORY_SERVER, 'add_memory', {
+          agentId, scope, kind: m.kind ?? 'semantic', title: m.title ?? 'imported', content: m.content ?? '',
+          ...(Array.isArray(m.tags) ? { tags: m.tags } : {}), ...(m.importance !== undefined ? { importance: m.importance } : {}), ...(m.confidence !== undefined ? { confidence: m.confidence } : {}),
+        });
+        n++;
+      }
+      for (const s of self) {
+        if (!s?.key || !s?.value) continue;
+        await callMcpTool(MEMORY_SERVER, 'set_self_model', { agentId, key: s.key, value: s.value });
+        n++;
+      }
+      toast(`imported ${n} item${n === 1 ? '' : 's'}`, 'success');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const agentOptions = agents
     .slice()
     .sort((a, b) => Number(!!b.isManager) - Number(!!a.isManager) || a.name.localeCompare(b.name))
@@ -120,6 +173,9 @@ export function MemoryView() {
         </div>
 
         <div className="ml-auto flex items-center gap-1">
+          <IconButton label="export memory" className="h-[30px] w-[30px] shrink-0" onClick={() => void exportMemory()}><Download size={13} /></IconButton>
+          <IconButton label="import memory" className="h-[30px] w-[30px] shrink-0" onClick={() => fileRef.current?.click()}><Upload size={13} /></IconButton>
+          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => void importMemory(e)} />
           {([['memories', 'memories'], ['self', 'self-model']] as const).map(([key, label]) => (
             <button key={key} className={tabCls(tab === key)} onClick={() => setTab(key)}>{label}</button>
           ))}
