@@ -13,8 +13,8 @@ use crate::models::*;
 use crate::provider;
 use crate::tasks::list_tasks;
 use crate::tools::{
-  desktop_tools, AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool, ReadAnyFileTool,
-  ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool, MAX_TOOL_ROUNDS,
+  desktop_tools, script_tools, AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool,
+  ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool, MAX_TOOL_ROUNDS,
 };
 use crate::tooltext::parse_text_tool_calls;
 
@@ -90,6 +90,7 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
     tools.push(Box::new(SearchFilesTool));
     tools.push(Box::new(ReadAnyFileTool));
     tools.push(Box::new(RunCommandTool));
+    tools.extend(script_tools(conn));
   }
   // PC control tools: granted only to agents with the explicit pc_control permission.
   if has_pc {

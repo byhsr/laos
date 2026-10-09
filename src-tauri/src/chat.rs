@@ -109,6 +109,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   let tools: Vec<Box<dyn AgentTool>> = if is_manager {
     let mut manager = manager_tools();
     if pc_control { manager.extend(crate::tools::desktop_tools()); }
+    manager.extend(crate::tools::script_tools(&conn));
     manager.extend(mcp_tools_for(&conn, &agent.tool_ids));
     manager
   } else {

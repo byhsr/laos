@@ -86,6 +86,12 @@ reasoning parameter — see [harness.md](./harness.md#reasoning-control).
 `id` (PK), `name`, `description`, `content`, `updated_at`. Rendered into prompts by
 `agents::skills_prompt`.
 
+### `scripts`
+
+`id` (PK), `name`, `description`, `command`, `cwd`, `updated_at`. Reusable runnable commands
+("custom apps"): run from the Scripts tab (`run_script_now`), by an agent with `host_fs`
+(`run_script` tool), or from a workflow `script` node.
+
 ### `agent_conversations`
 
 `agent_id` (PK), `messages` (JSON array). The rolling-window history.

@@ -614,14 +614,22 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
         }
       }
       "script" => {
-        // Run a shell command (config: command). {input} is replaced with the
-        // accumulated output; the command's stdout/stderr becomes the output.
-        let template = config.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        // Run a saved script (config.scriptId) or an inline command (config.command).
+        // {input} is replaced with the accumulated output; stdout/stderr becomes output.
+        let script_id = config.get("scriptId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let (template, cwd) = if !script_id.is_empty() {
+          match crate::storage::load_script(&conn, &script_id) {
+            Some(s) => (s.command, s.cwd),
+            None => (String::new(), String::new()),
+          }
+        } else {
+          (config.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string(), String::new())
+        };
         let command = template.replace("{input}", &current_input);
         if command.trim().is_empty() {
-          serde_json::json!({ "error": "script node requires a command" }).to_string()
+          serde_json::json!({ "error": "script node requires a saved script or a command" }).to_string()
         } else {
-          match tokio::task::spawn_blocking(move || crate::tools::run_shell(&command)).await {
+          match tokio::task::spawn_blocking(move || crate::tools::run_shell_in(&command, &cwd)).await {
             Ok(Ok(out)) => out,
             Ok(Err(e)) => serde_json::json!({ "error": e }).to_string(),
             Err(e) => serde_json::json!({ "error": e.to_string() }).to_string(),

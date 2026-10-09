@@ -34,6 +34,12 @@ pub struct ToolRecord { pub id: String, pub name: String, pub kind: String, pub 
 #[serde(rename_all = "camelCase")]
 pub struct SkillRecord { pub id: String, pub name: String, pub description: String, pub content: String }
 
+// A reusable runnable command ("custom app"/script): run from the UI, by an
+// agent (host_fs), or from a workflow script node.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptRecord { pub id: String, pub name: String, pub description: String, pub command: String, pub cwd: String, pub updated_at: String }
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRecord {

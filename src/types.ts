@@ -22,6 +22,9 @@ export type ToolConfig = {
 };
 export type Tool = { id: string; name: string; kind: string; integrationId: string; description: string; enabled: boolean; config: ToolConfig };
 export type Skill = { id: string; name: string; description: string; content: string };
+// A reusable runnable command ("custom app"): run from the UI, by an agent
+// (host_fs), or from a workflow script node.
+export type Script = { id: string; name: string; description: string; command: string; cwd: string; updatedAt: string };
 
 export type WorkflowNodeType = 'agent' | 'subagent' | 'loop' | 'checker' | 'integration' | 'gate' | 'trigger' | 'llm' | 'script';
 export type WorkflowNode = {
@@ -44,6 +47,7 @@ export type DrawerForm =
   | { kind: 'tool'; editing: Tool; isNew: boolean }
   | { kind: 'model'; editing: ModelConfig; isNew: boolean }
   | { kind: 'skill'; editing: Skill; isNew: boolean }
+  | { kind: 'script'; editing: Script; isNew: boolean }
   | null;
 
 export type ChatMessage = { role: 'user' | 'assistant' | 'tool' | 'thought'; content: string; detail?: string; time: string };
@@ -59,3 +63,4 @@ export type ExecutionResult = { output: string; events: RunEvent[]; runId?: stri
 export const emptyTool = (): Tool => ({ id: '', name: '', kind: 'api', integrationId: 'http', description: '', enabled: true, config: { method: 'GET', url: '', headers: [], body: '', params: [] } });
 export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', host: '', apiKey: '', enabled: true, reasoning: 'auto' });
 export const emptySkill = (): Skill => ({ id: '', name: '', description: '', content: '' });
+export const emptyScript = (): Script => ({ id: '', name: '', description: '', command: '', cwd: '', updatedAt: '' });

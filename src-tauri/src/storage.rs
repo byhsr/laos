@@ -308,6 +308,66 @@ pub fn delete_skill(app: AppHandle, id: String) -> Result<(), String> {
   Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Scripts (reusable runnable commands / custom apps)
+// ---------------------------------------------------------------------------
+
+pub(crate) fn load_scripts(conn: &Connection) -> Vec<ScriptRecord> {
+  let mut out = Vec::new();
+  if let Ok(mut stmt) = conn.prepare("SELECT id, name, description, command, cwd, updated_at FROM scripts ORDER BY name") {
+    if let Ok(rows) = stmt.query_map([], |row| Ok(ScriptRecord {
+      id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, command: row.get(3)?, cwd: row.get(4)?, updated_at: row.get(5)?,
+    })) {
+      for r in rows { if let Ok(s) = r { out.push(s); } }
+    }
+  }
+  out
+}
+
+pub(crate) fn load_script(conn: &Connection, id: &str) -> Option<ScriptRecord> {
+  conn.query_row("SELECT id, name, description, command, cwd, updated_at FROM scripts WHERE id=?1", params![id], |row| Ok(ScriptRecord {
+    id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, command: row.get(3)?, cwd: row.get(4)?, updated_at: row.get(5)?,
+  })).ok()
+}
+
+#[tauri::command]
+pub fn list_scripts(app: AppHandle) -> Result<Vec<ScriptRecord>, String> {
+  let conn = db(&app)?;
+  Ok(load_scripts(&conn))
+}
+
+#[tauri::command]
+pub fn save_script(app: AppHandle, script: ScriptRecord) -> Result<String, String> {
+  let conn = db(&app)?;
+  let id = if script.id.trim().is_empty() { format!("script-{}", chrono::Utc::now().timestamp_millis()) } else { script.id.clone() };
+  conn.execute(
+    "INSERT INTO scripts (id, name, description, command, cwd, updated_at) VALUES (?1,?2,?3,?4,?5,?6)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, command=excluded.command, cwd=excluded.cwd, updated_at=excluded.updated_at",
+    params![id, script.name, script.description, script.command, script.cwd, chrono::Utc::now().to_rfc3339()],
+  ).map_err(|e| e.to_string())?;
+  Ok(id)
+}
+
+#[tauri::command]
+pub fn delete_script(app: AppHandle, id: String) -> Result<(), String> {
+  let conn = db(&app)?;
+  conn.execute("DELETE FROM scripts WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+// Runs a saved script on demand (the Scripts tab's Test button). Returns its
+// combined stdout/stderr.
+#[tauri::command]
+pub async fn run_script_now(app: AppHandle, id: String, input: Option<String>) -> Result<String, String> {
+  let (command, cwd) = {
+    let conn = db(&app)?;
+    let s = load_script(&conn, &id).ok_or("Script not found.")?;
+    (s.command, s.cwd)
+  };
+  let command = command.replace("{input}", &input.unwrap_or_default());
+  tokio::task::spawn_blocking(move || crate::tools::run_shell_in(&command, &cwd)).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub fn list_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
   let conn = db(&app)?;

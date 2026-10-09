@@ -57,6 +57,11 @@ fn main() {
       storage::list_skills,
       storage::save_skill,
       storage::delete_skill,
+      // Scripts (reusable runnable commands / custom apps)
+      storage::list_scripts,
+      storage::save_script,
+      storage::delete_script,
+      storage::run_script_now,
       // Integrations
       integrations::list_integrations,
       integrations::save_integration_config,

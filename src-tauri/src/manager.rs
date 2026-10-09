@@ -176,6 +176,10 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
       tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
     }
   }
+  // Saved scripts (custom apps), discoverable and runnable via run_script.
+  for t in crate::tools::script_tools(conn) {
+    tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
+  }
   // Skills attached to the Manager itself (same mechanism as regular agents).
   let skill_ids: Vec<String> = conn
     .query_row("SELECT skill_ids FROM agents WHERE is_manager=1 LIMIT 1", [], |r| r.get::<_, String>(0))
@@ -291,6 +295,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   let tools: Vec<Box<dyn AgentTool>> = {
     let mut t = manager_tools();
     if pc_control { t.extend(crate::tools::desktop_tools()); }
+    t.extend(crate::tools::script_tools(&conn));
     t.extend(mcp_tools_for(&conn, &manager.tool_ids));
     t
   };
@@ -674,7 +679,7 @@ pub(crate) fn requires_confirmation(tool: &str) -> bool {
     "create_agent" | "update_agent" | "delete_agent"
     | "create_workflow" | "update_workflow" | "delete_workflow" | "run_workflow"
     | "configure_integration" | "create_task" | "cancel_task" | "delegate_task"
-    | "run_command"
+    | "run_command" | "run_script"
     // PC control: the coarse/system actions confirm; low-level input and
     // read-only actions do not (a vision loop needs many of them).
     | "launch_app" | "close_window" | "lock_screen" | "write_clipboard" | "open_path")

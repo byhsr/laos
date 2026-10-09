@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Play, Plus, RotateCcw, Save, Trash2, Workflow as WorkflowIcon, X, ZoomIn, ZoomOut } from 'lucide-react';
-import type { Agent, Integration, ModelConfig, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
+import type { Agent, Integration, ModelConfig, Script, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
 import { Select } from '../ui/Select';
 import { DeleteConfirm } from '../ui/DeleteConfirm';
 import { Button, IconButton } from '../ui/Button';
@@ -219,8 +219,8 @@ const fmtDate = (s?: string) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
 };
 
-export function CanvasView({ agents, tools, workflows, integrations, models, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow, initialWorkflowId, onInitialWorkflowConsumed, building, onOpen }: {
-  agents: Agent[]; tools: Tool[]; workflows: Workflow[]; integrations: Integration[]; models: ModelConfig[];
+export function CanvasView({ agents, tools, workflows, integrations, models, scripts, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow, initialWorkflowId, onInitialWorkflowConsumed, building, onOpen }: {
+  agents: Agent[]; tools: Tool[]; workflows: Workflow[]; integrations: Integration[]; models: ModelConfig[]; scripts: Script[];
   onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
   onDeleteWorkflow: (id: string) => Promise<void>;
   onRunWorkflow: (w: Workflow, input: string) => Promise<WorkflowRunResult>;
@@ -373,7 +373,7 @@ export function CanvasView({ agents, tools, workflows, integrations, models, onS
       case 'gate': return String(n.config?.condition ?? '').trim().length > 0;
       case 'integration': return !!n.config?.integrationId && !!n.config?.action;
       case 'llm': return String(n.config?.prompt ?? '').trim().length > 0;
-      case 'script': return String(n.config?.command ?? '').trim().length > 0;
+      case 'script': return !!n.config?.scriptId || String(n.config?.command ?? '').trim().length > 0;
       default: return true;
     }
   };
@@ -395,7 +395,7 @@ export function CanvasView({ agents, tools, workflows, integrations, models, onS
       }
       case 'loop': return { key: 'iterations', value: `max ${String(n.config?.maxIterations ?? 3)}` };
       case 'llm': return { key: 'model', value: String(n.config?.model ?? 'model not set') };
-      case 'script': return { key: 'command', value: String(n.config?.command ?? '').trim().slice(0, 42) || 'not set' };
+      case 'script': return { key: 'script', value: n.config?.scriptId ? (scripts.find((s) => s.id === n.config?.scriptId)?.name ?? 'missing script') : (String(n.config?.command ?? '').trim().slice(0, 42) || 'not set') };
     }
   };
 
@@ -903,9 +903,20 @@ export function CanvasView({ agents, tools, workflows, integrations, models, onS
                   )}
                   {node.type === 'script' && (
                     <>
-                      <label className={label}>command</label>
-                      <textarea value={String(node.config?.command ?? '')} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, command: e.target.value } } : n)) }))} placeholder="Shell command. Use {input} for the previous node's output." rows={3} className={PROSE_CLS} />
-                      <p className="mt-1.5 mb-0 text-[11px] leading-relaxed text-muted">Runs through the system shell (cmd /C on Windows). stdout + stderr becomes the node output.</p>
+                      <label className={label}>saved script</label>
+                      <Select
+                        value={String(node.config?.scriptId ?? '')}
+                        options={scripts.map((s) => ({ value: s.id, label: s.name }))}
+                        onChange={(v) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, scriptId: v } } : n)) }))}
+                        placeholder="none — use a command below"
+                      />
+                      {!node.config?.scriptId && (
+                        <>
+                          <label className={label}>command</label>
+                          <textarea value={String(node.config?.command ?? '')} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, command: e.target.value } } : n)) }))} placeholder="Shell command. Use {input} for the previous node's output." rows={3} className={PROSE_CLS} />
+                        </>
+                      )}
+                      <p className="mt-1.5 mb-0 text-[11px] leading-relaxed text-muted">Runs the saved script, or the command through the system shell (cmd /C on Windows). Use {'{input}'} for the previous node's output. stdout + stderr becomes the node output.</p>
                     </>
                   )}
                   <div className="mt-5">

@@ -1,5 +1,5 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
-import type { Agent, Integration, ModelConfig, Run, RunEvent, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
+import type { Agent, Integration, ModelConfig, Run, RunEvent, Script, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
 
 // Streams a chat completion, calling onDelta with each token chunk and onConfirm
 // with structured confirmation requests from the Manager.
@@ -224,6 +224,27 @@ export async function saveSkill(skill: Skill): Promise<void> {
 
 export async function deleteSkill(id: string): Promise<void> {
   await invoke('delete_skill', { id });
+}
+
+// Scripts (reusable runnable commands / custom apps).
+export async function listScripts(): Promise<Script[]> {
+  try {
+    return await invoke<Script[]>('list_scripts');
+  } catch {
+    return [];
+  }
+}
+
+export async function saveScript(script: Script): Promise<string> {
+  return await invoke<string>('save_script', { script });
+}
+
+export async function deleteScript(id: string): Promise<void> {
+  await invoke('delete_script', { id });
+}
+
+export async function runScriptNow(id: string, input?: string): Promise<string> {
+  return await invoke<string>('run_script_now', { id, input: input ?? null });
 }
 
 export async function listAgents(): Promise<Agent[]> {
