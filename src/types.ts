@@ -21,7 +21,7 @@ export type ToolConfig = {
   headers?: { name: string; value: string }[];
 };
 export type Tool = { id: string; name: string; kind: string; integrationId: string; description: string; enabled: boolean; config: ToolConfig };
-export type Skill = { id: string; name: string; description: string; content: string };
+export type Skill = { id: string; name: string; description: string; content: string; docs: string; scriptIds: string[] };
 // A reusable runnable command ("custom app"): run from the UI, by an agent
 // (host_fs), or from a workflow script node.
 export type Script = { id: string; name: string; description: string; command: string; cwd: string; updatedAt: string };
@@ -62,5 +62,5 @@ export type ExecutionResult = { output: string; events: RunEvent[]; runId?: stri
 
 export const emptyTool = (): Tool => ({ id: '', name: '', kind: 'api', integrationId: 'http', description: '', enabled: true, config: { method: 'GET', url: '', headers: [], body: '', params: [] } });
 export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', host: '', apiKey: '', enabled: true, reasoning: 'auto' });
-export const emptySkill = (): Skill => ({ id: '', name: '', description: '', content: '' });
+export const emptySkill = (): Skill => ({ id: '', name: '', description: '', content: '', docs: '', scriptIds: [] });
 export const emptyScript = (): Script => ({ id: '', name: '', description: '', command: '', cwd: '', updatedAt: '' });

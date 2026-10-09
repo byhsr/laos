@@ -83,8 +83,10 @@ reasoning parameter — see [harness.md](./harness.md#reasoning-control).
 
 ### `skills`
 
-`id` (PK), `name`, `description`, `content`, `updated_at`. Rendered into prompts by
-`agents::skills_prompt`.
+`id` (PK), `name`, `description`, `content` (instructions), `docs` (reference material),
+`script_ids` (JSON array of saved-script ids it can run), `updated_at`. Rendered into prompts by
+`agents::skills_prompt` (instructions + reference + the names of its scripts, which the agent
+runs with the `run_script` tool).
 
 ### `scripts`
 

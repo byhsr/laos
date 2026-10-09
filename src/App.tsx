@@ -290,7 +290,7 @@ export default function App() {
       )}
       {drawerForm && drawerForm.kind === 'skill' && (
         <SkillFormDrawer
-          editing={drawerForm.editing} isNew={drawerForm.isNew}
+          editing={drawerForm.editing} isNew={drawerForm.isNew} scripts={scripts}
           onClose={() => setDrawerForm(null)}
           onSave={async (s) => { await saveSkill(s); setDrawerForm(null); toast('skill saved', 'success'); }}
         />

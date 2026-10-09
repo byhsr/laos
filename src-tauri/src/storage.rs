@@ -283,8 +283,11 @@ pub(crate) fn parse_json_vec(s: &str) -> Vec<String> {
 #[tauri::command]
 pub fn list_skills(app: AppHandle) -> Result<Vec<SkillRecord>, String> {
   let conn = db(&app)?;
-  let mut stmt = conn.prepare("SELECT id, name, description, content FROM skills ORDER BY name").map_err(|e| e.to_string())?;
-  let rows = stmt.query_map([], |row| Ok(SkillRecord { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, content: row.get(3)? })).map_err(|e| e.to_string())?;
+  let mut stmt = conn.prepare("SELECT id, name, description, content, docs, script_ids FROM skills ORDER BY name").map_err(|e| e.to_string())?;
+  let rows = stmt.query_map([], |row| {
+    let script_ids: String = row.get(5)?;
+    Ok(SkillRecord { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, content: row.get(3)?, docs: row.get(4)?, script_ids: parse_json_vec(&script_ids) })
+  }).map_err(|e| e.to_string())?;
   let mut out = Vec::new();
   for row in rows { out.push(row.map_err(|e| e.to_string())?); }
   Ok(out)
@@ -294,9 +297,9 @@ pub fn list_skills(app: AppHandle) -> Result<Vec<SkillRecord>, String> {
 pub fn save_skill(app: AppHandle, skill: SkillRecord) -> Result<(), String> {
   let conn = db(&app)?;
   conn.execute(
-    "INSERT INTO skills (id, name, description, content, updated_at) VALUES (?1,?2,?3,?4,?5)
-     ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, content=excluded.content, updated_at=excluded.updated_at",
-    params![skill.id, skill.name, skill.description, skill.content, chrono::Utc::now().to_rfc3339()],
+    "INSERT INTO skills (id, name, description, content, docs, script_ids, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, content=excluded.content, docs=excluded.docs, script_ids=excluded.script_ids, updated_at=excluded.updated_at",
+    params![skill.id, skill.name, skill.description, skill.content, skill.docs, serde_json::to_string(&skill.script_ids).unwrap_or_else(|_| "[]".into()), chrono::Utc::now().to_rfc3339()],
   ).map_err(|e| e.to_string())?;
   Ok(())
 }

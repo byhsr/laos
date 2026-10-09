@@ -1,15 +1,22 @@
 import { useState } from 'react';
 import { Check, Sparkles, Trash2 } from 'lucide-react';
-import type { Skill } from '../../types';
+import type { Script, Skill } from '../../types';
 import { Modal } from '../ui/Modal';
 import { Button, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
+import { MultiDropdown } from '../ui/MultiDropdown';
 import { FIELD_LABEL_CLS, INPUT_CLS, PROSE_CLS } from '../ui/Input';
 
 export function SkillsView({ skills, onAdd, onEdit, onDelete }: {
   skills: Skill[]; onAdd: () => void; onEdit: (s: Skill) => void; onDelete: (id: string) => Promise<void>;
 }) {
-  const wordCount = (s: Skill) => (s.content.trim() ? `${s.content.trim().split(/\s+/).length} words` : 'empty');
+  const summary = (s: Skill) => {
+    const words = s.content.trim() ? `${s.content.trim().split(/\s+/).length} words` : 'no instructions';
+    const bits = [words];
+    if (s.docs.trim()) bits.push('reference');
+    if (s.scriptIds.length) bits.push(`${s.scriptIds.length} script${s.scriptIds.length === 1 ? '' : 's'}`);
+    return bits.join(' · ');
+  };
 
   return (
     <>
@@ -24,7 +31,7 @@ export function SkillsView({ skills, onAdd, onEdit, onDelete }: {
             <div className="min-w-0 flex-1">
               <b className="block truncate font-mono text-[11px] text-foreground">{s.name}</b>
               <span className="block truncate font-mono text-[10px] text-muted">{s.description || 'no description'}</span>
-              <span className="mt-0.5 block font-mono text-[10px] text-muted">{wordCount(s)}</span>
+              <span className="mt-0.5 block font-mono text-[10px] text-muted">{summary(s)}</span>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
               <Button onClick={() => onEdit(s)}>edit</Button>
@@ -40,8 +47,8 @@ export function SkillsView({ skills, onAdd, onEdit, onDelete }: {
   );
 }
 
-export function SkillFormDrawer({ editing, isNew, onClose, onSave }: {
-  editing: Skill; isNew: boolean; onClose: () => void; onSave: (s: Skill) => Promise<void>;
+export function SkillFormDrawer({ editing, isNew, scripts, onClose, onSave }: {
+  editing: Skill; isNew: boolean; scripts: Script[]; onClose: () => void; onSave: (s: Skill) => Promise<void>;
 }) {
   const [form, setForm] = useState<Skill>(editing);
   const [saving, setSaving] = useState(false);
@@ -68,7 +75,8 @@ export function SkillFormDrawer({ editing, isNew, onClose, onSave }: {
     >
       <div className="flex min-h-full flex-col">
         <p className="mt-0 mb-3.5 font-mono text-[10px] leading-relaxed text-muted">
-          A skill is instructions the model follows. Every agent you attach it to gets this text in its system prompt.
+          A skill is instructions the model follows, plus optional reference material and scripts it can run.
+          Every agent you attach it to gets the instructions and reference in its prompt.
         </p>
 
         <label className={FIELD_LABEL_CLS}>name</label>
@@ -82,8 +90,25 @@ export function SkillFormDrawer({ editing, isNew, onClose, onSave }: {
           value={form.content}
           onChange={(e) => setForm({ ...form, content: e.target.value })}
           placeholder="Write the instructions the agent should follow…"
-          className={`${PROSE_CLS} min-h-[240px] flex-1`}
+          className={`${PROSE_CLS} min-h-[200px] flex-1`}
         />
+
+        <label className={`${FIELD_LABEL_CLS} mt-4`}>reference (optional)</label>
+        <textarea
+          value={form.docs}
+          onChange={(e) => setForm({ ...form, docs: e.target.value })}
+          placeholder="Reference material the agent can consult: formats, examples, checklists…"
+          className={`${PROSE_CLS} min-h-[120px]`}
+        />
+
+        <label className={`${FIELD_LABEL_CLS} mt-4`}>scripts (optional)</label>
+        <MultiDropdown
+          values={form.scriptIds}
+          options={scripts.map((s) => ({ value: s.id, label: s.name }))}
+          onChange={(v) => setForm({ ...form, scriptIds: v })}
+          placeholder="none attached"
+        />
+        <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">Saved scripts the agent can run with the run_script tool (needs host file access).</p>
 
         {error && <p className="mt-2 mb-0 font-mono text-[10px] text-danger">{error}</p>}
       </div>

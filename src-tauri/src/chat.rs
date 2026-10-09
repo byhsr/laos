@@ -10,7 +10,7 @@ use futures_util::StreamExt;
 use rusqlite::params;
 use tauri::{AppHandle, Manager};
 
-use crate::agents::{build_tools, mcp_tools_for, tool_schemas};
+use crate::agents::{build_tools, mcp_tools_for, skills_prompt, tool_schemas};
 use crate::db::db;
 use crate::http;
 use crate::manager::{
@@ -134,7 +134,10 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     } else {
       ""
     };
-    format!("You are {}. Objective: {}\n\n{memory_note}{pc_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
+    // Attached skills (instructions + reference + scripts) go into the live chat
+    // prompt too, not just one-shot runs.
+    let skills = skills_prompt(&conn, &agent.skill_ids);
+    format!("You are {}. Objective: {}\n{skills}\n{memory_note}{pc_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
 
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();

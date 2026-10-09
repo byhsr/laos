@@ -136,20 +136,35 @@ pub(crate) fn tool_schemas(tools: &[Box<dyn AgentTool>]) -> Vec<serde_json::Valu
 }
 
 // Renders an agent's attached skills (instruction packs) into prompt text.
-// Empty when the agent has none, so unaffected agents keep their exact prompt.
+// A skill carries instructions (`content`), an optional reference (`docs`) and
+// references to saved scripts it can run. Empty when the agent has none, so
+// unaffected agents keep their exact prompt.
 pub(crate) fn skills_prompt(conn: &Connection, skill_ids: &[String]) -> String {
   if skill_ids.is_empty() { return String::new(); }
-  let mut stmt = match conn.prepare("SELECT name, description, content FROM skills WHERE id=?1") {
+  let mut stmt = match conn.prepare("SELECT name, description, content, docs, script_ids FROM skills WHERE id=?1") {
     Ok(s) => s,
     Err(_) => return String::new(),
   };
   let mut out = String::new();
   for id in skill_ids {
-    if let Ok((name, description, content)) = stmt.query_row(params![id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))) {
-      if out.is_empty() { out.push_str("\n## Skills\n"); }
-      out.push_str(&format!("\n### {name}\n"));
-      if !description.trim().is_empty() { out.push_str(&format!("When to use: {}\n", description.trim())); }
-      if !content.trim().is_empty() { out.push_str(content.trim()); out.push('\n'); }
+    let row = stmt.query_row(params![id], |r| Ok((
+      r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+      r.get::<_, String>(3)?, r.get::<_, String>(4)?,
+    )));
+    let Ok((name, description, content, docs, script_ids_json)) = row else { continue };
+    if out.is_empty() { out.push_str("\n## Skills\n"); }
+    out.push_str(&format!("\n### {name}\n"));
+    if !description.trim().is_empty() { out.push_str(&format!("When to use: {}\n", description.trim())); }
+    if !content.trim().is_empty() { out.push_str(content.trim()); out.push('\n'); }
+    if !docs.trim().is_empty() { out.push_str("\nReference:\n"); out.push_str(docs.trim()); out.push('\n'); }
+    let script_ids: Vec<String> = serde_json::from_str(&script_ids_json).unwrap_or_default();
+    let scripts: Vec<String> = script_ids.iter()
+      .filter_map(|sid| crate::storage::load_script(conn, sid).map(|s| format!("- {}: {}", s.name, s.description)))
+      .collect();
+    if !scripts.is_empty() {
+      out.push_str("Scripts for this skill (run them with the run_script tool, by name):\n");
+      out.push_str(&scripts.join("\n"));
+      out.push('\n');
     }
   }
   out
