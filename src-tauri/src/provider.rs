@@ -13,13 +13,17 @@ use crate::models::default_reasoning;
 pub(crate) const OLLAMA_DEFAULT_HOST: &str = "http://127.0.0.1:11434";
 const GROQ_URL: &str = "https://api.groq.com/openai/v1/chat/completions";
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
+const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
+// Google's OpenAI-compatibility endpoint (tools included) rather than generateContent.
+const GOOGLE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+const XAI_URL: &str = "https://api.x.ai/v1/chat/completions";
 
 // Ollama unloads an idle model after a few minutes, so without this every turn
 // after a pause pays a multi-second reload.
 pub(crate) const OLLAMA_KEEP_ALIVE: &str = "30m";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Kind { Ollama, Groq, OpenRouter }
+pub(crate) enum Kind { Ollama, Groq, OpenRouter, OpenAi, Google, Xai }
 
 // Maps to the stored `model_configs.reasoning` value.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -99,6 +103,18 @@ pub(crate) fn resolve(conn: &Connection, model_id: &str, override_key: Option<&s
     let key = key.ok_or("OpenRouter requires an API key. Add one in Settings → Models.")?;
     return Ok(Resolved { kind: Kind::OpenRouter, base: OPENROUTER_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
   }
+  if let Some(model) = model_id.strip_prefix("openai:") {
+    let key = key.ok_or("OpenAI requires an API key. Add one in Settings → Models.")?;
+    return Ok(Resolved { kind: Kind::OpenAi, base: OPENAI_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
+  }
+  if let Some(model) = model_id.strip_prefix("google:") {
+    let key = key.ok_or("Google AI Studio requires an API key. Add one in Settings → Models.")?;
+    return Ok(Resolved { kind: Kind::Google, base: GOOGLE_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
+  }
+  if let Some(model) = model_id.strip_prefix("xai:") {
+    let key = key.ok_or("xAI requires an API key. Add one in Settings → Models.")?;
+    return Ok(Resolved { kind: Kind::Xai, base: XAI_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
+  }
   Err(format!("Unknown model provider for \"{model_id}\"."))
 }
 
@@ -161,7 +177,7 @@ pub(crate) fn apply_reasoning(body: &mut serde_json::Value, resolved: &Resolved,
         None => serde_json::json!({ "enabled": false }),
       };
     }
-    Kind::Groq => {
+    Kind::Groq | Kind::OpenAi | Kind::Google | Kind::Xai => {
       body["reasoning_effort"] = match reasoning.level() {
         Some(level) => serde_json::json!(level),
         None => serde_json::json!("none"),

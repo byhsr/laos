@@ -110,9 +110,14 @@ Endpoints in use:
 | Ollama generate | `http://127.0.0.1:11434/api/generate` |
 | Groq | `https://api.groq.com/openai/v1/chat/completions` |
 | OpenRouter | `https://openrouter.ai/api/v1/chat/completions` |
+| OpenAI | `https://api.openai.com/v1/chat/completions` |
+| Google (Gemini) | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` |
+| xAI | `https://api.x.ai/v1/chat/completions` |
 
-OpenRouter requests also send `HTTP-Referer: https://local-agent-os.app` and
-`X-Title: Local Agent OS`.
+OpenAI, Google and xAI are OpenAI-compatible (Google via its OpenAI-compatibility endpoint),
+so they share the Groq/OpenRouter transport — a `Kind` arm each in `provider::resolve` and the
+`reasoning_effort` reasoning mapping. OpenRouter requests also send
+`HTTP-Referer: https://local-agent-os.app` and `X-Title: Local Agent OS`.
 
 ## Provider message shapes
 

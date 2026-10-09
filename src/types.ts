@@ -1,4 +1,4 @@
-export type Provider = 'ollama' | 'openrouter' | 'groq';
+export type Provider = 'ollama' | 'openrouter' | 'groq' | 'openai' | 'google' | 'xai';
 // Per-model reasoning control. 'auto' sends nothing at all to the provider, which
 // is the safe default: models without reasoning support never see the parameter.
 export type Reasoning = 'auto' | 'off' | 'low' | 'medium' | 'high';

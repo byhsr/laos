@@ -315,6 +315,9 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
     provider::Kind::Ollama => "Ollama",
     provider::Kind::Groq => "Groq",
     provider::Kind::OpenRouter => "OpenRouter",
+    provider::Kind::OpenAi => "OpenAI",
+    provider::Kind::Google => "Google",
+    provider::Kind::Xai => "xAI",
   };
   let tools = build_tools(&conn, agent, &home)?;
   events.push(ExecutionEvent {

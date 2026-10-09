@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Check } from 'lucide-react';
-import type { ModelConfig, Reasoning } from '../../types';
+import type { ModelConfig, Provider, Reasoning } from '../../types';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
@@ -9,6 +9,23 @@ import { REASONING_STOPS } from '../../reasoning';
 import { Checkbox } from '../ui/Checkbox';
 import { Card } from '../ui/Card';
 import { FIELD_LABEL_CLS, INPUT_CLS } from '../ui/Input';
+
+// Example ids and key shapes per provider, so the form shows what to type.
+const MODEL_PLACEHOLDER: Record<string, string> = {
+  ollama: 'qwen3:8b',
+  openai: 'gpt-4o-mini',
+  google: 'gemini-2.0-flash',
+  xai: 'grok-3',
+  groq: 'llama-3.3-70b-versatile',
+  openrouter: 'anthropic/claude-3.5-haiku',
+};
+const KEY_PLACEHOLDER: Record<string, string> = {
+  openai: 'sk-…',
+  google: 'AIza…',
+  xai: 'xai-…',
+  groq: 'gsk_…',
+  openrouter: 'sk-or-v1-…',
+};
 
 export function ModelsView({ models, onAdd, onEdit, onDelete }: {
   models: ModelConfig[]; onAdd: () => void; onEdit: (m: ModelConfig) => void; onDelete: (id: string) => Promise<void>;
@@ -75,15 +92,22 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
       <label className={FIELD_LABEL_CLS}>provider</label>
       <Select
         value={form.provider}
-        options={[{ value: 'ollama', label: 'Ollama (local)' }, { value: 'openrouter', label: 'OpenRouter' }, { value: 'groq', label: 'Groq' }]}
-        onChange={(v) => setForm({ ...form, provider: v as 'ollama' | 'openrouter' | 'groq' })}
+        options={[
+          { value: 'ollama', label: 'Ollama (local)' },
+          { value: 'openai', label: 'OpenAI' },
+          { value: 'google', label: 'Google (Gemini)' },
+          { value: 'xai', label: 'xAI (Grok)' },
+          { value: 'groq', label: 'Groq' },
+          { value: 'openrouter', label: 'OpenRouter' },
+        ]}
+        onChange={(v) => setForm({ ...form, provider: v as Provider })}
       />
 
       <label className={`${FIELD_LABEL_CLS} mt-4`}>label</label>
       <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="e.g. Qwen3 8B" className={INPUT_CLS} />
 
       <label className={`${FIELD_LABEL_CLS} mt-4`}>model id</label>
-      <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={form.provider === 'ollama' ? 'qwen3:8b' : form.provider === 'groq' ? 'llama-3.3-70b-versatile' : 'anthropic/claude-3.5-haiku'} className={INPUT_CLS} />
+      <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={MODEL_PLACEHOLDER[form.provider] ?? ''} className={INPUT_CLS} />
 
       <label className={`${FIELD_LABEL_CLS} mt-4`}>reasoning</label>
       <Slider
@@ -104,10 +128,10 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
         </>
       )}
 
-      {(form.provider === 'openrouter' || form.provider === 'groq') && (
+      {form.provider !== 'ollama' && (
         <>
           <label className={`${FIELD_LABEL_CLS} mt-4`}>api key</label>
-          <input type="password" value={form.apiKey ?? ''} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder={form.provider === 'groq' ? 'gsk_…' : 'sk-or-v1-…'} className={INPUT_CLS} />
+          <input type="password" value={form.apiKey ?? ''} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder={KEY_PLACEHOLDER[form.provider] ?? ''} className={INPUT_CLS} />
           <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">Runs using this model will read the key automatically.</p>
         </>
       )}
