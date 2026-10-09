@@ -1,5 +1,5 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
-import type { Agent, Integration, ModelConfig, Run, RunEvent, Script, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
+import type { Agent, Integration, ModelConfig, Project, Run, RunEvent, Script, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
 
 // Streams a chat completion, calling onDelta with each token chunk and onConfirm
 // with structured confirmation requests from the Manager.
@@ -56,14 +56,14 @@ export async function streamChat(
 }
 
 // Chat session management (bifurcated history).
-export async function listChatSessions(agentId: string): Promise<{ id: string; title: string; createdAt: string; updatedAt: string }[]> {
+export async function listChatSessions(agentId: string): Promise<{ id: string; title: string; createdAt: string; updatedAt: string; projectId: string }[]> {
   try { return await invoke('list_chat_sessions', { agentId }); } catch { return []; }
 }
 export async function getChatSession(sessionId: string): Promise<{ role: string; content: string; time: string }[]> {
   try { return await invoke('get_chat_session', { sessionId }); } catch { return []; }
 }
-export async function createChatSession(agentId: string, title: string): Promise<{ id: string; title: string; createdAt: string; updatedAt: string }> {
-  return await invoke('create_chat_session', { agentId, title });
+export async function createChatSession(agentId: string, title: string, projectId?: string | null): Promise<{ id: string; title: string; createdAt: string; updatedAt: string; projectId: string }> {
+  return await invoke('create_chat_session', { agentId, title, projectId: projectId ?? null });
 }
 export async function deleteChatSession(sessionId: string): Promise<void> {
   await invoke('delete_chat_session', { sessionId });
@@ -245,6 +245,21 @@ export async function deleteScript(id: string): Promise<void> {
 
 export async function runScriptNow(id: string, input?: string): Promise<string> {
   return await invoke<string>('run_script_now', { id, input: input ?? null });
+}
+
+// Projects (group conversations + scope their memory).
+export async function listProjects(): Promise<Project[]> {
+  try {
+    return await invoke<Project[]>('list_projects');
+  } catch {
+    return [];
+  }
+}
+export async function saveProject(project: Project): Promise<string> {
+  return await invoke<string>('save_project', { project });
+}
+export async function deleteProject(id: string): Promise<void> {
+  await invoke('delete_project', { id });
 }
 
 export async function listAgents(): Promise<Agent[]> {

@@ -25,6 +25,8 @@ export type Skill = { id: string; name: string; description: string; content: st
 // A reusable runnable command ("custom app"): run from the UI, by an agent
 // (host_fs), or from a workflow script node.
 export type Script = { id: string; name: string; description: string; command: string; cwd: string; updatedAt: string };
+// A project groups conversations and scopes their memory.
+export type Project = { id: string; name: string; description: string; createdAt: string; updatedAt: string };
 
 export type WorkflowNodeType = 'agent' | 'subagent' | 'loop' | 'checker' | 'integration' | 'gate' | 'trigger' | 'llm' | 'script';
 export type WorkflowNode = {
@@ -48,6 +50,7 @@ export type DrawerForm =
   | { kind: 'model'; editing: ModelConfig; isNew: boolean }
   | { kind: 'skill'; editing: Skill; isNew: boolean }
   | { kind: 'script'; editing: Script; isNew: boolean }
+  | { kind: 'project'; editing: Project; isNew: boolean }
   | null;
 
 export type ChatMessage = { role: 'user' | 'assistant' | 'tool' | 'thought'; content: string; detail?: string; time: string };
@@ -64,3 +67,4 @@ export const emptyTool = (): Tool => ({ id: '', name: '', kind: 'api', integrati
 export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', host: '', apiKey: '', enabled: true, reasoning: 'auto' });
 export const emptySkill = (): Skill => ({ id: '', name: '', description: '', content: '', docs: '', scriptIds: [] });
 export const emptyScript = (): Script => ({ id: '', name: '', description: '', command: '', cwd: '', updatedAt: '' });
+export const emptyProject = (): Project => ({ id: '', name: '', description: '', createdAt: '', updatedAt: '' });

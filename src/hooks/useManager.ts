@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { cancelChatStream, clearAgentMemory, closeSession, createChatSession, newChatStreamId, renameChatSession, streamChat } from '../runtime';
 import { useConfirmStore } from './useConfirm';
+import { useProjectsStore } from './useProjects';
 import { useRunsStore } from './useRuns';
 import type { Agent, ChatStep } from '../types';
 import { createDeltaBuffer } from '../streamBuffer';
@@ -96,7 +97,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     // must feel instant). Create the new session and clear the view immediately.
     const cur = get().sessionIds[agentId];
     if (cur) { void closeSession(cur, agentId, model); }
-    const sess = await createChatSession(agentId, 'Chat');
+    const sess = await createChatSession(agentId, 'Chat', useProjectsStore.getState().activeId || null);
     set((s) => {
       const conv = { ...s.conversations, [agentId]: [] };
       return { conversations: conv, sessionIds: { ...s.sessionIds, [agentId]: sess.id }, messages: [] };
@@ -107,7 +108,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     // Lazily create a session on the first message so every chat is recorded,
     // titled by the first user message.
     if (!get().sessionIds[managerAgent.id]) {
-      const sess = await createChatSession(managerAgent.id, titleFrom(message));
+      const sess = await createChatSession(managerAgent.id, titleFrom(message), useProjectsStore.getState().activeId || null);
       set((s) => ({ sessionIds: { ...s.sessionIds, [managerAgent.id]: sess.id } }));
     } else {
       // If this is the first real message in a default-titled session, name it.

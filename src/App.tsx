@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent, DrawerForm, View } from './types';
-import { emptyModel, emptyScript, emptySkill, emptyTool } from './types';
+import { emptyModel, emptyProject, emptyScript, emptySkill, emptyTool } from './types';
 import { useAgentsStore } from './hooks/useAgents';
 import { useRunsStore } from './hooks/useRuns';
 import { useModelsStore } from './hooks/useModels';
 import { useToolsStore } from './hooks/useTools';
 import { useSkillsStore } from './hooks/useSkills';
 import { useScriptsStore } from './hooks/useScripts';
+import { useProjectsStore } from './hooks/useProjects';
 import { useWorkflowsStore } from './hooks/useWorkflows';
 import { useWorkspaceStore } from './hooks/useWorkspace';
 import { useIntegrationsStore } from './hooks/useIntegrations';
@@ -30,6 +31,7 @@ import { WorkshopView } from './components/views/WorkshopView';
 import { MemoryView } from './components/views/MemoryView';
 import { SkillFormDrawer } from './components/views/SkillsView';
 import { ScriptFormDrawer } from './components/views/ScriptsView';
+import { ProjectFormDrawer } from './components/views/ProjectsView';
 import { Toaster } from './components/ui/Toaster';
 import { UpdatePrompt } from './components/ui/UpdatePrompt';
 import { toast } from './hooks/useToast';
@@ -67,6 +69,12 @@ export default function App() {
   const saveScript = useScriptsStore((s) => s.saveScript);
   const deleteScript = useScriptsStore((s) => s.deleteScript);
   const loadScripts = useScriptsStore((s) => s.loadScripts);
+  const projects = useProjectsStore((s) => s.projects);
+  const activeProjectId = useProjectsStore((s) => s.activeId);
+  const saveProject = useProjectsStore((s) => s.saveProject);
+  const deleteProject = useProjectsStore((s) => s.deleteProject);
+  const loadProjects = useProjectsStore((s) => s.loadProjects);
+  const setActiveProject = useProjectsStore((s) => s.setActive);
   const integrations = useIntegrationsStore((s) => s.integrations);
   const loadIntegrations = useIntegrationsStore((s) => s.loadIntegrations);
   const loadWorkspace = useWorkspaceStore((s) => s.loadWorkspace);
@@ -78,11 +86,11 @@ export default function App() {
   const loadRuns = useRunsStore((s) => s.loadRuns);
 
   useEffect(() => {
-    loadAgents(); loadModels(); loadTools(); loadSkills(); loadScripts(); loadWorkflows(); loadIntegrations(); loadRuns();
+    loadAgents(); loadModels(); loadTools(); loadSkills(); loadScripts(); loadProjects(); loadWorkflows(); loadIntegrations(); loadRuns();
     // Reload tools after the storage bootstrap so MCP tools imported on first run
     // (browser/memory) are present in the picker.
     void loadWorkspace().then(() => loadTools());
-  }, [loadAgents, loadModels, loadTools, loadSkills, loadScripts, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns]);
+  }, [loadAgents, loadModels, loadTools, loadSkills, loadScripts, loadProjects, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns]);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
@@ -247,13 +255,17 @@ export default function App() {
           </div>
           <div className={pane(view === 'workshop')}>
             <WorkshopView
-              skills={skills} scripts={scripts} tools={tools} integrations={integrations}
+              skills={skills} scripts={scripts} projects={projects} activeProjectId={activeProjectId} tools={tools} integrations={integrations}
               onAddSkill={() => setDrawerForm({ kind: 'skill', editing: emptySkill(), isNew: true })}
               onEditSkill={(s) => setDrawerForm({ kind: 'skill', editing: s, isNew: false })}
               onDeleteSkill={async (id) => { await deleteSkill(id); setAgents((prev) => prev.map((a) => ({ ...a, skillIds: a.skillIds.filter((s) => s !== id) }))); toast('skill deleted', 'success'); }}
               onAddScript={() => setDrawerForm({ kind: 'script', editing: emptyScript(), isNew: true })}
               onEditScript={(s) => setDrawerForm({ kind: 'script', editing: s, isNew: false })}
               onDeleteScript={async (id) => { await deleteScript(id); toast('script deleted', 'success'); }}
+              onAddProject={() => setDrawerForm({ kind: 'project', editing: emptyProject(), isNew: true })}
+              onEditProject={(p) => setDrawerForm({ kind: 'project', editing: p, isNew: false })}
+              onDeleteProject={async (id) => { await deleteProject(id); toast('project deleted', 'success'); }}
+              onSetActiveProject={setActiveProject}
               onAddTool={() => setDrawerForm({ kind: 'tool', editing: emptyTool(), isNew: true })}
               onEditTool={(t) => setDrawerForm({ kind: 'tool', editing: t, isNew: false })}
               onDeleteTool={async (id) => { await deleteTool(id); setTools((prev) => prev.filter((p) => p.id !== id)); setAgents((prev) => prev.map((a) => ({ ...a, toolIds: a.toolIds.filter((t) => t !== id) }))); toast('tool deleted', 'success'); }}
@@ -300,6 +312,13 @@ export default function App() {
           editing={drawerForm.editing} isNew={drawerForm.isNew}
           onClose={() => setDrawerForm(null)}
           onSave={async (s) => { await saveScript(s); setDrawerForm(null); toast('script saved', 'success'); }}
+        />
+      )}
+      {drawerForm && drawerForm.kind === 'project' && (
+        <ProjectFormDrawer
+          editing={drawerForm.editing} isNew={drawerForm.isNew}
+          onClose={() => setDrawerForm(null)}
+          onSave={async (p) => { await saveProject(p); setDrawerForm(null); toast('project saved', 'success'); }}
         />
       )}
       <Toaster />

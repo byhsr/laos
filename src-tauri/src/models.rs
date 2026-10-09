@@ -38,6 +38,12 @@ pub struct SkillRecord {
   #[serde(default)] pub script_ids: Vec<String>,
 }
 
+// A project groups conversations and scopes their memory, so work on one thing
+// can be tracked across many chats.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRecord { pub id: String, pub name: String, pub description: String, pub created_at: String, pub updated_at: String }
+
 // A reusable runnable command ("custom app"/script): run from the UI, by an
 // agent (host_fs), or from a workflow script node.
 #[derive(Serialize, Deserialize, Clone)]

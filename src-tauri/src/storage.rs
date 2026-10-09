@@ -371,6 +371,43 @@ pub async fn run_script_now(app: AppHandle, id: String, input: Option<String>) -
   tokio::task::spawn_blocking(move || crate::tools::run_shell_in(&command, &cwd)).await.map_err(|e| e.to_string())?
 }
 
+// ---------------------------------------------------------------------------
+// Projects (group conversations + scope their memory)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_projects(app: AppHandle) -> Result<Vec<ProjectRecord>, String> {
+  let conn = db(&app)?;
+  let mut stmt = conn.prepare("SELECT id, name, description, created_at, updated_at FROM projects ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+  let rows = stmt.query_map([], |row| Ok(ProjectRecord {
+    id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, created_at: row.get(3)?, updated_at: row.get(4)?,
+  })).map_err(|e| e.to_string())?;
+  let mut out = Vec::new();
+  for row in rows { out.push(row.map_err(|e| e.to_string())?); }
+  Ok(out)
+}
+
+#[tauri::command]
+pub fn save_project(app: AppHandle, project: ProjectRecord) -> Result<String, String> {
+  let conn = db(&app)?;
+  let now = chrono::Utc::now().to_rfc3339();
+  let id = if project.id.trim().is_empty() { format!("proj-{}", chrono::Utc::now().timestamp_millis()) } else { project.id.clone() };
+  let created = if project.created_at.trim().is_empty() { now.clone() } else { project.created_at.clone() };
+  conn.execute(
+    "INSERT INTO projects (id, name, description, created_at, updated_at) VALUES (?1,?2,?3,?4,?5)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, updated_at=excluded.updated_at",
+    params![id, project.name, project.description, created, now],
+  ).map_err(|e| e.to_string())?;
+  Ok(id)
+}
+
+#[tauri::command]
+pub fn delete_project(app: AppHandle, id: String) -> Result<(), String> {
+  let conn = db(&app)?;
+  conn.execute("DELETE FROM projects WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 #[tauri::command]
 pub fn list_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
   let conn = db(&app)?;

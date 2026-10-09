@@ -17,6 +17,7 @@ import { toast } from '../hooks/useToast';
 import { listChatSessions, getChatSession, createChatSession, deleteChatSession, closeSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, type StreamStep } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
 import { useManagerStore, type ChatEntry } from '../hooks/useManager';
+import { useProjectsStore } from '../hooks/useProjects';
 import { useConfirmStore } from '../hooks/useConfirm';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { mergeStep } from '../chatSteps';
@@ -183,7 +184,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     // the visible chat stays session-scoped.
     let sid = useManagerStore.getState().sessionIds[agent.id];
     if (!sid) {
-      const sess = await createChatSession(agent.id, 'Chat');
+      const sess = await createChatSession(agent.id, 'Chat', useProjectsStore.getState().activeId || null);
       sid = sess.id;
       useManagerStore.setState((s) => ({ sessionIds: { ...s.sessionIds, [agent.id]: sid } }));
     }
@@ -251,7 +252,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     // over into it.
     const cur = useManagerStore.getState().sessionIds[agent.id];
     if (cur) { void closeSession(cur, agent.id, agent.model); }
-    const sess = await createChatSession(agent.id, 'Chat');
+    const sess = await createChatSession(agent.id, 'Chat', useProjectsStore.getState().activeId || null);
     useManagerStore.setState((s) => ({ sessionIds: { ...s.sessionIds, [agent.id]: sess.id } }));
     setMessages(() => []);
     setViewingSession(null);

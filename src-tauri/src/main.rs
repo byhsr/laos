@@ -62,6 +62,10 @@ fn main() {
       storage::save_script,
       storage::delete_script,
       storage::run_script_now,
+      // Projects (group conversations + scope their memory)
+      storage::list_projects,
+      storage::save_project,
+      storage::delete_project,
       // Integrations
       integrations::list_integrations,
       integrations::save_integration_config,

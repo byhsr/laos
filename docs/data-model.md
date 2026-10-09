@@ -94,14 +94,20 @@ runs with the `run_script` tool).
 ("custom apps"): run from the Scripts tab (`run_script_now`), by an agent with `host_fs`
 (`run_script` tool), or from a workflow `script` node.
 
+### `projects`
+
+`id` (PK), `name`, `description`, `created_at`, `updated_at`. Group conversations and scope
+their memory; the active project is chosen in Workshop → projects and tags new chat sessions.
+
 ### `agent_conversations`
 
 `agent_id` (PK), `messages` (JSON array). The rolling-window history.
 
 ### `chat_sessions`
 
-`id` (PK), `agent_id`, `title`, `created_at`, `updated_at`, `summary` (added by migration).
-`title` defaults to `Chat`.
+`id` (PK), `agent_id`, `title`, `created_at`, `updated_at`, `summary` (added by migration),
+`project_id` (added by migration; '' = none). `title` defaults to `Chat`. A session's project
+scopes its turn memory (`chat.rs` passes it to `fox::record_turn`).
 
 ### `chat_messages`
 

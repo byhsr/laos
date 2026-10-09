@@ -32,9 +32,14 @@ fn scope(agent_id: &str) -> serde_json::Value {
   serde_json::json!({ "type": "agent", "id": agent_id })
 }
 
-/// Records both sides of a finished turn as experience. Best-effort.
-pub(crate) fn record_turn(app: &AppHandle, agent_id: &str, user: &str, assistant: &str) {
-  let s = scope(agent_id);
+/// Records both sides of a finished turn as experience. Best-effort. When the
+/// session belongs to a project, the experience is filed under the project's
+/// scope, so a project's memory accumulates across its conversations.
+pub(crate) fn record_turn(app: &AppHandle, agent_id: &str, user: &str, assistant: &str, project_id: Option<&str>) {
+  let s = match project_id {
+    Some(p) if !p.trim().is_empty() => serde_json::json!({ "type": "project", "id": p }),
+    _ => scope(agent_id),
+  };
   if !user.trim().is_empty() {
     let _ = call(app, "record_event", serde_json::json!({
       "agentId": agent_id, "scope": s, "type": "user_message", "role": "user", "content": user,

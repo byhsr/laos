@@ -192,13 +192,20 @@ pub fn clear_agent_memory(app: AppHandle, agent_id: String) -> Result<(), String
 #[tauri::command]
 pub fn list_chat_sessions(app: AppHandle, agent_id: String) -> Result<Vec<serde_json::Value>, String> {
   let conn = db(&app)?;
-  let mut stmt = conn.prepare("SELECT id, title, created_at, updated_at FROM chat_sessions WHERE agent_id=?1 ORDER BY updated_at DESC LIMIT 100").map_err(|e| e.to_string())?;
+  let mut stmt = conn.prepare("SELECT id, title, created_at, updated_at, project_id FROM chat_sessions WHERE agent_id=?1 ORDER BY updated_at DESC LIMIT 100").map_err(|e| e.to_string())?;
   let rows = stmt.query_map(params![agent_id], |row| {
-    Ok(serde_json::json!({ "id": row.get::<_, String>(0)?, "title": row.get::<_, String>(1)?, "createdAt": row.get::<_, String>(2)?, "updatedAt": row.get::<_, String>(3)? }))
+    Ok(serde_json::json!({ "id": row.get::<_, String>(0)?, "title": row.get::<_, String>(1)?, "createdAt": row.get::<_, String>(2)?, "updatedAt": row.get::<_, String>(3)?, "projectId": row.get::<_, String>(4)? }))
   }).map_err(|e| e.to_string())?;
   let mut out = Vec::new();
   for row in rows { out.push(row.map_err(|e| e.to_string())?); }
   Ok(out)
+}
+
+// The project a session belongs to (empty when it has none).
+pub(crate) fn session_project(conn: &Connection, session_id: &str) -> Option<String> {
+  conn.query_row("SELECT project_id FROM chat_sessions WHERE id=?1", params![session_id], |r| r.get::<_, String>(0))
+    .ok()
+    .filter(|s| !s.is_empty())
 }
 
 #[tauri::command]
@@ -214,13 +221,14 @@ pub fn get_chat_session(app: AppHandle, session_id: String) -> Result<Vec<serde_
 }
 
 #[tauri::command]
-pub fn create_chat_session(app: AppHandle, agent_id: String, title: String) -> Result<serde_json::Value, String> {
+pub fn create_chat_session(app: AppHandle, agent_id: String, title: String, project_id: Option<String>) -> Result<serde_json::Value, String> {
   let conn = db(&app)?;
   let id = format!("sess-{}", chrono::Utc::now().timestamp_millis());
   let now = chrono::Utc::now().to_rfc3339();
   let title = if title.trim().is_empty() { "Chat".to_string() } else { title };
-  conn.execute("INSERT INTO chat_sessions (id, agent_id, title, created_at, updated_at) VALUES (?1,?2,?3,?4,?4)", params![id, agent_id, title, now]).map_err(|e| e.to_string())?;
-  Ok(serde_json::json!({ "id": id, "title": title, "createdAt": now, "updatedAt": now }))
+  let project = project_id.unwrap_or_default();
+  conn.execute("INSERT INTO chat_sessions (id, agent_id, title, created_at, updated_at, project_id) VALUES (?1,?2,?3,?4,?4,?5)", params![id, agent_id, title, now, project]).map_err(|e| e.to_string())?;
+  Ok(serde_json::json!({ "id": id, "title": title, "createdAt": now, "updatedAt": now, "projectId": project }))
 }
 
 #[tauri::command]

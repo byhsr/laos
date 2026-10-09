@@ -85,6 +85,10 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   };
   history.push(serde_json::json!({ "role": "user", "content": input }));
 
+  // The session's project (if any) scopes this turn's memory: durable memory is
+  // filed under the project so it accumulates across its conversations.
+  let project_scope = session_id.as_deref().and_then(|sid| crate::memory::session_project(&conn, sid));
+
   // Fold older turns into memory in the background. It is an extra model call and
   // must never sit in front of the reply the user is waiting for.
   if history.len() > ROLLING_WINDOW + 1 {
@@ -124,7 +128,10 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     // When the memory connector is attached, tell the agent which identity to file
     // memories under, so they land in the namespace the Memory view reads.
     let memory_note = if agent.tool_ids.iter().any(|t| t.starts_with("mcp:memory:")) {
-      format!("\nYou have a persistent memory. When you use a memory tool, pass agentId \"{id}\" and scope {{\"type\":\"agent\",\"id\":\"{id}\"}}.", id = agent.id)
+      match &project_scope {
+        Some(pid) => format!("\nYou have a persistent memory for this project. When you use a memory tool, pass agentId \"{id}\" and scope {{\"type\":\"project\",\"id\":\"{pid}\"}}.", id = agent.id),
+        None => format!("\nYou have a persistent memory. When you use a memory tool, pass agentId \"{id}\" and scope {{\"type\":\"agent\",\"id\":\"{id}\"}}.", id = agent.id),
+      }
     } else {
       String::new()
     };
@@ -348,7 +355,8 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     let id_cap = agent.id.clone();
     let user_cap = input.clone();
     let reply_cap = delta.clone();
-    let _ = tauri::async_runtime::spawn_blocking(move || crate::fox::record_turn(&app_cap, &id_cap, &user_cap, &reply_cap));
+    let project_cap = project_scope.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || crate::fox::record_turn(&app_cap, &id_cap, &user_cap, &reply_cap, project_cap.as_deref()));
   }
 
   // Persist the run and the conversation.
