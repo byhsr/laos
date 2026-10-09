@@ -22,3 +22,10 @@ regex = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "net", "time", "sync"] }
 # Parser only — the built-in HTML writer and CLI are not used.
 pulldown-cmark = { version = "0.13.4", default-features = false }
+
+[target."cfg(windows)".dependencies]
+arboard = "3.6.1"
+base64 = "0.23.1"
+enigo = "0.6.1"
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Shutdown", "Win32_UI_Shell"] }
+xcap = "0.9.8"

@@ -13,8 +13,8 @@ use crate::models::*;
 use crate::provider;
 use crate::tasks::list_tasks;
 use crate::tools::{
-  AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool, ReadAnyFileTool, ReadFileTool,
-  RunCommandTool, SearchFilesTool, WriteFileTool, MAX_TOOL_ROUNDS,
+  desktop_tools, AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool, ReadAnyFileTool,
+  ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool, MAX_TOOL_ROUNDS,
 };
 use crate::tooltext::parse_text_tool_calls;
 
@@ -23,6 +23,7 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
   let has_network = agent.permissions.iter().any(|p| p == "network");
   let has_files = agent.permissions.iter().any(|p| p == "files");
   let has_host_fs = agent.permissions.iter().any(|p| p == "host_fs");
+  let has_pc = agent.permissions.iter().any(|p| p == "pc_control");
   let mut stmt = conn.prepare("SELECT kind, enabled, config_json FROM tools WHERE id=?1").map_err(|e| e.to_string())?;
   for tool_id in &agent.tool_ids {
     let mut rows = stmt.query_map(params![tool_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
@@ -89,6 +90,10 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
     tools.push(Box::new(SearchFilesTool));
     tools.push(Box::new(ReadAnyFileTool));
     tools.push(Box::new(RunCommandTool));
+  }
+  // PC control tools: granted only to agents with the explicit pc_control permission.
+  if has_pc {
+    tools.extend(desktop_tools());
   }
   Ok(tools)
 }
