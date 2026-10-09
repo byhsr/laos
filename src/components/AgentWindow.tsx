@@ -31,6 +31,7 @@ const PERMISSIONS = [
   { key: 'network', label: 'network', hint: 'http / api' },
   { key: 'files', label: 'files', hint: 'sandboxed' },
   { key: 'host_fs', label: 'host filesystem', hint: 'whole device' },
+  { key: 'pc_control', label: 'pc control', hint: 'mouse / keyboard / screen' },
 ] as const;
 
 // Secondary views, opened as a side window from the ⋯ menu rather than as

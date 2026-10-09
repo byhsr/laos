@@ -375,7 +375,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
 
           <label className={fieldLabel}>permissions</label>
           <div className="-mx-2 mt-1.5">
-            {(['network', 'files', 'host_fs'] as const).map((p) => (
+            {(['network', 'files', 'host_fs', 'pc_control'] as const).map((p) => (
               <Checkbox
                 key={p}
                 checked={mgrDraft.permissions.includes(p)}
