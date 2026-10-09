@@ -22,6 +22,7 @@ tool registry, workflow execution, memory, and the Telegram adapter.
 | [tool-calls.md](./tool-calls.md) | Tool registry + kinds, permission gating, the end-to-end tool-call lifecycle, dispatch, and the confirmation gate |
 | [integrations.md](./integrations.md) | Integration catalog, how providers become tools, credential storage/masking, OAuth, testing |
 | [mcp.md](./mcp.md) | The generic MCP connector: servers, tool discovery/import, how a call runs, limits |
+| [pc-control.md](./pc-control.md) | Native PC control (computer use): the `pc_control` permission, tools, the see→act loop, and platform limits |
 | [memory.md](./memory.md) | Context assembly, the rolling window, summarization, long-term facts, chat sessions, day context, recall, and the built-in `agent-memory` (fox) connector |
 | [webhooks.md](./webhooks.md) | Telegram tunnel + webhook receiver + long-poll, the OAuth loopback, health checks and logs |
 | [data-model.md](./data-model.md) | SQLite schema, migrations, record types, memory keys, ID conventions |
@@ -48,7 +49,7 @@ src-tauri/                   Backend (Rust / Tauri v2)
   src/manager.rs             "Laos" system agent: prompt, turn loop, tool dispatch, approvals
   src/memory.rs              Conversations, rolling window, summaries/facts, chat sessions
   src/mcp.rs                 MCP connector (stdio JSON-RPC): servers, discovery, calls
-  src/tools/                 AgentTool trait + implementations (api, filesystem, integration, mcp, web)
+  src/tools/                 AgentTool trait + implementations (api, desktop, filesystem, integration, mcp, web)
   src/workflows.rs           Rule engine (deterministic checks + LLM judge) and linear execution
   src/tasks.rs               Task lifecycle + runs feed
   src/integrations.rs        Integration catalog, credential masking/merge, OAuth

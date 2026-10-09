@@ -124,6 +124,16 @@ The two families differ in three places; every path must normalize all three:
 | Final text | `message.content` | `choices[0].message.content` |
 | Token counts | `prompt_eval_count` / `eval_count` | `usage.prompt_tokens` / `usage.completion_tokens` |
 
+### Image tool results (vision)
+
+A tool may return images (`ToolOutput`, see [tool-calls.md](./tool-calls.md)). Vision tools
+(`screen_capture`) use this in the streaming path: the tool result message carries the text,
+then an image turn is appended — Ollama as a user message with an `images` array, OpenAI-
+compatible as a user message with a `text` + `image_url` content array. Before every request
+`strip_old_images` removes images from all but the most recent image turn, so a control loop
+doesn't re-send each screenshot each round. Requires a vision-capable model; the non-streaming
+paths carry text only.
+
 API keys are resolved inside `provider::resolve`, from the model's `api_key` column — never
 sent from the UI for stored models. The browser preview may pass one explicitly to
 `execute_agent`; it wins over the stored key.

@@ -36,7 +36,7 @@ crosses `src/runtime.ts`. The backend has no knowledge of React; it returns plai
 | `manager.rs` | The "Laos" system agent: system prompt builder, non-streaming turn loop, `dispatch_manager_tool`, approvals. |
 | `memory.rs` | Conversations, rolling window, chat sessions, summarization (background); long-term facts/summary are pull-only (`build_context_bundle` for on-demand recall). |
 | `mcp.rs` | MCP connector: JSON-RPC over stdio to a local MCP server; tool discovery, import, and calls. |
-| `tools/` | `AgentTool` trait + implementations (`api.rs`, `filesystem.rs`, `integration.rs`, `web.rs`). |
+| `tools/` | `AgentTool` trait + implementations (`api.rs`, `desktop.rs` (native PC control, Windows), `filesystem.rs`, `integration.rs`, `mcp.rs`, `web.rs`). |
 | `updater.rs` | In-app updater: checks the signed release manifest, installs an update, restarts. |
 | `workflows.rs` | Deterministic rule engine + LLM judge; linear workflow execution. |
 | `tasks.rs` | Task lifecycle (`pending → running → completed/failed/cancelled`) and the runs feed. |

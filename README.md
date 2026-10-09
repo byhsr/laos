@@ -24,5 +24,8 @@ The browser command (`npm.cmd run dev`) is for UI iteration only. It cannot call
 - Tauri creates a SQLite database in the app data directory and records runs.
 - Each run sends the agent objective and task through its configured local model and returns an observable result.
 - The canvas represents explicit sequential workflow dependencies.
+- Agents granted the **`pc_control`** permission can see and control the PC — mouse/keyboard,
+  screen capture, windows, clipboard, app launch. Opt-in per agent, Windows-first, and
+  screenshots are sent to the configured model; see [docs/pc-control.md](./docs/pc-control.md).
 
 Provider calls (`ollama:`, `groq:`, `openrouter:`) share one tool-calling and streaming path, and API keys are stored in the local database.

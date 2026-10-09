@@ -23,6 +23,15 @@ pub(crate) trait AgentTool: Send + Sync {
 `tool_schemas(&tools)` (`agents.rs`) renders these into the OpenAI `{"type":"function", ...}`
 array sent as the request `tools` field.
 
+**Image results.** A tool returns a `ToolOutput { text, images }` (`run_with_images`;
+the default wraps `run`'s text with no images). Only `screen_capture` fills `images`
+(base64 PNG). The streaming loop (`chat.rs`) appends an image turn after the tool result —
+for Ollama a user message with an `images` array, for OpenAI-compatible providers a user
+message with a `text` + `image_url` content array (a `tool` role can't carry images). Before
+each request, `strip_old_images` drops images from all but the latest image turn, so a
+control loop never re-sends every screenshot. The non-streaming paths (`agents.rs`,
+`manager.rs`) use the text only.
+
 Caps and helpers:
 
 | Symbol | Value | Meaning |
@@ -38,6 +47,7 @@ Caps and helpers:
 | DB-configured tools (`tools` table) | `agents::build_tools` | `http_get`, `api`, `read_file`, `write_file`, `mcp` |
 | Integration actions | `agents::build_tools` (from `integration_definitions()`) | `notion_search`, `sheets_append`, `airtable_create_record` |
 | Host-filesystem tools | `agents::build_tools` when `host_fs` is granted | `search_files`, `read_file_any`, `run_command` |
+| PC control tools | `agents::build_tools` (and the Manager) when `pc_control` is granted (`tools::desktop_tools`) | `screen_capture`, `mouse_click`, `type_text`, `press_keys`, `launch_app`, `lock_screen`, … |
 | Manager tools | `manager::manager_tools()` | `create_agent`, `run_workflow`, `delegate_task`, `recall_memory`, `knowledge_base` |
 | MCP tools for the Manager | `agents::all_mcp_tools`, merged into `manager_tools()` | every enabled `kind='mcp'` row (the Manager has no per-agent tool picker) |
 | Inline (tool-call loops) | `chat.rs`, `agents.rs`, `manager.rs` | the loop itself |
@@ -60,13 +70,15 @@ LLM's argument schema; responses are pretty-printed JSON and clipped.
 
 ## Permission gating (`build_tools`)
 
-`agent.permissions` is a list; the three recognized values are `network`, `files`, and
-`host_fs`. A tool is only offered to the model if its gate is satisfied:
+`agent.permissions` is a list; the four recognized values are `network`, `files`,
+`host_fs`, and `pc_control`. A tool is only offered to the model if its gate is satisfied:
 
 ```
 network  → http_get, api, AND every integration action
 files    → read_file, write_file        (sandboxed to agents/<id>/files/)
 host_fs  → search_files, read_file_any, run_command   (escapes the sandbox)
+pc_control → the native desktop tools (screen_capture, mouse_*, type_text,
+             press_keys, window control, launch_app, clipboard, lock_screen)
 (none)   → mcp                          (attaching the MCP tool is the opt-in)
 ```
 
@@ -139,7 +151,14 @@ create_agent  update_agent  delete_agent
 create_workflow  update_workflow  delete_workflow  run_workflow
 configure_integration  create_task  cancel_task  delegate_task
 run_command
+launch_app  close_window  lock_screen  write_clipboard  open_path
 ```
+
+The last line's PC control actions confirm; the low-level input tools
+(`mouse_*`, `type_text`, `press_keys`, `scroll`, `focus_window`, …) and the
+read-only ones (`screen_capture`, `list_windows`, `read_clipboard`) do not — a
+vision-control loop issues many of them, and the once-per-agent `pc_control`
+grant is the real opt-in.
 
 Everything else (listers, `get_workspace_status`, `recall_memory`, `knowledge_base`
 list/get/search, `search_files`, `read_file_any`, `get_task_status`) executes without asking.
