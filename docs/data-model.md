@@ -124,7 +124,14 @@ scopes its turn memory (`chat.rs` passes it to `fox::record_turn`).
 ### `telegram_logs`
 
 `id` (INTEGER PK AUTOINCREMENT), `direction`, `chat_id`, `text`, `reply`, `status`, `detail`,
-`created_at`. Pruned to the newest 500 rows.
+`created_at`. Pruned to the newest 500 rows. `detail` carries the bot's name (or an error).
+
+### `telegram_bots`
+
+`id` (PK), `name`, `token`, `agent_id` (`''`/`manager` = the Manager), `enabled`, `updated_at`.
+One long-poll loop runs per enabled bot (`telegram.rs`); incoming messages route to the bot's
+agent. The legacy single `integration_configs` token is migrated into a `bot-default` row on
+boot. Webhooks/tunnels remain single-bot.
 
 ## Migrations
 

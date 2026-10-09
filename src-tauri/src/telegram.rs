@@ -80,6 +80,82 @@ fn ensure_webhook_secret(conn: &Connection) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
+// Bots (multiple bots, each long-polled and routed to an agent)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+struct TelegramBot { id: String, name: String, token: String, agent_id: String, enabled: bool }
+
+fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
+  let mut out = Vec::new();
+  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, enabled FROM telegram_bots ORDER BY name") {
+    if let Ok(rows) = stmt.query_map([], |row| Ok(TelegramBot {
+      id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, enabled: row.get::<_, i64>(4)? != 0,
+    })) {
+      for r in rows { if let Ok(b) = r { out.push(b); } }
+    }
+  }
+  out
+}
+
+fn load_bot(conn: &Connection, id: &str) -> Option<TelegramBot> {
+  conn.query_row("SELECT id, name, token, agent_id, enabled FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
+    id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, enabled: row.get::<_, i64>(4)? != 0,
+  })).ok()
+}
+
+// One-time migration: fold the legacy single telegram token (integration_configs
+// row) into a bot row so existing setups keep working.
+fn migrate_legacy_bot(conn: &Connection) {
+  let count: i64 = conn.query_row("SELECT COUNT(*) FROM telegram_bots", [], |r| r.get(0)).unwrap_or(0);
+  if count > 0 { return; }
+  if let Some(token) = cfg_str(&telegram_config(conn), "token") {
+    let _ = conn.execute(
+      "INSERT INTO telegram_bots (id, name, token, agent_id, enabled, updated_at) VALUES ('bot-default','Telegram',?1,'manager',1,?2) ON CONFLICT(id) DO NOTHING",
+      params![token, now()],
+    );
+  }
+}
+
+fn mask_token(t: &str) -> String { if t.is_empty() { String::new() } else { "••••••••".to_string() } }
+
+#[tauri::command]
+pub fn list_telegram_bots(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+  let conn = db(&app)?;
+  Ok(load_bots(&conn).into_iter().map(|b| serde_json::json!({
+    "id": b.id, "name": b.name, "agentId": b.agent_id, "enabled": b.enabled, "token": mask_token(&b.token),
+  })).collect())
+}
+
+#[tauri::command]
+pub fn save_telegram_bot(app: AppHandle, bot: serde_json::Value) -> Result<String, String> {
+  let conn = db(&app)?;
+  let id = bot.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string())
+    .unwrap_or_else(|| format!("bot-{}", chrono::Utc::now().timestamp_millis()));
+  let name = bot.get("name").and_then(|v| v.as_str()).unwrap_or("Telegram").to_string();
+  let agent_id = bot.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+  let enabled = bot.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+  // Preserve the stored token when the UI echoes the mask or sends nothing.
+  let incoming = bot.get("token").and_then(|v| v.as_str()).unwrap_or("");
+  let token = if incoming.is_empty() || incoming == "••••••••" {
+    load_bot(&conn, &id).map(|b| b.token).unwrap_or_default()
+  } else { incoming.to_string() };
+  conn.execute(
+    "INSERT INTO telegram_bots (id, name, token, agent_id, enabled, updated_at) VALUES (?1,?2,?3,?4,?5,?6)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, enabled=excluded.enabled, updated_at=excluded.updated_at",
+    params![id, name, token, agent_id, if enabled { 1 } else { 0 }, now()],
+  ).map_err(|e| e.to_string())?;
+  Ok(id)
+}
+
+#[tauri::command]
+pub fn delete_telegram_bot(app: AppHandle, id: String) -> Result<(), String> {
+  let conn = db(&app)?;
+  conn.execute("DELETE FROM telegram_bots WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Telegram tunnel + webhook (one-click expose)
 // ---------------------------------------------------------------------------
 
@@ -680,75 +756,130 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
   }
 }
 
-// Long-polls the Telegram Bot API; every incoming text message is routed to the
-// Manager (same logic as the UI chat) and the reply is sent back. Thin channel:
-// no business logic lives here.
-pub(crate) async fn telegram_loop(app: AppHandle) {
+// One long-poll loop per bot. Returns when the bot is disabled or removed.
+async fn poll_bot(app: AppHandle, bot: TelegramBot) {
+  let mut offset: i64 = 0;
   loop {
-    let token = match db(&app).and_then(|c| telegram_token(&c)) {
-      Ok(Some(t)) => t,
-      _ => { tokio::time::sleep(std::time::Duration::from_secs(5)).await; continue; }
-    };
-    // A registered webhook — including one left over from a previous session
-    // whose tunnel is long gone — makes Telegram reject getUpdates, so polling
-    // has to pause for either signal, not just a live in-memory tunnel.
+    // Stop once the bot is disabled or deleted.
+    let alive = db(&app).ok().and_then(|c| load_bot(&c, &bot.id)).map(|b| b.enabled && !b.token.trim().is_empty()).unwrap_or(false);
+    if !alive { return; }
+    // A registered webhook — including a leftover one — makes Telegram reject
+    // getUpdates, so polling pauses for either signal.
     let webhook_active = db(&app).map(|c| webhook_registered(&c)).unwrap_or(false);
     if get_tunnel_url().is_some() || webhook_active {
       tokio::time::sleep(std::time::Duration::from_secs(5)).await;
       continue;
     }
-    let mut offset: i64 = 0;
-    loop {
-      let url = format!("https://api.telegram.org/bot{token}/getUpdates?timeout=30&offset={offset}");
-      let response = match http::client().get(&url).send().await {
-        Ok(r) => r,
-        Err(_) => { tokio::time::sleep(std::time::Duration::from_secs(5)).await; continue; }
-      };
-      let json: serde_json::Value = match response.json().await {
-        Ok(v) => v,
-        Err(_) => { tokio::time::sleep(std::time::Duration::from_secs(5)).await; continue; }
-      };
-      // Back off rather than hammering the API when Telegram reports an error.
-      if !json.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        continue;
-      }
-      let updates = json.get("result").and_then(|r| r.as_array()).cloned().unwrap_or_default();
-      for update in updates {
-        let update_id = update.get("update_id").and_then(|u| u.as_i64()).unwrap_or(0);
-        offset = update_id + 1;
-        let Some(text) = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string()) else { continue };
-        let Some(chat_id) = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64()) else { continue };
-        if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "received", ""); }
-        // Handle /agents and /tasks locally for snappy replies; everything else â†’ Manager.
-        let reply = match text.trim() {
-          "/agents" | "/agents@" => {
-            let conn = db(&app).ok();
-            match conn {
-              Some(c) => {
-                let ctx = build_workspace_context(&c).unwrap_or_default();
-                ctx.lines().take_while(|l| !l.starts_with("## Available Integrations")).collect::<Vec<_>>().join("\n")
-              }
-              None => "No agents.".into(),
-            }
-          }
-          "/tasks" | "/tasks@" => {
-            let conn = db(&app).ok();
-            match conn {
-              Some(c) => list_tasks(&c).map(|ts| if ts.is_empty() { "No tasks.".into() } else { ts.iter().map(|t| format!("- {} â†’ {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect::<Vec<_>>().join("\n") }).unwrap_or_default(),
-              None => "No tasks.".into(),
-            }
-          }
-          _ => telegram_manager_turn(&app, &text).await,
-        };
-        let send_result = telegram_send_message(&token, chat_id, &reply).await;
-        if let Ok(c) = db(&app) {
-          match send_result {
-            Ok(()) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", ""),
-            Err(e) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &e),
-          }
+    let url = format!("https://api.telegram.org/bot{}/getUpdates?timeout=30&offset={offset}", bot.token);
+    let response = match http::client().get(&url).send().await {
+      Ok(r) => r,
+      Err(_) => { tokio::time::sleep(std::time::Duration::from_secs(5)).await; continue; }
+    };
+    let json: serde_json::Value = match response.json().await {
+      Ok(v) => v,
+      Err(_) => { tokio::time::sleep(std::time::Duration::from_secs(5)).await; continue; }
+    };
+    if !json.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+      tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+      continue;
+    }
+    let updates = json.get("result").and_then(|r| r.as_array()).cloned().unwrap_or_default();
+    for update in updates {
+      let update_id = update.get("update_id").and_then(|u| u.as_i64()).unwrap_or(0);
+      offset = update_id + 1;
+      let Some(text) = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string()) else { continue };
+      let Some(chat_id) = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64()) else { continue };
+      if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "received", &bot.name); }
+      let reply = route_bot_message(&app, &bot, &text).await;
+      let send_result = telegram_send_message(&bot.token, chat_id, &reply).await;
+      if let Ok(c) = db(&app) {
+        match send_result {
+          Ok(()) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", &bot.name),
+          Err(e) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &e),
         }
       }
     }
+  }
+}
+
+// Routes an inbound bot message: local commands, else the bot's agent (or the
+// Manager when the bot has none).
+async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, text: &str) -> String {
+  match text.trim() {
+    "/agents" | "/agents@" => match db(app) {
+      Ok(c) => {
+        let ctx = build_workspace_context(&c).unwrap_or_default();
+        ctx.lines().take_while(|l| !l.starts_with("## Available Integrations")).collect::<Vec<_>>().join("\n")
+      }
+      Err(_) => "No agents.".into(),
+    },
+    "/tasks" | "/tasks@" => match db(app) {
+      Ok(c) => list_tasks(&c).map(|ts| if ts.is_empty() { "No tasks.".into() } else { ts.iter().map(|t| format!("- {} -> {}: {} ({})", t.id, t.assigned_agent, t.input, t.status)).collect::<Vec<_>>().join("\n") }).unwrap_or_default(),
+      Err(_) => "No tasks.".into(),
+    },
+    _ => {
+      if bot.agent_id.is_empty() || bot.agent_id == "manager" {
+        telegram_manager_turn(app, text).await
+      } else {
+        run_agent_reply(app, &bot.agent_id, text).await
+      }
+    }
+  }
+}
+
+// Answers a message with one of the workspace's own agents (one-shot, using the
+// agent's model/tools/memory). Serialized with Manager turns.
+async fn run_agent_reply(app: &AppHandle, agent_id: &str, text: &str) -> String {
+  let agent = match db(app) {
+    Ok(conn) => {
+      let loaded = {
+        let mut stmt = match conn.prepare("SELECT id, name, objective, model, tool_ids, integrations, home_path, permissions, skill_ids, reasoning FROM agents WHERE id=?1") { Ok(s) => s, Err(e) => return format!("Error: {e}") };
+        let mut rows = match stmt.query_map(params![agent_id], |row| {
+          let tool_ids: String = row.get(4)?; let integrations: String = row.get(5)?; let permissions: String = row.get(7)?; let skill_ids: String = row.get(8)?;
+          Ok(crate::models::AgentRequest {
+            id: row.get(0)?, name: row.get(1)?, objective: row.get(2)?, model: row.get(3)?,
+            tool_ids: crate::storage::parse_json_vec(&tool_ids), integrations: crate::storage::parse_json_vec(&integrations),
+            home_path: row.get(6)?, permissions: crate::storage::parse_json_vec(&permissions),
+            skill_ids: crate::storage::parse_json_vec(&skill_ids), reasoning: row.get(9)?,
+          })
+        }) { Ok(r) => r, Err(e) => return format!("Error: {e}") };
+        rows.next().transpose()
+      };
+      match loaded { Ok(Some(a)) => a, Ok(None) => return format!("Agent {agent_id} not found."), Err(e) => return format!("Error: {e}") }
+    }
+    Err(e) => return format!("Error: {e}"),
+  };
+  let lock = TELEGRAM_TURN_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
+  let _guard = lock.lock().await;
+  let mut events = Vec::new();
+  match crate::agents::run_agent_once(app, &agent, text, None, &mut events).await {
+    Ok((out, _, _)) => out,
+    Err(e) => format!("Agent error: {e}"),
+  }
+}
+
+// Supervisor: keeps one poll task running per enabled bot, (re)spawning when a
+// bot is added or re-enabled and letting tasks exit when one is removed.
+static RUNNING_BOTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+fn running_bots() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+  RUNNING_BOTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+pub(crate) async fn telegram_loop(app: AppHandle) {
+  loop {
+    let bots = db(&app).map(|c| { migrate_legacy_bot(&c); load_bots(&c) }).unwrap_or_default();
+    for bot in bots {
+      if !bot.enabled || bot.token.trim().is_empty() { continue; }
+      let running = running_bots().lock().map(|s| s.contains(&bot.id)).unwrap_or(true);
+      if running { continue; }
+      if let Ok(mut s) = running_bots().lock() { s.insert(bot.id.clone()); }
+      let app_b = app.clone();
+      let id = bot.id.clone();
+      tauri::async_runtime::spawn(async move {
+        poll_bot(app_b, bot).await;
+        if let Ok(mut s) = running_bots().lock() { s.remove(&id); }
+      });
+    }
+    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
   }
 }

@@ -113,6 +113,9 @@ fn main() {
       updater::app_version,
       // Telegram
       telegram::list_telegram_logs,
+      telegram::list_telegram_bots,
+      telegram::save_telegram_bot,
+      telegram::delete_telegram_bot,
       telegram::telegram_start_tunnel,
       telegram::telegram_register_webhook,
       telegram::telegram_register_custom_url,
