@@ -127,23 +127,30 @@ impl AgentTool for RunCommandTool {
   }
   async fn run(&self, args: &serde_json::Value) -> Result<String, String> {
     let command = str_arg(args, "command").ok_or("run_command requires a 'command' argument.")?;
-    // Runs through the system shell; on Windows this is cmd /C. The app is a GUI
-    // process, so CREATE_NO_WINDOW keeps it from flashing a console window.
-    #[cfg(windows)]
-    let output = {
-      use std::os::windows::process::CommandExt;
-      const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-      std::process::Command::new("cmd").args(["/C", &command]).creation_flags(CREATE_NO_WINDOW).output()
-    };
-    #[cfg(not(windows))] let output = std::process::Command::new("sh").args(["-c", &command]).output();
-    let output = output.map_err(|e| format!("Failed to run command: {e}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let status = output.status;
-    let mut out = String::new();
-    if !status.success() { out.push_str(&format!("Exit code: {}\n", status.code().unwrap_or(-1))); }
-    out.push_str(&stdout);
-    if !stderr.is_empty() { out.push_str(&format!("\n[stderr]\n{stderr}")); }
-    Ok(clip(&out))
+    run_shell(&command)
   }
+}
+
+// Executes a shell command and returns stdout + stderr (clipped). Shared by the
+// run_command tool and the workflow script node.
+pub(crate) fn run_shell(command: &str) -> Result<String, String> {
+  // Runs through the system shell; on Windows this is cmd /C. The app is a GUI
+  // process, so CREATE_NO_WINDOW keeps it from flashing a console window.
+  #[cfg(windows)]
+  let output = {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new("cmd").args(["/C", command]).creation_flags(CREATE_NO_WINDOW).output()
+  };
+  #[cfg(not(windows))]
+  let output = std::process::Command::new("sh").args(["-c", command]).output();
+  let output = output.map_err(|e| format!("Failed to run command: {e}"))?;
+  let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+  let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+  let status = output.status;
+  let mut out = String::new();
+  if !status.success() { out.push_str(&format!("Exit code: {}\n", status.code().unwrap_or(-1))); }
+  out.push_str(&stdout);
+  if !stderr.is_empty() { out.push_str(&format!("\n[stderr]\n{stderr}")); }
+  Ok(clip(&out))
 }

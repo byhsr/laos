@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Play, Plus, RotateCcw, Save, Trash2, Workflow as WorkflowIcon, X, ZoomIn, ZoomOut } from 'lucide-react';
-import type { Agent, Integration, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
+import type { Agent, Integration, ModelConfig, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
 import { Select } from '../ui/Select';
 import { DeleteConfirm } from '../ui/DeleteConfirm';
 import { Button, IconButton } from '../ui/Button';
@@ -60,6 +60,8 @@ const PORTS: Record<WorkflowNodeType, { in: Port[]; out: Port[] }> = {
   checker:     { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'pass', label: 'pass', tone: 'ok' }, { id: 'fail', label: 'fail', tone: 'bad' }] },
   gate:        { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'true', label: 'true', tone: 'ok' }, { id: 'false', label: 'false', tone: 'bad' }] },
   integration: { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'success', label: 'success', tone: 'ok' }, { id: 'error', label: 'error', tone: 'bad' }] },
+  llm:         { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'success', label: 'success', tone: 'ok' }, { id: 'error', label: 'error', tone: 'bad' }] },
+  script:      { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'success', label: 'success', tone: 'ok' }, { id: 'error', label: 'error', tone: 'bad' }] },
   loop:        { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'loop', label: 'loop', tone: 'loop' }, { id: 'done', label: 'done', tone: 'ok' }] },
 };
 
@@ -217,8 +219,8 @@ const fmtDate = (s?: string) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
 };
 
-export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow, initialWorkflowId, onInitialWorkflowConsumed, building, onOpen }: {
-  agents: Agent[]; tools: Tool[]; workflows: Workflow[]; integrations: Integration[];
+export function CanvasView({ agents, tools, workflows, integrations, models, onSaveWorkflow, onDeleteWorkflow, onRunWorkflow, initialWorkflowId, onInitialWorkflowConsumed, building, onOpen }: {
+  agents: Agent[]; tools: Tool[]; workflows: Workflow[]; integrations: Integration[]; models: ModelConfig[];
   onSaveWorkflow: (w: Workflow) => Promise<Workflow>;
   onDeleteWorkflow: (id: string) => Promise<void>;
   onRunWorkflow: (w: Workflow, input: string) => Promise<WorkflowRunResult>;
@@ -370,6 +372,8 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
       case 'checker': return ((n.config?.rules as unknown[] | undefined) ?? []).length > 0;
       case 'gate': return String(n.config?.condition ?? '').trim().length > 0;
       case 'integration': return !!n.config?.integrationId && !!n.config?.action;
+      case 'llm': return String(n.config?.prompt ?? '').trim().length > 0;
+      case 'script': return String(n.config?.command ?? '').trim().length > 0;
       default: return true;
     }
   };
@@ -390,6 +394,8 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
         return { key: 'action', value: integ ? `${integ.name} · ${String(n.config?.action ?? '') || 'no action'}` : 'not configured' };
       }
       case 'loop': return { key: 'iterations', value: `max ${String(n.config?.maxIterations ?? 3)}` };
+      case 'llm': return { key: 'model', value: String(n.config?.model ?? 'model not set') };
+      case 'script': return { key: 'command', value: String(n.config?.command ?? '').trim().slice(0, 42) || 'not set' };
     }
   };
 
@@ -880,6 +886,26 @@ export function CanvasView({ agents, tools, workflows, integrations, onSaveWorkf
                         );
                       })()}
                       <p className="mt-2 mb-0 text-[11px] leading-relaxed text-muted">The workflow's accumulated output is sent as the action's payload (content/title) where applicable.</p>
+                    </>
+                  )}
+                  {node.type === 'llm' && (
+                    <>
+                      <label className={label}>model</label>
+                      <Select
+                        value={String(node.config?.model ?? '')}
+                        options={models.map((m) => ({ value: m.id, label: m.label }))}
+                        onChange={(v) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, model: v } } : n)) }))}
+                        placeholder="select model…"
+                      />
+                      <label className={label}>prompt</label>
+                      <textarea value={String(node.config?.prompt ?? '')} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, prompt: e.target.value } } : n)) }))} placeholder="Prompt for the model. Use {input} for the previous node's output." rows={4} className={PROSE_CLS} />
+                    </>
+                  )}
+                  {node.type === 'script' && (
+                    <>
+                      <label className={label}>command</label>
+                      <textarea value={String(node.config?.command ?? '')} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, command: e.target.value } } : n)) }))} placeholder="Shell command. Use {input} for the previous node's output." rows={3} className={PROSE_CLS} />
+                      <p className="mt-1.5 mb-0 text-[11px] leading-relaxed text-muted">Runs through the system shell (cmd /C on Windows). stdout + stderr becomes the node output.</p>
                     </>
                   )}
                   <div className="mt-5">

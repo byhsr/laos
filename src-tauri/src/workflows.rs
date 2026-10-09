@@ -279,6 +279,43 @@ fn strip_code_fences(s: &str) -> String {
   }
 }
 
+// A single, plain LLM completion for an `llm` workflow node. `config.prompt` is
+// the template (`{input}` is replaced with the accumulated workflow output) and
+// `config.model` picks the model. Returns (text, prompt_tokens, completion_tokens).
+async fn run_llm_node(app: &AppHandle, config: &serde_json::Value, input: &str, api_key: Option<&str>) -> Result<(String, u64, u64), String> {
+  let conn = db(app)?;
+  let model = config.get("model").and_then(|v| v.as_str()).unwrap_or("groq:llama-3.3-70b-versatile").to_string();
+  let template = config.get("prompt").and_then(|v| v.as_str()).unwrap_or("{input}").to_string();
+  let prompt = template.replace("{input}", input);
+
+  let resolved = provider::resolve(&conn, &model, api_key)?;
+  let is_ollama = resolved.kind == provider::Kind::Ollama;
+  let is_anthropic = resolved.kind == provider::Kind::Anthropic;
+
+  let mut body = serde_json::json!({ "model": resolved.model, "messages": [{ "role": "user", "content": prompt }], "stream": false });
+  if is_ollama {
+    provider::apply_ollama_options(&mut body, http::CHAT_MAX_TOKENS);
+  } else {
+    http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, http::CHAT_MAX_TOKENS);
+  }
+  if is_anthropic { body = crate::anthropic::to_wire(&body); }
+
+  let resp = http::send_model_request(&http::client(), &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS)
+    .await
+    .map_err(|e| format!("LLM node: {e}"))?;
+  let mut json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+  if is_anthropic { json = crate::anthropic::normalize_response(&json); }
+
+  let text = if is_ollama {
+    json["message"]["content"].as_str().unwrap_or("").to_string()
+  } else {
+    json["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string()
+  };
+  let pt = if is_ollama { json["prompt_eval_count"].as_u64() } else { json["usage"]["prompt_tokens"].as_u64() }.unwrap_or(0);
+  let ct = if is_ollama { json["eval_count"].as_u64() } else { json["usage"]["completion_tokens"].as_u64() }.unwrap_or(0);
+  Ok((text, pt, ct))
+}
+
 // Evaluate a simple gate condition against the incoming value. Supports:
 //   $pass == true | $result.pass == false | contains("error") | $len > 5
 // This is a tiny safe evaluator — no eval, just patterns.
@@ -565,6 +602,29 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
           match tool.run(&args).await {
             Ok(res) => res,
             Err(e) => serde_json::json!({ "error": e }).to_string(),
+          }
+        }
+      }
+      "llm" => {
+        // A single, plain model call (config: model, prompt). The accumulated
+        // output is available to the prompt as {input}.
+        match run_llm_node(app, &config, &current_input, api_key.as_deref()).await {
+          Ok((text, pt, ct)) => { total_prompt += pt; total_completion += ct; text }
+          Err(e) => serde_json::json!({ "error": e }).to_string(),
+        }
+      }
+      "script" => {
+        // Run a shell command (config: command). {input} is replaced with the
+        // accumulated output; the command's stdout/stderr becomes the output.
+        let template = config.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let command = template.replace("{input}", &current_input);
+        if command.trim().is_empty() {
+          serde_json::json!({ "error": "script node requires a command" }).to_string()
+        } else {
+          match tokio::task::spawn_blocking(move || crate::tools::run_shell(&command)).await {
+            Ok(Ok(out)) => out,
+            Ok(Err(e)) => serde_json::json!({ "error": e }).to_string(),
+            Err(e) => serde_json::json!({ "error": e.to_string() }).to_string(),
           }
         }
       }

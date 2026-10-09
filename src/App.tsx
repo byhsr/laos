@@ -222,7 +222,7 @@ export default function App() {
           <div className={pane(view === 'agents')}><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('agent deleted', 'success'); }} /></div>
           <div className={pane(view === 'workflows' || view === 'builder')}>
             <CanvasView
-              agents={agents} tools={tools} workflows={workflows} integrations={integrations}
+              agents={agents} tools={tools} workflows={workflows} integrations={integrations} models={models}
               initialWorkflowId={workflowToOpen}
               onInitialWorkflowConsumed={() => setWorkflowToOpen(null)}
               building={building}

@@ -167,7 +167,8 @@ There is no version table — migrations are single-column `ALTER`s that are saf
 
 `workflows.nodes` / `workflows.edges` are stored as JSON and executed by
 `workflows::execute_workflow` (linear BFS order; `loop`/`trigger` pass through, `checker` and
-`gate` emit envelopes; per-step token fields are currently always `0`).
+`gate` emit envelopes; `llm` makes a single model call and `script` runs a shell command;
+per-step token fields are currently always `0`).
 
 ## What is *not* persisted
 

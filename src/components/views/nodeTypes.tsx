@@ -1,4 +1,4 @@
-import { Bot, GitBranch, Repeat, ShieldCheck, Webhook } from 'lucide-react';
+import { Bot, GitBranch, Repeat, ShieldCheck, Sparkles, Terminal, Webhook } from 'lucide-react';
 import type { WorkflowNodeType } from '../../types';
 
 // The builder's vocabulary. Each type is legible from its glyph alone, so the
@@ -8,6 +8,8 @@ export const NODE_TYPES: { type: WorkflowNodeType; label: string; icon: React.Re
   { type: 'trigger', label: 'trigger', icon: <Webhook size={13} />, desc: 'Workflow entry point' },
   { type: 'agent', label: 'agent', icon: <Bot size={13} />, desc: 'Run an agent' },
   { type: 'subagent', label: 'subagent', icon: <GitBranch size={13} />, desc: 'Delegate to a sub-agent' },
+  { type: 'llm', label: 'llm call', icon: <Sparkles size={13} />, desc: 'A single model call' },
+  { type: 'script', label: 'script', icon: <Terminal size={13} />, desc: 'Run a shell command' },
   { type: 'loop', label: 'loop', icon: <Repeat size={13} />, desc: 'Repeat until done' },
   { type: 'checker', label: 'checker', icon: <ShieldCheck size={13} />, desc: 'Validate output' },
   { type: 'integration', label: 'integration', icon: <Webhook size={13} />, desc: 'Call a tool/integration' },

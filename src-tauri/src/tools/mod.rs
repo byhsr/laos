@@ -10,7 +10,7 @@ pub(crate) mod web;
 
 pub(crate) use api::{ApiParam, ApiTool};
 pub(crate) use desktop::desktop_tools;
-pub(crate) use filesystem::{ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool};
+pub(crate) use filesystem::{run_shell, ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool};
 pub(crate) use integration::IntegrationTool;
 pub(crate) use mcp::McpTool;
 pub(crate) use web::HttpTool;
