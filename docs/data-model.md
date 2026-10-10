@@ -142,7 +142,8 @@ scopes its turn memory (`chat.rs` passes it to `fox::record_turn`).
 ### `telegram_bots`
 
 `id` (PK), `name`, `token`, `agent_id` (`''`/`manager` = the Manager), `terminal_id` (bound
-PTY session, or `''`), `enabled`, `webhook_secret`, `webhook_registered`, `updated_at`. One
+PTY session, or `''`), `allowed_users` (JSON array of Telegram user ids; empty = open),
+`enabled`, `webhook_secret`, `webhook_registered`, `updated_at`. One
 long-poll loop runs per enabled bot (`telegram.rs`); incoming messages route to the bot's agent
 **or** into its bound terminal session. A bot can instead register a
 webhook at `{base}/webhook/telegram/{botId}` with its own secret, so **one tunnel serves many

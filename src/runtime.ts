@@ -92,7 +92,7 @@ export async function listTelegramLogs(): Promise<TelegramLogEntry[]> {
   try { return await invoke<TelegramLogEntry[]>('list_telegram_logs'); } catch { return []; }
 }
 // Telegram bots (multiple): each is long-polled and routed to an agent.
-export type TelegramBot = { id: string; name: string; agentId: string; terminalId: string; enabled: boolean; token: string; webhookRegistered: boolean };
+export type TelegramBot = { id: string; name: string; agentId: string; terminalId: string; allowedUsers: (string | number)[]; enabled: boolean; token: string; webhookRegistered: boolean };
 export async function listTelegramBots(): Promise<TelegramBot[]> {
   try { return await invoke<TelegramBot[]>('list_telegram_bots'); } catch { return []; }
 }

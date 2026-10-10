@@ -80,14 +80,14 @@ fn ensure_webhook_secret(conn: &Connection) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-struct TelegramBot { id: String, name: String, token: String, agent_id: String, terminal_id: String, enabled: bool, webhook_secret: String, webhook_registered: bool }
+struct TelegramBot { id: String, name: String, token: String, agent_id: String, terminal_id: String, allowed_users: String, enabled: bool, webhook_secret: String, webhook_registered: bool }
 
 fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
   let mut out = Vec::new();
-  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, enabled, webhook_secret, webhook_registered FROM telegram_bots ORDER BY name") {
+  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered FROM telegram_bots ORDER BY name") {
     if let Ok(rows) = stmt.query_map([], |row| Ok(TelegramBot {
-      id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?,
-      enabled: row.get::<_, i64>(5)? != 0, webhook_secret: row.get(6)?, webhook_registered: row.get::<_, i64>(7)? != 0,
+      id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
+      enabled: row.get::<_, i64>(6)? != 0, webhook_secret: row.get(7)?, webhook_registered: row.get::<_, i64>(8)? != 0,
     })) {
       for r in rows { if let Ok(b) = r { out.push(b); } }
     }
@@ -96,10 +96,17 @@ fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
 }
 
 fn load_bot(conn: &Connection, id: &str) -> Option<TelegramBot> {
-  conn.query_row("SELECT id, name, token, agent_id, terminal_id, enabled, webhook_secret, webhook_registered FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
-    id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?,
-    enabled: row.get::<_, i64>(5)? != 0, webhook_secret: row.get(6)?, webhook_registered: row.get::<_, i64>(7)? != 0,
+  conn.query_row("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
+    id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
+    enabled: row.get::<_, i64>(6)? != 0, webhook_secret: row.get(7)?, webhook_registered: row.get::<_, i64>(8)? != 0,
   })).ok()
+}
+
+// A bot is private when it lists allowed Telegram user ids; empty = open.
+fn is_authorized(bot: &TelegramBot, user_id: Option<i64>) -> bool {
+  let list: Vec<String> = serde_json::from_str(&bot.allowed_users).unwrap_or_default();
+  if list.is_empty() { return true; }
+  matches!(user_id, Some(id) if list.iter().any(|x| x == &id.to_string()))
 }
 
 // One-time migration: fold the legacy single telegram token (integration_configs
@@ -123,6 +130,7 @@ pub fn list_telegram_bots(app: AppHandle) -> Result<Vec<serde_json::Value>, Stri
   Ok(load_bots(&conn).into_iter().map(|b| serde_json::json!({
     "id": b.id, "name": b.name, "agentId": b.agent_id, "terminalId": b.terminal_id, "enabled": b.enabled, "token": mask_token(&b.token),
     "webhookRegistered": b.webhook_registered,
+    "allowedUsers": serde_json::from_str::<serde_json::Value>(&b.allowed_users).unwrap_or_else(|_| serde_json::json!([])),
   })).collect())
 }
 
@@ -134,16 +142,24 @@ pub fn save_telegram_bot(app: AppHandle, bot: serde_json::Value) -> Result<Strin
   let name = bot.get("name").and_then(|v| v.as_str()).unwrap_or("Telegram").to_string();
   let agent_id = bot.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
   let terminal_id = bot.get("terminalId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+  // Allowed Telegram user ids (empty = open).
+  let allowed_users = bot.get("allowedUsers").and_then(|v| v.as_array()).map(|a| {
+    let list: Vec<String> = a.iter().filter_map(|x| {
+      x.as_i64().map(|n| n.to_string()).or_else(|| x.as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    }).collect();
+    serde_json::to_string(&list).unwrap_or_else(|_| "[]".into())
+  });
   let enabled = bot.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
   // Preserve the stored token when the UI echoes the mask or sends nothing.
   let incoming = bot.get("token").and_then(|v| v.as_str()).unwrap_or("");
   let token = if incoming.is_empty() || incoming == "••••••••" {
     load_bot(&conn, &id).map(|b| b.token).unwrap_or_default()
   } else { incoming.to_string() };
+  let allowed_users = allowed_users.unwrap_or_else(|| load_bot(&conn, &id).map(|b| b.allowed_users).unwrap_or_else(|| "[]".into()));
   conn.execute(
-    "INSERT INTO telegram_bots (id, name, token, agent_id, terminal_id, enabled, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)
-     ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, terminal_id=excluded.terminal_id, enabled=excluded.enabled, updated_at=excluded.updated_at",
-    params![id, name, token, agent_id, terminal_id, if enabled { 1 } else { 0 }, now()],
+    "INSERT INTO telegram_bots (id, name, token, agent_id, terminal_id, allowed_users, enabled, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, terminal_id=excluded.terminal_id, allowed_users=excluded.allowed_users, enabled=excluded.enabled, updated_at=excluded.updated_at",
+    params![id, name, token, agent_id, terminal_id, allowed_users, if enabled { 1 } else { 0 }, now()],
   ).map_err(|e| e.to_string())?;
   Ok(id)
 }
@@ -848,7 +864,7 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
             let secret = conn.as_ref().and_then(|c| webhook_secret(c)).unwrap_or_default();
             let token = conn.as_ref().and_then(|c| telegram_token(c).ok().flatten());
             token.map(|t| (secret, t.clone(), TelegramBot {
-              id: "bot-default".into(), name: "Telegram".into(), token: t, agent_id: "manager".into(), terminal_id: String::new(),
+              id: "bot-default".into(), name: "Telegram".into(), token: t, agent_id: "manager".into(), terminal_id: String::new(), allowed_users: "[]".into(),
               enabled: true, webhook_secret: String::new(), webhook_registered: true,
             }))
           }
@@ -873,17 +889,38 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
         let update_id = update.get("update_id").and_then(|u| u.as_i64()).unwrap_or(0);
         // Button taps.
         if let Some(cq) = update.get("callback_query") {
-          if let Some((cq_id, value)) = handle_callback(cq) {
-            let t2 = token.clone();
-            tokio::spawn(async move { telegram_answer_callback(&t2, &cq_id, &value).await; });
+          let uid = cq.get("from").and_then(|f| f.get("id")).and_then(|i| i.as_i64());
+          if is_authorized(&bot, uid) {
+            if let Some((cq_id, value)) = handle_callback(cq) {
+              let t2 = token.clone();
+              tokio::spawn(async move { telegram_answer_callback(&t2, &cq_id, &value).await; });
+            }
           }
           let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
           return;
         }
         let text = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string());
         let chat_id = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64());
+        let user_id = update.get("message").and_then(|m| m.get("from")).and_then(|f| f.get("id")).and_then(|i| i.as_i64());
         // Health self-test probe — acknowledge without routing to the LLM.
         if text.as_deref() == Some("__health_probe__") {
+          let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
+          return;
+        }
+        // Anyone may learn their own id; private bots drop everyone else.
+        if let (Some(t), Some(cid)) = (text.clone(), chat_id) {
+          if matches!(t.trim(), "/id" | "/whoami") {
+            let t2 = token.clone();
+            let msg = format!("Your Telegram user id is {}.", user_id.map(|u| u.to_string()).unwrap_or_default());
+            tokio::spawn(async move { let _ = telegram_send_message(&t2, cid, &msg).await; });
+            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
+            return;
+          }
+        }
+        if !is_authorized(&bot, user_id) {
+          if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.map(|c| c.to_string()).unwrap_or_default(), text.as_deref().unwrap_or(""), "", "blocked", &bot.name); }
+          let t2 = token.clone();
+          if let Some(cid) = chat_id { tokio::spawn(async move { let _ = telegram_send_message(&t2, cid, "This bot is private.").await; }); }
           let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
           return;
         }
@@ -996,6 +1033,8 @@ async fn poll_bot(app: AppHandle, bot: TelegramBot) {
       offset = update_id + 1;
       // Button taps (inline keyboard).
       if let Some(cq) = update.get("callback_query") {
+        let uid = cq.get("from").and_then(|f| f.get("id")).and_then(|i| i.as_i64());
+        if !is_authorized(&current, uid) { continue; }
         if let Some((cq_id, value)) = handle_callback(cq) {
           let _ = telegram_answer_callback(&current.token, &cq_id, &value).await;
           if let Ok(c) = db(&app) { telegram_log(&c, "in", "", &value, "", "callback", &current.name); }
@@ -1004,6 +1043,18 @@ async fn poll_bot(app: AppHandle, bot: TelegramBot) {
       }
       let Some(text) = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string()) else { continue };
       let Some(chat_id) = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64()) else { continue };
+      let user_id = update.get("message").and_then(|m| m.get("from")).and_then(|f| f.get("id")).and_then(|i| i.as_i64());
+      // Anyone may learn their own id so it can be added to the allowlist.
+      if matches!(text.trim(), "/id" | "/whoami") {
+        let _ = telegram_send_message(&current.token, chat_id, &format!("Your Telegram user id is {}.", user_id.map(|u| u.to_string()).unwrap_or_default())).await;
+        continue;
+      }
+      // Private bots: only listed user ids get through.
+      if !is_authorized(&current, user_id) {
+        if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "blocked", &current.name); }
+        let _ = telegram_send_message(&current.token, chat_id, "This bot is private.").await;
+        continue;
+      }
       // A pending "next message" input consumes this without routing it on.
       if resolve_text_input(&current.id, chat_id, &text) {
         if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "input", &current.name); }
@@ -1041,9 +1092,12 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
       Err(_) => "No tasks.".into(),
     },
     _ => {
-      // A bot bound to a terminal pipes the message into the CLI's stdin and lets
-      // its output relay back. `/screen` dumps the current tail on demand.
-      if !bot.terminal_id.is_empty() && crate::terminal::session_alive(&bot.terminal_id) {
+      // A bot bound to a terminal pipes the message into the CLI's stdin. If the
+      // session isn't running we say so — never silently fall back to an agent.
+      if !bot.terminal_id.is_empty() {
+        if !crate::terminal::session_alive(&bot.terminal_id) {
+          return format!("This bot is bound to terminal '{}', which isn't running. Start it in the Terminal view.", bot.terminal_id);
+        }
         if text.trim() == "/screen" {
           let t = crate::terminal::tail_text(&bot.terminal_id, 40);
           return if t.trim().is_empty() { "(no output yet)".into() } else { t };

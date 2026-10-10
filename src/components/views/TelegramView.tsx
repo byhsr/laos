@@ -15,7 +15,7 @@ const fmtTime = (s?: string | null) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleTimeString();
 };
 
-const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', terminalId: '', enabled: true, token: '', webhookRegistered: false });
+const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', terminalId: '', allowedUsers: [], enabled: true, token: '', webhookRegistered: false });
 
 // Telegram: manage multiple bots (each long-polled and routed to an agent), plus
 // the activity log. Polls the log while the view is open.
@@ -49,6 +49,7 @@ export function TelegramView() {
   const saveBot = async () => {
     if (!editing) return;
     if (!editing.name.trim()) { toast('Bot needs a name', 'error'); return; }
+    if (target === 'terminal' && !editing.terminalId) { toast('Pick a terminal session (or start one in the Terminal view)', 'error'); return; }
     setSaving(true);
     try {
       await saveTelegramBot({ ...editing, name: editing.name.trim() });
@@ -76,7 +77,7 @@ export function TelegramView() {
               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-background text-muted"><Bot size={14} /></span>
               <div className="min-w-0 flex-1">
                 <b className="block truncate font-mono text-[11px] text-foreground">{b.name}</b>
-                <span className="block truncate font-mono text-[10px] text-muted">→ {b.terminalId ? `terminal: ${terminals.find((t) => t.id === b.terminalId)?.name ?? b.terminalId}` : `agent: ${agentName(b.agentId)}`}{b.token ? ' · token set' : ' · no token'}{b.enabled ? '' : ' · disabled'}{b.webhookRegistered ? ' · webhook' : ' · long-poll'}</span>
+                <span className="block truncate font-mono text-[10px] text-muted">→ {b.terminalId ? `terminal: ${terminals.find((t) => t.id === b.terminalId)?.name ?? b.terminalId}` : `agent: ${agentName(b.agentId)}`}{b.token ? ' · token set' : ' · no token'}{b.allowedUsers?.length ? ` · ${b.allowedUsers.length} allowed` : ' · open'}{b.enabled ? '' : ' · disabled'}{b.webhookRegistered ? ' · webhook' : ' · long-poll'}</span>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 {b.id && (
@@ -121,6 +122,14 @@ export function TelegramView() {
             <div className="-mx-2 mt-1.5">
               <Checkbox checked={editing.enabled} onChange={(next) => setEditing({ ...editing, enabled: next })} label="enabled" />
             </div>
+            <label className={`${FIELD_LABEL_CLS} mt-2`}>allowed users (Telegram ids)</label>
+            <input
+              value={(editing.allowedUsers ?? []).join(', ')}
+              onChange={(e) => setEditing({ ...editing, allowedUsers: e.target.value.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean) })}
+              placeholder="empty = anyone. Send /id to the bot to learn yours."
+              className={INPUT_CLS}
+            />
+            <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">When set, only these Telegram user ids get a reply; everyone else is ignored.</p>
             <div className="mt-1 flex justify-end gap-2">
               <Button onClick={() => setEditing(null)}>cancel</Button>
               <Button variant="primary" icon={<Check size={12} />} disabled={saving} onClick={saveBot}>{saving ? 'saving…' : 'save'}</Button>
