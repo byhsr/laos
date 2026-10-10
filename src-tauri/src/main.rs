@@ -116,6 +116,8 @@ fn main() {
       telegram::list_telegram_bots,
       telegram::save_telegram_bot,
       telegram::delete_telegram_bot,
+      telegram::telegram_set_bot_webhook,
+      telegram::telegram_clear_bot_webhook,
       telegram::telegram_start_tunnel,
       telegram::telegram_register_webhook,
       telegram::telegram_register_custom_url,

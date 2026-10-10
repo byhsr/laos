@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, Bot, Check, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { listTelegramLogs, listTelegramBots, saveTelegramBot, deleteTelegramBot, type TelegramLogEntry, type TelegramBot } from '../../runtime';
+import { listTelegramLogs, listTelegramBots, saveTelegramBot, deleteTelegramBot, setBotWebhook, clearBotWebhook, type TelegramLogEntry, type TelegramBot } from '../../runtime';
 import { useAgentsStore } from '../../hooks/useAgents';
 import { Button, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -15,7 +15,7 @@ const fmtTime = (s?: string | null) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleTimeString();
 };
 
-const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', enabled: true, token: '' });
+const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', enabled: true, token: '', webhookRegistered: false });
 
 // Telegram: manage multiple bots (each long-polled and routed to an agent), plus
 // the activity log. Polls the log while the view is open.
@@ -72,9 +72,18 @@ export function TelegramView() {
               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-background text-muted"><Bot size={14} /></span>
               <div className="min-w-0 flex-1">
                 <b className="block truncate font-mono text-[11px] text-foreground">{b.name}</b>
-                <span className="block truncate font-mono text-[10px] text-muted">{agentName(b.agentId)}{b.token ? ' · token set' : ' · no token'}{b.enabled ? '' : ' · disabled'}</span>
+                <span className="block truncate font-mono text-[10px] text-muted">{agentName(b.agentId)}{b.token ? ' · token set' : ' · no token'}{b.enabled ? '' : ' · disabled'}{b.webhookRegistered ? ' · webhook' : ' · long-poll'}</span>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
+                {b.id && (
+                  <Button onClick={async () => {
+                    try {
+                      if (b.webhookRegistered) { await clearBotWebhook(b.id); toast('webhook cleared — long-polling', 'success'); }
+                      else { await setBotWebhook(b.id); toast('webhook registered', 'success'); }
+                      await loadBots();
+                    } catch (e) { toast(e instanceof Error ? e.message : String(e), 'error'); }
+                  }}>{b.webhookRegistered ? 'webhook off' : 'webhook on'}</Button>
+                )}
                 <Button onClick={() => setEditing({ ...b })}>edit</Button>
                 <IconButton label="delete bot" onClick={async () => { await deleteTelegramBot(b.id); await loadBots(); }}><Trash2 size={12} /></IconButton>
               </div>

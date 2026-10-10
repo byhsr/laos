@@ -92,7 +92,7 @@ export async function listTelegramLogs(): Promise<TelegramLogEntry[]> {
   try { return await invoke<TelegramLogEntry[]>('list_telegram_logs'); } catch { return []; }
 }
 // Telegram bots (multiple): each is long-polled and routed to an agent.
-export type TelegramBot = { id: string; name: string; agentId: string; enabled: boolean; token: string };
+export type TelegramBot = { id: string; name: string; agentId: string; enabled: boolean; token: string; webhookRegistered: boolean };
 export async function listTelegramBots(): Promise<TelegramBot[]> {
   try { return await invoke<TelegramBot[]>('list_telegram_bots'); } catch { return []; }
 }
@@ -101,6 +101,13 @@ export async function saveTelegramBot(bot: TelegramBot): Promise<string> {
 }
 export async function deleteTelegramBot(id: string): Promise<void> {
   await invoke('delete_telegram_bot', { id });
+}
+// One tunnel, many bots: registers this bot's webhook at <base>/webhook/telegram/<id>.
+export async function setBotWebhook(botId: string, publicUrl?: string): Promise<string> {
+  return await invoke<string>('telegram_set_bot_webhook', { botId, publicUrl: publicUrl ?? null });
+}
+export async function clearBotWebhook(botId: string): Promise<void> {
+  await invoke('telegram_clear_bot_webhook', { botId });
 }
 export type WebhookHealth = {
   tunnelUrl: string | null;
