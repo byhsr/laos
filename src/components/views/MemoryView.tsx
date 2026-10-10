@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronRight, Download, RefreshCw, Search, Upload, X } from 'lucide-react';
 import { useAgentsStore } from '../../hooks/useAgents';
-import { callMcpTool } from '../../runtime';
+import { amListMemories, amSearch, amGetSelfModel, amStats, amListNamespaces, amAddMemory, amSetSelfModel } from '../../runtime';
 import { toast } from '../../hooks/useToast';
 import { Select } from '../ui/Select';
 import { IconButton } from '../ui/Button';
@@ -9,9 +9,8 @@ import { Card } from '../ui/Card';
 import { tabCls } from '../ui/tabs';
 import { GROUP_LABEL_CLS } from '../ui/Input';
 
-// The memory engine is the built-in "memory" MCP server (fox / agent-memory),
-// seeded on startup. This view reads it directly through call_mcp_tool.
-const MEMORY_SERVER = 'memory';
+// Memory is native now (agent_memory.rs in the backend); this view reads it
+// through the am_* commands.
 
 type FoxMemory = {
   id: string; agentId: string; scope: string; kind: string; status: string;
@@ -55,14 +54,11 @@ export function MemoryView() {
     if (!agentId) return;
     setLoading(true);
     setError(null);
-    const scope = { type: 'agent', id: agentId };
     try {
       const [mem, self, st] = await Promise.all([
-        submitted
-          ? callMcpTool(MEMORY_SERVER, 'search', { agentId, scope, scopeMode: 'inherit', query: submitted, limit: 30 })
-          : callMcpTool(MEMORY_SERVER, 'list_memories', { agentId, scope, scopeMode: 'inherit' }),
-        callMcpTool(MEMORY_SERVER, 'get_self_model', { agentId }),
-        callMcpTool(MEMORY_SERVER, 'stats', {}),
+        submitted ? amSearch(agentId, submitted, undefined, 30) : amListMemories(agentId),
+        amGetSelfModel(agentId),
+        amStats(),
       ]);
       // `search` returns RetrievalHit[] (wrapped); `list_memories` returns Memory[].
       const list = submitted
@@ -85,7 +81,7 @@ export function MemoryView() {
 
   // Namespaces = tracked scopes (projects). Loaded on demand from the connector.
   const loadNamespaces = useCallback(async () => {
-    try { setNamespaces(((await callMcpTool(MEMORY_SERVER, 'list_namespaces', {})) as FoxNamespace[]) ?? []); }
+    try { setNamespaces(((await amListNamespaces()) as FoxNamespace[]) ?? []); }
     catch { setNamespaces([]); }
   }, []);
   useEffect(() => { if (tab === 'namespaces') void loadNamespaces(); }, [tab, loadNamespaces]);
@@ -96,11 +92,10 @@ export function MemoryView() {
   // it can be moved between agents/machines.
   const exportMemory = async () => {
     if (!agentId) return;
-    const scope = { type: 'agent', id: agentId };
     try {
       const [mem, self] = await Promise.all([
-        callMcpTool(MEMORY_SERVER, 'list_memories', { agentId, scope, scopeMode: 'inherit', limit: 1000 }),
-        callMcpTool(MEMORY_SERVER, 'get_self_model', { agentId }),
+        amListMemories(agentId),
+        amGetSelfModel(agentId),
       ]);
       const doc = { version: 1, kind: 'lup-memory', agentId, exportedAt: new Date().toISOString(), memories: mem, selfModel: self };
       const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
@@ -117,14 +112,14 @@ export function MemoryView() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || !agentId) return;
-    const scope = { type: 'agent', id: agentId };
+    const scope = `agent:${agentId}`;
     try {
       const doc = JSON.parse(await file.text());
       const memories: FoxMemory[] = Array.isArray(doc?.memories) ? doc.memories : [];
       const self: FoxSelfEntry[] = Array.isArray(doc?.selfModel) ? doc.selfModel : [];
       let n = 0;
       for (const m of memories) {
-        await callMcpTool(MEMORY_SERVER, 'add_memory', {
+        await amAddMemory({
           agentId, scope, kind: m.kind ?? 'semantic', title: m.title ?? 'imported', content: m.content ?? '',
           ...(Array.isArray(m.tags) ? { tags: m.tags } : {}), ...(m.importance !== undefined ? { importance: m.importance } : {}), ...(m.confidence !== undefined ? { confidence: m.confidence } : {}),
         });
@@ -132,7 +127,7 @@ export function MemoryView() {
       }
       for (const s of self) {
         if (!s?.key || !s?.value) continue;
-        await callMcpTool(MEMORY_SERVER, 'set_self_model', { agentId, key: s.key, value: s.value });
+        await amSetSelfModel(agentId, null, s.key, s.value);
         n++;
       }
       toast(`imported ${n} item${n === 1 ? '' : 's'}`, 'success');

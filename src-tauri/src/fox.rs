@@ -1,76 +1,55 @@
-// Host-side driver for the built-in memory connector (fox / `agent-memory`).
+// Host-side memory driver. Memory used to be the fox/`agent-memory` MCP server;
+// it is now the in-process store in `agent_memory.rs` — no child process, no
+// JSON-RPC. This module is the host policy on top of it:
 //
-// fox is the durable layer: a keyed self-model plus a searchable store of typed
-// memories. By design it does NOT push anything on its own — recall is pull, not
-// push — so lup, as the host, drives it:
-//
-//   * capture  — every turn becomes experience (events), with no tool call and no
-//                instruction from the user;
+//   * capture  — every turn becomes experience (events), with no tool call;
 //   * distill  — a finished chat is distilled into durable typed memories and
-//                self-model entries (done in `memory.rs`), so the agent's sense
-//                of self evolves from use.
+//                self-model entries (done in `memory.rs`).
 //
-// Recall is pull: nothing here is injected into the prompt — the model asks for
-// it (a memory tool) when it needs it, and the Memory view reads it directly.
+// Recall is pull: nothing here is injected into the prompt.
 
+use serde_json::Value;
 use tauri::AppHandle;
 
+use crate::agent_memory as am;
 use crate::db::db;
-use crate::mcp;
 
-const MEMORY_SERVER_ID: &str = "memory";
-
-fn call(app: &AppHandle, tool: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
-  let conn = db(app)?;
-  let server = mcp::load_server(&conn, MEMORY_SERVER_ID)?;
-  let text = mcp::call_tool(&server, tool, args)?;
-  Ok(serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text)))
-}
-
-// Every fox call is scoped to the agent's own namespace, matching the Memory view.
-fn scope(agent_id: &str) -> serde_json::Value {
-  serde_json::json!({ "type": "agent", "id": agent_id })
-}
-
-/// Registers a project as a fox namespace, so its memory is tracked together
-/// (fox's namespace registry, added in agent-memory 0.1.0). Best-effort.
+/// Registers a project as a namespace so its memory is tracked together.
 pub(crate) fn register_namespace(app: &AppHandle, id: &str, name: &str, description: &str) {
-  let _ = call(app, "create_namespace", serde_json::json!({
-    "scope": { "type": "project", "id": id },
-    "name": name,
-    "description": description,
-  }));
+  if let Ok(conn) = db(app) {
+    let _ = am::create_namespace(&conn, &am::scope_key("project", id), name, description);
+  }
 }
 
-/// Unregisters a project's namespace (its memory is left in place). Best-effort.
+/// Unregisters a project's namespace (its memory is left in place).
 pub(crate) fn remove_namespace(app: &AppHandle, id: &str) {
-  let _ = call(app, "remove_namespace", serde_json::json!({ "scope": { "type": "project", "id": id } }));
+  if let Ok(conn) = db(app) {
+    let _ = am::remove_namespace(&conn, &am::scope_key("project", id));
+  }
 }
 
-/// Records both sides of a finished turn as experience. Best-effort. When the
-/// session belongs to a project, the experience is filed under the project's
-/// scope, so a project's memory accumulates across its conversations.
+/// Records both sides of a finished turn as experience. When the session belongs
+/// to a project, it is filed under the project's scope.
 pub(crate) fn record_turn(app: &AppHandle, agent_id: &str, user: &str, assistant: &str, project_id: Option<&str>) {
-  let s = match project_id {
-    Some(p) if !p.trim().is_empty() => serde_json::json!({ "type": "project", "id": p }),
-    _ => scope(agent_id),
+  let scope = match project_id {
+    Some(p) if !p.trim().is_empty() => am::scope_key("project", p),
+    _ => am::scope_key("agent", agent_id),
   };
+  let Ok(conn) = db(app) else { return };
+  let empty = serde_json::json!({});
   if !user.trim().is_empty() {
-    let _ = call(app, "record_event", serde_json::json!({
-      "agentId": agent_id, "scope": s, "type": "user_message", "role": "user", "content": user,
-    }));
+    let _ = am::record_event(&conn, agent_id, &scope, "user_message", "user", user, &empty, 0.5);
   }
   if !assistant.trim().is_empty() {
-    let _ = call(app, "record_event", serde_json::json!({
-      "agentId": agent_id, "scope": s, "type": "assistant_message", "role": "assistant", "content": assistant,
-    }));
+    let _ = am::record_event(&conn, agent_id, &scope, "assistant_message", "assistant", assistant, &empty, 0.5);
   }
 }
 
 /// Writes the memories + self-model entries produced by a distillation pass.
 /// Returns how many items were stored.
-pub(crate) fn write_distilled(app: &AppHandle, agent_id: &str, distilled: &serde_json::Value) -> usize {
-  let s = scope(agent_id);
+pub(crate) fn write_distilled(app: &AppHandle, agent_id: &str, distilled: &Value) -> usize {
+  let scope = am::scope_key("agent", agent_id);
+  let Ok(conn) = db(app) else { return 0 };
   let mut stored = 0;
 
   if let Some(entries) = distilled.get("self").and_then(|v| v.as_array()) {
@@ -78,9 +57,7 @@ pub(crate) fn write_distilled(app: &AppHandle, agent_id: &str, distilled: &serde
       let key = e.get("key").and_then(|x| x.as_str()).unwrap_or("").trim();
       let value = e.get("value").and_then(|x| x.as_str()).unwrap_or("").trim();
       if key.is_empty() || value.is_empty() { continue; }
-      if call(app, "set_self_model", serde_json::json!({ "agentId": agent_id, "key": key, "value": value })).is_ok() {
-        stored += 1;
-      }
+      if am::set_self_model(&conn, agent_id, &scope, key, value, 0.8, 0.7).is_ok() { stored += 1; }
     }
   }
 
@@ -90,33 +67,25 @@ pub(crate) fn write_distilled(app: &AppHandle, agent_id: &str, distilled: &serde
       let content = m.get("content").and_then(|x| x.as_str()).unwrap_or("").trim();
       if title.is_empty() || content.is_empty() { continue; }
       let kind = m.get("kind").and_then(|x| x.as_str()).unwrap_or("semantic");
-      let mut args = serde_json::json!({
-        "agentId": agent_id, "scope": s, "kind": kind, "title": title, "content": content,
-      });
-      if let Some(tags) = m.get("tags") { if tags.is_array() { args["tags"] = tags.clone(); } }
-      if let Some(c) = m.get("confidence").and_then(|x| x.as_f64()) { args["confidence"] = serde_json::json!(c.clamp(0.0, 1.0)); }
-      if let Some(i) = m.get("importance").and_then(|x| x.as_f64()) { args["importance"] = serde_json::json!(i.clamp(0.0, 1.0)); }
-      if call(app, "add_memory", args).is_ok() { stored += 1; }
+      let tags = m.get("tags").cloned().unwrap_or_else(|| serde_json::json!([]));
+      let confidence = m.get("confidence").and_then(|x| x.as_f64()).unwrap_or(0.8);
+      let importance = m.get("importance").and_then(|x| x.as_f64()).unwrap_or(0.5);
+      if am::add_memory(&conn, agent_id, &scope, kind, title, content, &tags, confidence, importance).is_ok() { stored += 1; }
     }
   }
 
   stored
 }
 
-/// A good/bad signal on a reply: record the outcome as experience, and reflect on
-/// a bad one (recurring failures become procedures/policies).
+/// A good/bad signal on a reply: record the outcome, and reflect on a bad one.
 pub(crate) fn record_feedback(app: &AppHandle, agent_id: &str, signal: &str, content: &str) {
-  let s = scope(agent_id);
+  let scope = am::scope_key("agent", agent_id);
+  let Ok(conn) = db(app) else { return };
   let important = signal == "down";
-  let _ = call(app, "record_event", serde_json::json!({
-    "agentId": agent_id, "scope": s, "type": "outcome", "role": "user",
-    "content": if content.trim().is_empty() { format!("user feedback: {signal}") } else { content.to_string() },
-    "data": { "signal": signal },
-    "importance": if important { 0.85 } else { 0.55 },
-  }));
-
+  let text = if content.trim().is_empty() { format!("user feedback: {signal}") } else { content.to_string() };
+  let _ = am::record_event(&conn, agent_id, &scope, "outcome", "user", &text, &serde_json::json!({ "signal": signal }), if important { 0.85 } else { 0.55 });
   if important {
-    let _ = call(app, "reflect", serde_json::json!({ "agentId": agent_id, "scope": s, "persist": true }));
+    let _ = am::reflect(&conn, agent_id, &scope, true);
   }
 }
 

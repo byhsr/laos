@@ -206,6 +206,35 @@ export async function clearAgentMemory(agentId: string): Promise<void> {
   await invoke('clear_agent_memory', { agentId });
 }
 
+// Native agent memory (was the fox MCP server). The Memory view reads these.
+export async function amListMemories(agentId: string, scope?: string): Promise<unknown> {
+  try { return await invoke('am_list_memories', { agentId, scope: scope ?? null }); } catch { return []; }
+}
+export async function amSearch(agentId: string, query: string, scope?: string, limit?: number): Promise<unknown> {
+  try { return await invoke('am_search', { agentId, scope: scope ?? null, query, limit: limit ?? null }); } catch { return []; }
+}
+export async function amGetSelfModel(agentId: string, scope?: string): Promise<unknown> {
+  try { return await invoke('am_get_self_model', { agentId, scope: scope ?? null }); } catch { return []; }
+}
+export async function amStats(): Promise<unknown> {
+  try { return await invoke('am_stats'); } catch { return null; }
+}
+export async function amListNamespaces(): Promise<unknown> {
+  try { return await invoke('am_list_namespaces'); } catch { return []; }
+}
+export async function amAddMemory(m: { agentId: string; scope: string; kind: string; title: string; content: string; tags?: unknown; importance?: number; confidence?: number }): Promise<string> {
+  return await invoke<string>('am_add_memory', { agentId: m.agentId, scope: m.scope, kind: m.kind, title: m.title, content: m.content, tags: m.tags ?? null, confidence: m.confidence ?? null, importance: m.importance ?? null });
+}
+export async function amSetSelfModel(agentId: string, scope: string | null, key: string, value: string): Promise<void> {
+  await invoke('am_set_self_model', { agentId, scope, key, value, confidence: null, importance: null });
+}
+export async function amUpdateMemory(id: string, patch: Record<string, unknown>): Promise<void> {
+  await invoke('am_update_memory', { id, patch });
+}
+export async function amForgetMemory(id: string): Promise<void> {
+  await invoke('am_forget_memory', { id });
+}
+
 export async function executeAgent(agent: Agent, input: string, apiKey?: string): Promise<{ output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number }> {
   try {
     return await invoke<{ output: string; events: RunEvent[]; runId: string; promptTokens: number; completionTokens: number }>('execute_agent', { agent, input, apiKey });

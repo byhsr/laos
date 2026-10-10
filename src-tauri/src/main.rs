@@ -1,5 +1,6 @@
 ﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod agents;
+mod agent_memory;
 mod anthropic;
 mod chat;
 mod db;
@@ -109,6 +110,21 @@ fn main() {
       terminal::terminal_kill,
       // Built-in memory connector (fox) — host-driven feedback
       fox::rate_turn,
+      // Native agent memory (was the fox MCP server) — the Memory view reads these
+      agent_memory::am_list_memories,
+      agent_memory::am_search,
+      agent_memory::am_get_self_model,
+      agent_memory::am_stats,
+      agent_memory::am_list_namespaces,
+      agent_memory::am_add_memory,
+      agent_memory::am_update_memory,
+      agent_memory::am_forget_memory,
+      agent_memory::am_get_memory,
+      agent_memory::am_remove_self_model,
+      agent_memory::am_set_self_model,
+      agent_memory::am_compile_context,
+      agent_memory::am_create_namespace,
+      agent_memory::am_remove_namespace,
       // Memory + chat sessions
       memory::get_conversation,
       memory::clear_agent_memory,

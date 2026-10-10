@@ -158,45 +158,37 @@ asks "what have we done/talked about" or wants to continue prior work. `recall_m
 - `manager_turn` (Telegram / `manager_message`) injects no memory either (matching the
   streaming path); it still has no rolling window (it receives a single message).
 
-## The `agent-memory` connector (fox) — the agent's own memory
+## The agent's own memory (native — was fox/`agent-memory`)
 
 Beyond the three tiers above (which are about *the user's* context), lup ships a
-**built-in memory connector**: fox's `agent-memory` package run as an MCP server. It
-is the agent's own durable memory — a keyed self-model plus a searchable store of
-typed memories (semantic/procedural/policy/preference/reflection) and raw events. It
-is **connected by default** with no manual setup, and `memory.rs` still owns
-conversation context.
+**built-in memory store**, implemented natively in `src-tauri/src/agent_memory.rs`
+(it used to be fox's `agent-memory` package run as an MCP server; that connector has
+been retired — memory is in-process now, no child process). It is the agent's own durable
+memory — a keyed self-model plus a searchable store of typed memories
+(episodic/semantic/procedural/policy/preference/reflection), raw events, and a namespace
+registry. It is **on by default** with no setup, and `memory.rs` still owns conversation
+context.
 
-fox is a pull layer by design: it never pushes context and it does not manage the
-host's window — the host has to drive it. lup is that host (`src-tauri/src/fox.rs`), so
-memory is **learned** in the background without anyone asking, and **recalled** on demand:
+It is a pull layer by design: nothing is injected into the prompt — the host drives it
+(`src-tauri/src/fox.rs` is the host policy on top of the store), so memory is **learned**
+in the background and **recalled** on demand:
 
 | Phase | Where | What happens |
 | --- | --- | --- |
-| **Capture** | `chat.rs` (`stream_chat_inner`) | After every turn, the user turn + reply are written as `user_message`/`assistant_message` **events**. No tool call, no instruction. |
-| **Recall (on demand)** | attached memory tools / Memory view | fox holds all durable state, but nothing is injected into the prompt. `search`/`compile_context` (or the Manager's `recall_memory`) bring a slice in only when asked. |
-| **Distill** | `memory.rs` (`close_chat_session` → `distill_session`) | When a chat closes, one model call extracts the agent's own **self-model entries + typed memories** from the transcript and writes them into fox. This is how it learns from a session on its own. |
-| **Feedback loop** | `fox::rate_turn` + `MessageBubble` | A good/bad signal on a reply is recorded as an `outcome` event; a bad one triggers `reflect` (recurring failures → procedures/policies). |
+| **Capture** | `chat.rs` (`stream_chat_inner`) | After every turn, the user turn + reply are written as `am_events` (`user_message`/`assistant_message`). No tool call, no instruction. |
+| **Recall (on demand)** | `am_search` / `am_compile_context` / Memory view | Durable state stays in the `am_*` tables; nothing is injected. Recall brings a slice in only when asked. |
+| **Distill** | `memory.rs` (`close_chat_session` → `distill_session`) | When a chat closes, one model call extracts the agent's own **self-model entries + typed memories** from the transcript and writes them into the store. |
+| **Feedback loop** | `fox::rate_turn` + `MessageBubble` | A good/bad signal on a reply is recorded as an `outcome` event; a bad one triggers `reflect` (recurring failures → a reflection memory). |
 
-Setup / wiring:
+Data (all in the app SQLite DB; see [data-model.md](./data-model.md)):
 
-- Seeded on startup (`storage.rs::ensure_memory_server`), id `memory` (const
-  `MEMORY_SERVER_ID`): command `node`, args `<fox>/dist/mcp/server.js`, env
-  `AGENT_MEMORY_DB=<app_data>/memory/agent-memory.db`. The fox checkout is located via
-  `AGENT_MEMORY_HOME`, falling back to `A:\code\Projects\fox`; the row is editable in
-  Workshop → Integrations → MCP servers.
-- Its tools are also imported into the registry once (best-effort), as
-  `mcp:memory:<tool>`, so an agent can *additionally* drive memory deliberately
-  (`search`, `add_memory`, `compile_context`, `set_self_model`, …). The Manager receives
-  every enabled MCP tool; regular agents attach them from Config. When an agent holds a
-  memory tool, its prompt carries its own `agentId`/`scope`
-  (`{"type":"agent","id":"<id>"}`, Manager → `manager`) so both paths file to the same
-  namespace.
-- The **Memory** view (`src/components/views/MemoryView.tsx`) reads the connector
-  directly through the generic `mcp::call_mcp_tool` command → `list_memories` /
-  `search` / `get_self_model` / `stats`.
-- After editing fox, rebuild it: `npm --prefix <fox> run build` (tsc → `dist/mcp/server.js`).
-- fox (agent-memory 0.1.0) also has a **namespaces** registry and a **scoped** self-model: a lup
-  **project** registers a `project` namespace on save (`create_namespace`) and removes it on
-  delete, so project memory is tracked together. The Memory view lists namespaces
-  (`list_namespaces`); memory tools are re-imported on every launch so new fox commands appear.
+- `am_events` — raw episodes. `am_memories` — durable typed memories.
+- `am_self_model` — a keyed self-model per `(agent, scope)`. `am_namespaces` — tracked scopes.
+- Scopes are compact keys (`agent:<id>`, `project:<id>`, `global`); recall inherits `global`.
+
+Wiring:
+
+- The **Memory** view reads the store through the `am_*` Tauri commands
+  (`am_list_memories` / `am_search` / `am_get_self_model` / `am_stats` / `am_list_namespaces`).
+- A lup **project** registers a `project:<id>` namespace on save and removes it on delete, so
+  project memory is tracked together; turns in that project file under the project's scope.

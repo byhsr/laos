@@ -30,7 +30,8 @@ crosses `src/runtime.ts`. The backend has no knowledge of React; it returns plai
 | `provider.rs` | Model provider dispatch: resolves a `"<provider>:<model>"` id (`ollama`, `groq`, `openrouter`, `openai`, `google`, `xai`, `anthropic`) to endpoint/credentials, and maps the per-model reasoning setting and Ollama tuning onto request bodies. Used by every model-calling path. |
 | `anthropic.rs` | Anthropic Messages API adapter: converts OpenAI-shaped request bodies to `/v1/messages` and normalizes responses (and streaming deltas) back, so call sites stay OpenAI-shaped. |
 | `models.rs` | Shared `serde` record/DTO types only (no logic). |
-| `storage.rs` | CRUD commands for knowledge docs, models, tools, skills, agents, workflows; Manager bootstrap; seeds the built-in memory + browser MCP servers; `manager_default_model`. |
+| `storage.rs` | CRUD commands for knowledge docs, models, tools, skills, agents, workflows; Manager bootstrap; seeds the built-in browser MCP server (memory is native); `manager_default_model`. |
+| `agent_memory.rs` | Native agent memory store (events, typed memories, self-model, namespaces) — was the fox `agent-memory` MCP server. Also the `am_*` commands the Memory view reads. |
 | `http.rs` | The shared provider HTTP layer: clients, timeouts, retry/backoff, request defaults. |
 | `agents.rs` | One-shot agent execution (`execute_agent`), toolset assembly (`build_tools`), tool schemas, skills prompt, workspace context. |
 | `chat.rs` | Streaming chat (`stream_chat`) + the shared tool-call round loop and the confirmation gate. |

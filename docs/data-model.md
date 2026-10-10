@@ -47,6 +47,17 @@ Written by `execute_agent` (agents.rs) and `stream_chat` (chat.rs); read by `lis
 
 `agent_id`, `key`, `value`, `updated_at`, PK `(agent_id, key)`. See [memory.md](./memory.md).
 
+### `am_events` / `am_memories` / `am_self_model` / `am_namespaces`
+
+Native agent memory (`src-tauri/src/agent_memory.rs`) — the store that used to be the fox
+`agent-memory` MCP server. `am_events`(id, agent_id, scope, scope_type, type, role, content, data,
+importance, occurred_at); `am_memories`(id, agent_id, scope, scope_type, kind, status, title,
+content, tags, confidence, importance, source, expires_at, created_at, updated_at);
+`am_self_model`(id, agent_id, scope, scope_type, key, value, confidence, importance, source,
+created_at, updated_at, UNIQUE(agent_id, scope, key)); `am_namespaces`(key PK, type, id, name,
+description, created_at, updated_at, metadata). Scopes are keys (`agent:<id>` / `project:<id>` /
+`global`).
+
 ### `model_configs`
 
 `id` (PK, e.g. `groq:llama-3.3-70b-versatile`), `provider`, `label`, `model`, `host`,

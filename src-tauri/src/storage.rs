@@ -1,11 +1,8 @@
 // Persistent app data: SQLite-backed CRUD for knowledge docs, model configs,
 // tools, agents and workflows, plus the Manager bootstrap and default model.
 
-use std::fs;
-use std::path::Path;
-
 use rusqlite::{params, Connection};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::db::{db, now};
 use crate::models::*;
@@ -29,37 +26,14 @@ fn ensure_manager(conn: &Connection) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// Built-in memory connector (fox / `agent-memory`)
+// Built-in memory (native — was the fox/`agent-memory` MCP server)
 // ---------------------------------------------------------------------------
 
-// The memory engine is fox's `agent-memory` package, run as an MCP server. It is
-// seeded here so memory works with no manual setup. The fox checkout is located
-// via `AGENT_MEMORY_HOME`, falling back to the dev checkout; the resulting server
-// row is editable in Workshop → Integrations → MCP servers.
-const MEMORY_SERVER_ID: &str = "memory";
-
-fn fox_dir() -> String {
-  std::env::var("AGENT_MEMORY_HOME").ok()
-    .map(|s| s.trim().to_string())
-    .filter(|s| !s.is_empty())
-    .unwrap_or_else(|| r"A:\code\Projects\fox".to_string())
-}
-
-// Inserts the memory MCP server row if missing. Its database lives in the app
-// data dir so it travels with the rest of the app's state.
-fn ensure_memory_server(app: &AppHandle, conn: &Connection) -> Result<(), String> {
-  let memory_dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("memory");
-  fs::create_dir_all(&memory_dir).map_err(|e| e.to_string())?;
-  let db_path = memory_dir.join("agent-memory.db");
-  let server_js = Path::new(&fox_dir()).join("dist").join("mcp").join("server.js");
-  let args = serde_json::json!([server_js.to_string_lossy().to_string()]).to_string();
-  let env = serde_json::json!({ "AGENT_MEMORY_DB": db_path.to_string_lossy().to_string() }).to_string();
-  conn.execute(
-    "INSERT INTO mcp_servers (id, name, command, args, env, enabled, updated_at) VALUES (?1,'memory','node',?2,?3,1,?4)
-     ON CONFLICT(id) DO NOTHING",
-    params![MEMORY_SERVER_ID, args, env, now()],
-  ).map_err(|e| e.to_string())?;
-  Ok(())
+// Retires the legacy in-process-bridge MCP server: memory is native now, so drop
+// the seeded `memory` server row and any tools imported from it.
+fn retire_memory_mcp(conn: &Connection) {
+  let _ = conn.execute("DELETE FROM tools WHERE kind='mcp' AND integration_id='memory'", []);
+  let _ = conn.execute("DELETE FROM mcp_servers WHERE id='memory'", []);
 }
 
 // ---------------------------------------------------------------------------
@@ -88,13 +62,6 @@ fn ensure_browser_server(_app: &AppHandle, conn: &Connection) -> Result<(), Stri
   Ok(())
 }
 
-// Re-imports the memory tools on every launch: the memory connector (fox) evolves
-// — it gained namespaces — and import rebuilds its rows, so new commands appear in
-// the registry. Best-effort.
-fn sync_memory_tools(app: &AppHandle) {
-  let _ = crate::mcp::import_mcp_tools(app.clone(), MEMORY_SERVER_ID.to_string());
-}
-
 // Imports the browser tools once so they appear in the tool picker with no manual
 // sync. Targets the browser server that exists — the seeded `browser` row, or an
 // existing Playwright-backed row (an upgraded install may have added one by hand).
@@ -120,14 +87,13 @@ pub async fn initialize_storage(app: AppHandle) -> Result<(), String> {
   {
     let conn = db(&app)?;
     ensure_manager(&conn)?;
-    ensure_memory_server(&app, &conn)?;
+    retire_memory_mcp(&conn);
     ensure_browser_server(&app, &conn)?;
   }
-  // Importing MCP tools spawns their servers (fox via node, the browser via npx,
-  // which may download on first run), so run it off the main thread — a cold
-  // start must never block the UI or flash a console.
+  // Importing MCP tools spawns the browser server (npx, which may download on
+  // first run), so run it off the main thread — a cold start must never block the
+  // UI or flash a console.
   tauri::async_runtime::spawn_blocking(move || {
-    sync_memory_tools(&app);
     import_browser_tools_once(&app);
   }).await.map_err(|e| e.to_string())?;
   Ok(())

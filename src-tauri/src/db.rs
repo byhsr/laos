@@ -57,6 +57,8 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   if !bot_cols.iter().any(|c| c == "webhook_secret") { conn.execute("ALTER TABLE telegram_bots ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   if !bot_cols.iter().any(|c| c == "webhook_registered") { conn.execute("ALTER TABLE telegram_bots ADD COLUMN webhook_registered INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
   if !bot_cols.iter().any(|c| c == "terminal_id") { conn.execute("ALTER TABLE telegram_bots ADD COLUMN terminal_id TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  // Native agent-memory tables (was the fox MCP server).
+  crate::agent_memory::ensure_schema(&conn)?;
   Ok(conn)
 }
 
