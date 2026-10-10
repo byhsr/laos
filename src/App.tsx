@@ -309,9 +309,9 @@ export default function App() {
       )}
       {drawerForm && drawerForm.kind === 'script' && (
         <ScriptFormDrawer
-          editing={drawerForm.editing} isNew={drawerForm.isNew}
+          editing={drawerForm.editing} isNew={drawerForm.isNew} models={models}
           onClose={() => setDrawerForm(null)}
-          onSave={async (s) => { await saveScript(s); setDrawerForm(null); toast('script saved', 'success'); }}
+          onSave={async (s) => { await saveScript(s); setDrawerForm(null); toast('app saved', 'success'); }}
         />
       )}
       {drawerForm && drawerForm.kind === 'project' && (

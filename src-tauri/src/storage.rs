@@ -317,9 +317,10 @@ pub fn delete_skill(app: AppHandle, id: String) -> Result<(), String> {
 
 pub(crate) fn load_scripts(conn: &Connection) -> Vec<ScriptRecord> {
   let mut out = Vec::new();
-  if let Ok(mut stmt) = conn.prepare("SELECT id, name, description, command, cwd, updated_at FROM scripts ORDER BY name") {
+  if let Ok(mut stmt) = conn.prepare("SELECT id, name, description, kind, command, cwd, prompt, model, updated_at FROM scripts ORDER BY name") {
     if let Ok(rows) = stmt.query_map([], |row| Ok(ScriptRecord {
-      id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, command: row.get(3)?, cwd: row.get(4)?, updated_at: row.get(5)?,
+      id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, kind: row.get(3)?,
+      command: row.get(4)?, cwd: row.get(5)?, prompt: row.get(6)?, model: row.get(7)?, updated_at: row.get(8)?,
     })) {
       for r in rows { if let Ok(s) = r { out.push(s); } }
     }
@@ -328,8 +329,9 @@ pub(crate) fn load_scripts(conn: &Connection) -> Vec<ScriptRecord> {
 }
 
 pub(crate) fn load_script(conn: &Connection, id: &str) -> Option<ScriptRecord> {
-  conn.query_row("SELECT id, name, description, command, cwd, updated_at FROM scripts WHERE id=?1", params![id], |row| Ok(ScriptRecord {
-    id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, command: row.get(3)?, cwd: row.get(4)?, updated_at: row.get(5)?,
+  conn.query_row("SELECT id, name, description, kind, command, cwd, prompt, model, updated_at FROM scripts WHERE id=?1", params![id], |row| Ok(ScriptRecord {
+    id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, kind: row.get(3)?,
+    command: row.get(4)?, cwd: row.get(5)?, prompt: row.get(6)?, model: row.get(7)?, updated_at: row.get(8)?,
   })).ok()
 }
 
@@ -343,10 +345,11 @@ pub fn list_scripts(app: AppHandle) -> Result<Vec<ScriptRecord>, String> {
 pub fn save_script(app: AppHandle, script: ScriptRecord) -> Result<String, String> {
   let conn = db(&app)?;
   let id = if script.id.trim().is_empty() { format!("script-{}", chrono::Utc::now().timestamp_millis()) } else { script.id.clone() };
+  let kind = if script.kind == "prompt" { "prompt" } else { "command" };
   conn.execute(
-    "INSERT INTO scripts (id, name, description, command, cwd, updated_at) VALUES (?1,?2,?3,?4,?5,?6)
-     ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, command=excluded.command, cwd=excluded.cwd, updated_at=excluded.updated_at",
-    params![id, script.name, script.description, script.command, script.cwd, chrono::Utc::now().to_rfc3339()],
+    "INSERT INTO scripts (id, name, description, kind, command, cwd, prompt, model, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, kind=excluded.kind, command=excluded.command, cwd=excluded.cwd, prompt=excluded.prompt, model=excluded.model, updated_at=excluded.updated_at",
+    params![id, script.name, script.description, kind, script.command, script.cwd, script.prompt, script.model, chrono::Utc::now().to_rfc3339()],
   ).map_err(|e| e.to_string())?;
   Ok(id)
 }
@@ -358,16 +361,22 @@ pub fn delete_script(app: AppHandle, id: String) -> Result<(), String> {
   Ok(())
 }
 
-// Runs a saved script on demand (the Scripts tab's Test button). Returns its
-// combined stdout/stderr.
+// Runs a saved app on demand (the Apps tab's Test button). A `command` app runs
+// through the shell; a `prompt` app runs internally as a single model call.
 #[tauri::command]
 pub async fn run_script_now(app: AppHandle, id: String, input: Option<String>) -> Result<String, String> {
-  let (command, cwd) = {
+  let script = {
     let conn = db(&app)?;
-    let s = load_script(&conn, &id).ok_or("Script not found.")?;
-    (s.command, s.cwd)
+    load_script(&conn, &id).ok_or("App not found.")?
   };
-  let command = command.replace("{input}", &input.unwrap_or_default());
+  let input = input.unwrap_or_default();
+  if script.kind == "prompt" {
+    if script.model.trim().is_empty() { return Err("This app needs a model — set one in the app's config.".into()); }
+    let prompt = script.prompt.replace("{input}", &input);
+    return crate::memory::one_shot_completion(&app, &script.model, &prompt, crate::http::CHAT_MAX_TOKENS).await;
+  }
+  let command = script.command.replace("{input}", &input);
+  let cwd = script.cwd;
   tokio::task::spawn_blocking(move || crate::tools::run_shell_in(&command, &cwd)).await.map_err(|e| e.to_string())?
 }
 

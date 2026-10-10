@@ -12,7 +12,7 @@ type WorkshopTab = 'skills' | 'scripts' | 'projects' | 'tools' | 'integrations' 
 
 const TABS: { key: WorkshopTab; label: string }[] = [
   { key: 'skills', label: 'skills' },
-  { key: 'scripts', label: 'scripts' },
+  { key: 'scripts', label: 'apps' },
   { key: 'projects', label: 'projects' },
   { key: 'tools', label: 'tools' },
   { key: 'integrations', label: 'integrations' },

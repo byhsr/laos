@@ -90,9 +90,11 @@ runs with the `run_script` tool).
 
 ### `scripts`
 
-`id` (PK), `name`, `description`, `command`, `cwd`, `updated_at`. Reusable runnable commands
-("custom apps"): run from the Scripts tab (`run_script_now`), by an agent with `host_fs`
-(`run_script` tool), or from a workflow `script` node.
+`id` (PK), `name`, `description`, `kind` (`command` | `prompt`), `command`, `cwd`, `prompt`,
+`model`, `updated_at`. Reusable runnable **apps** (Workshop → apps): a `command` app runs a
+shell command, a `prompt` app runs a single internal model call. Run from the UI
+(`run_script_now`), by an agent with `host_fs` (`run_script`, command apps), or from a workflow
+`script` node.
 
 ### `projects`
 

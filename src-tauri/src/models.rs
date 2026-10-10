@@ -44,11 +44,22 @@ pub struct SkillRecord {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRecord { pub id: String, pub name: String, pub description: String, pub created_at: String, pub updated_at: String }
 
-// A reusable runnable command ("custom app"/script): run from the UI, by an
-// agent (host_fs), or from a workflow script node.
+// A reusable runnable app: a shell command (`kind = "command"`) or an internal
+// model prompt (`kind = "prompt"`). Run from the UI, by an agent (command apps,
+// host_fs), or from a workflow node.
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct ScriptRecord { pub id: String, pub name: String, pub description: String, pub command: String, pub cwd: String, pub updated_at: String }
+pub struct ScriptRecord {
+  pub id: String, pub name: String, pub description: String,
+  #[serde(default = "default_script_kind")] pub kind: String,
+  #[serde(default)] pub command: String,
+  #[serde(default)] pub cwd: String,
+  #[serde(default)] pub prompt: String,
+  #[serde(default)] pub model: String,
+  pub updated_at: String,
+}
+
+fn default_script_kind() -> String { "command".to_string() }
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

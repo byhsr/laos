@@ -26,8 +26,8 @@ pub(crate) fn load_memory(conn: &Connection, agent_id: &str) -> Vec<(String, Str
   out
 }
 
-// Non-streaming single-shot completion used for summarization. Returns the text.
-async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &str, max_tokens: u64) -> Result<String, String> {
+// Non-streaming single-shot completion used for summarization and internal apps.
+pub(crate) async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &str, max_tokens: u64) -> Result<String, String> {
   let conn = db(app)?;
   // A utility call, so no reasoning is applied even when the model is set to
   // think: a summary gains nothing from it and it would multiply the per-turn

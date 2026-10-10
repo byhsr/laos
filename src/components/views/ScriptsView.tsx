@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Check, Play, Terminal, Trash2 } from 'lucide-react';
-import type { Script } from '../../types';
+import type { ModelConfig, Script } from '../../types';
 import { Modal } from '../ui/Modal';
 import { Button, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
+import { Select } from '../ui/Select';
 import { FIELD_LABEL_CLS, INPUT_CLS, PROSE_CLS } from '../ui/Input';
 import { runScriptNow } from '../../runtime';
 import { toast } from '../../hooks/useToast';
@@ -38,7 +39,7 @@ export function ScriptsView({ scripts, onAdd, onEdit, onDelete }: {
             <div className="min-w-0 flex-1">
               <b className="block truncate font-mono text-[11px] text-foreground">{s.name}</b>
               <span className="block truncate font-mono text-[10px] text-muted">{s.description || 'no description'}</span>
-              <span className="mt-0.5 block truncate font-mono text-[10px] text-muted">{s.command}</span>
+              <span className="mt-0.5 block truncate font-mono text-[10px] text-muted">{s.kind === 'prompt' ? `prompt · ${s.prompt.slice(0, 64) || 'empty'}` : `command · ${s.command}`}</span>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
               <IconButton label="run" disabled={running === s.id} onClick={() => void run(s)}><Play size={12} /></IconButton>
@@ -55,8 +56,8 @@ export function ScriptsView({ scripts, onAdd, onEdit, onDelete }: {
   );
 }
 
-export function ScriptFormDrawer({ editing, isNew, onClose, onSave }: {
-  editing: Script; isNew: boolean; onClose: () => void; onSave: (s: Script) => Promise<void>;
+export function ScriptFormDrawer({ editing, isNew, models, onClose, onSave }: {
+  editing: Script; isNew: boolean; models: ModelConfig[]; onClose: () => void; onSave: (s: Script) => Promise<void>;
 }) {
   const [form, setForm] = useState<Script>(editing);
   const [saving, setSaving] = useState(false);
@@ -64,20 +65,25 @@ export function ScriptFormDrawer({ editing, isNew, onClose, onSave }: {
   const [testOut, setTestOut] = useState<string | null>(null);
 
   const save = async () => {
-    if (!form.name.trim()) { setError('Script needs a name.'); return; }
-    if (!form.command.trim()) { setError('Script needs a command.'); return; }
+    if (!form.name.trim()) { setError('App needs a name.'); return; }
+    if (form.kind === 'prompt') {
+      if (!form.prompt.trim()) { setError('A prompt app needs a prompt.'); return; }
+      if (!form.model.trim()) { setError('A prompt app needs a model.'); return; }
+    } else if (!form.command.trim()) {
+      setError('A command app needs a command.'); return;
+    }
     setSaving(true); setError(undefined);
     try {
       await onSave({ ...form, name: form.name.trim(), description: form.description.trim() });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save script.');
+      setError(e instanceof Error ? e.message : 'Failed to save app.');
     } finally {
       setSaving(false);
     }
   };
 
   const test = async () => {
-    if (!form.id) { setError('Save the script before testing it.'); return; }
+    if (!form.id) { setError('Save the app before testing it.'); return; }
     setError(undefined);
     try {
       setTestOut(await runScriptNow(form.id));
@@ -88,25 +94,47 @@ export function ScriptFormDrawer({ editing, isNew, onClose, onSave }: {
 
   return (
     <Modal
-      title={isNew ? 'add script' : `edit ${form.name}`}
+      title={isNew ? 'add app' : `edit ${form.name}`}
       onClose={onClose}
       headerAction={<Button variant="primary" disabled={saving} onClick={save}>{saving ? 'saving…' : 'save'}</Button>}
     >
       <p className="mt-0 mb-3.5 font-mono text-[10px] leading-relaxed text-muted">
-        A script is a command the app can run. Use <code className="font-mono">{'{input}'}</code> where the caller's text should go.
+        A custom app runs inside the app. A <b>command</b> app runs a shell command; a <b>prompt</b> app runs a single model call. Use <code className="font-mono">{'{input}'}</code> where the caller's text should go.
       </p>
 
       <label className={FIELD_LABEL_CLS}>name</label>
-      <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Build report" className={INPUT_CLS} />
+      <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Summarize inbox" className={INPUT_CLS} />
 
       <label className={`${FIELD_LABEL_CLS} mt-4`}>description</label>
       <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="One line on what it does" className={INPUT_CLS} />
 
-      <label className={`${FIELD_LABEL_CLS} mt-4`}>command</label>
-      <textarea value={form.command} onChange={(e) => setForm({ ...form, command: e.target.value })} placeholder="e.g. python build_report.py {input}" rows={4} className={`${PROSE_CLS} min-h-[120px]`} />
+      <label className={`${FIELD_LABEL_CLS} mt-4`}>type</label>
+      <Select
+        value={form.kind}
+        options={[{ value: 'command', label: 'command (shell)' }, { value: 'prompt', label: 'prompt (model call)' }]}
+        onChange={(v) => setForm({ ...form, kind: v as Script['kind'] })}
+      />
 
-      <label className={`${FIELD_LABEL_CLS} mt-4`}>working directory (optional)</label>
-      <input value={form.cwd} onChange={(e) => setForm({ ...form, cwd: e.target.value })} placeholder="e.g. A:\\projects\\reports" className={INPUT_CLS} />
+      {form.kind === 'prompt' ? (
+        <>
+          <label className={`${FIELD_LABEL_CLS} mt-4`}>model</label>
+          <Select
+            value={form.model}
+            options={models.map((m) => ({ value: m.id, label: m.label }))}
+            onChange={(v) => setForm({ ...form, model: v })}
+            placeholder="select model…"
+          />
+          <label className={`${FIELD_LABEL_CLS} mt-4`}>prompt</label>
+          <textarea value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} placeholder="What the model should do. Use {input} for the caller's text." rows={5} className={`${PROSE_CLS} min-h-[140px]`} />
+        </>
+      ) : (
+        <>
+          <label className={`${FIELD_LABEL_CLS} mt-4`}>command</label>
+          <textarea value={form.command} onChange={(e) => setForm({ ...form, command: e.target.value })} placeholder="e.g. python build_report.py {input}" rows={4} className={`${PROSE_CLS} min-h-[120px]`} />
+          <label className={`${FIELD_LABEL_CLS} mt-4`}>working directory (optional)</label>
+          <input value={form.cwd} onChange={(e) => setForm({ ...form, cwd: e.target.value })} placeholder="e.g. A:\\projects\\reports" className={INPUT_CLS} />
+        </>
+      )}
 
       <div className="mt-4 flex items-center gap-2">
         <Button icon={<Play size={12} />} onClick={test}>test run</Button>

@@ -22,9 +22,8 @@ export type ToolConfig = {
 };
 export type Tool = { id: string; name: string; kind: string; integrationId: string; description: string; enabled: boolean; config: ToolConfig };
 export type Skill = { id: string; name: string; description: string; content: string; docs: string; scriptIds: string[] };
-// A reusable runnable command ("custom app"): run from the UI, by an agent
-// (host_fs), or from a workflow script node.
-export type Script = { id: string; name: string; description: string; command: string; cwd: string; updatedAt: string };
+// A reusable runnable app: a shell command or an internal model prompt.
+export type Script = { id: string; name: string; description: string; kind: 'command' | 'prompt'; command: string; cwd: string; prompt: string; model: string; updatedAt: string };
 // A project groups conversations and scopes their memory.
 export type Project = { id: string; name: string; description: string; createdAt: string; updatedAt: string };
 
@@ -66,5 +65,5 @@ export type ExecutionResult = { output: string; events: RunEvent[]; runId?: stri
 export const emptyTool = (): Tool => ({ id: '', name: '', kind: 'api', integrationId: 'http', description: '', enabled: true, config: { method: 'GET', url: '', headers: [], body: '', params: [] } });
 export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', host: '', apiKey: '', enabled: true, reasoning: 'auto' });
 export const emptySkill = (): Skill => ({ id: '', name: '', description: '', content: '', docs: '', scriptIds: [] });
-export const emptyScript = (): Script => ({ id: '', name: '', description: '', command: '', cwd: '', updatedAt: '' });
+export const emptyScript = (): Script => ({ id: '', name: '', description: '', kind: 'command', command: '', cwd: '', prompt: '', model: '', updatedAt: '' });
 export const emptyProject = (): Project => ({ id: '', name: '', description: '', createdAt: '', updatedAt: '' });

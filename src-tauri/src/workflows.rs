@@ -614,25 +614,31 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
         }
       }
       "script" => {
-        // Run a saved script (config.scriptId) or an inline command (config.command).
-        // {input} is replaced with the accumulated output; stdout/stderr becomes output.
+        // Run a saved app (config.scriptId) or an inline command (config.command).
+        // A saved prompt app runs a single model call; a command app (or inline
+        // command) runs through the shell. {input} is the accumulated output.
         let script_id = config.get("scriptId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let (template, cwd) = if !script_id.is_empty() {
-          match crate::storage::load_script(&conn, &script_id) {
-            Some(s) => (s.command, s.cwd),
-            None => (String::new(), String::new()),
+        let saved = if script_id.is_empty() { None } else { crate::storage::load_script(&conn, &script_id) };
+        if let Some(app_script) = saved.clone().filter(|s| s.kind == "prompt") {
+          let cfg = serde_json::json!({ "model": app_script.model, "prompt": app_script.prompt });
+          match run_llm_node(app, &cfg, &current_input, api_key.as_deref()).await {
+            Ok((text, pt, ct)) => { total_prompt += pt; total_completion += ct; text }
+            Err(e) => serde_json::json!({ "error": e }).to_string(),
           }
         } else {
-          (config.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string(), String::new())
-        };
-        let command = template.replace("{input}", &current_input);
-        if command.trim().is_empty() {
-          serde_json::json!({ "error": "script node requires a saved script or a command" }).to_string()
-        } else {
-          match tokio::task::spawn_blocking(move || crate::tools::run_shell_in(&command, &cwd)).await {
-            Ok(Ok(out)) => out,
-            Ok(Err(e)) => serde_json::json!({ "error": e }).to_string(),
-            Err(e) => serde_json::json!({ "error": e.to_string() }).to_string(),
+          let (template, cwd) = match saved {
+            Some(s) => (s.command, s.cwd),
+            None => (config.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string(), String::new()),
+          };
+          let command = template.replace("{input}", &current_input);
+          if command.trim().is_empty() {
+            serde_json::json!({ "error": "script node requires a saved app or a command" }).to_string()
+          } else {
+            match tokio::task::spawn_blocking(move || crate::tools::run_shell_in(&command, &cwd)).await {
+              Ok(Ok(out)) => out,
+              Ok(Err(e)) => serde_json::json!({ "error": e }).to_string(),
+              Err(e) => serde_json::json!({ "error": e.to_string() }).to_string(),
+            }
           }
         }
       }
