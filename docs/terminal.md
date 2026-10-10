@@ -25,10 +25,19 @@ on demand.
 **`/cli` — start a CLI from the chat.** Send `/cli` (or `/cli <command>`) and a PTY opens,
 bound to that chat: `/cli` drops you into the platform shell, `/cli cmdc` starts the CLI
 directly. Every following message is written to its stdin, so you drive the tool from Telegram.
-`/screen` peeks at the tail, `/exit` (or `/cli stop`) ends it. A chat-bound CLI takes
+`/screen` peeks at the tail, `/exit` (or `/stop` / `/cli stop`) ends it. A chat-bound CLI takes
 precedence over the bot's target and short-circuits before the agent path, so **CLI sessions
-never write to memory** — they don't teach the agent. `terminal_start <id>` also appears in the
-Terminal view while it's running.
+never write to memory** — they don't teach the agent. The session also appears in the Terminal
+view while it's running.
+
+Driving a **TUI** (option lists, prompts) needs raw keys, not typed lines:
+
+- `/key <name> [count]` — send a key: `up`, `down`, `left`, `right`, `enter`, `esc`, `tab`,
+  `space`, `backspace`, `delete`, `home`, `end`, `pageup`, `pagedown`, `ctrl-c` … A count repeats
+  it (`/key down 3`); several keys chain (`/key down down enter`).
+- `/pick <n>` — select the nth row of a menu: `down` × (n−1), then `enter`.
+- `/stop` — end the session (alias of `/exit`); use `/key ctrl-c` to interrupt the running
+  program without closing it.
 
 Commands: `terminal_start`, `terminal_write`, `terminal_read`, `terminal_attach`,
 `terminal_resize`, `terminal_list`, `terminal_kill`.

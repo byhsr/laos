@@ -994,6 +994,65 @@ fn chat_cli_set(key: &str, id: Option<&str>) {
 }
 fn default_shell() -> String { if cfg!(windows) { "cmd".to_string() } else { "sh".to_string() } }
 
+// Raw key sequences for driving a TUI over Telegram (`/key`, `/pick`).
+fn key_bytes(k: &str) -> String {
+  match k {
+    "up" => "\x1b[A", "down" => "\x1b[B", "right" => "\x1b[C", "left" => "\x1b[D",
+    "enter" | "return" => "\r", "esc" | "escape" => "\x1b", "tab" => "\t", "space" => " ",
+    "backspace" | "bs" => "\x7f", "delete" | "del" => "\x1b[3~", "home" => "\x1b[H", "end" => "\x1b[F",
+    "pageup" | "pgup" => "\x1b[5~", "pagedown" | "pgdn" => "\x1b[6~",
+    "ctrl-c" | "ctrlc" | "^c" => "\x03", "ctrl-d" | "^d" => "\x04", "ctrl-z" | "^z" => "\x1a",
+    "ctrl-u" | "^u" => "\x15", "ctrl-l" | "^l" => "\x0c", "ctrl-a" | "^a" => "\x01", "ctrl-e" | "^e" => "\x05",
+    other => return other.to_string(),
+  }.to_string()
+}
+
+// `/key down down enter`, `/key down 3`, `/key ctrl-c` -> the raw byte sequence.
+fn parse_keys(spec: &str) -> String {
+  let mut out = String::new();
+  let mut last: Option<String> = None;
+  for tok in spec.split_whitespace() {
+    let t = tok.to_lowercase();
+    if let Ok(n) = t.parse::<usize>() {
+      if let Some(k) = &last { let b = key_bytes(k); for _ in 1..n { out.push_str(&b); } }
+      continue;
+    }
+    out.push_str(&key_bytes(&t));
+    last = Some(t);
+  }
+  out
+}
+
+// Drives a terminal session with one message: control commands reply, plain text
+// is piped to stdin and answered by the relayed output. Returns Some(reply) when
+// it answered directly, None when the input was piped.
+fn drive_terminal(sid: &str, text: &str, bot: &TelegramBot, chat_id: i64) -> Option<String> {
+  let cmd = text.trim();
+  if cmd == "/screen" {
+    let t = crate::terminal::tail_text(sid, 40);
+    return Some(if t.trim().is_empty() { "(no output yet)".into() } else { t });
+  }
+  if let Some(rest) = cmd.strip_prefix("/key") {
+    let seq = parse_keys(rest.trim());
+    if seq.is_empty() {
+      return Some("Usage: /key <up|down|left|right|enter|esc|tab|space|backspace|ctrl-c|…> [count]; e.g. /key down 3".into());
+    }
+    return crate::terminal::terminal_write(sid.to_string(), seq).err().map(|e| format!("Terminal error: {e}"));
+  }
+  if let Some(rest) = cmd.strip_prefix("/pick") {
+    let n: usize = rest.trim().parse().unwrap_or(0);
+    if n == 0 { return Some("Usage: /pick <n> — move down n-1 rows, then enter.".into()); }
+    let mut seq = String::new();
+    for _ in 1..n { seq.push_str("\x1b[B"); }
+    seq.push('\r');
+    return crate::terminal::terminal_write(sid.to_string(), seq).err().map(|e| format!("Terminal error: {e}"));
+  }
+  if let Ok(mut m) = term_relay().lock() {
+    m.insert(sid.to_string(), TermRelay { token: bot.token.clone(), chat_id, last_output: std::time::Instant::now(), dirty: false, last_sent: String::new() });
+  }
+  crate::terminal::write_line(sid, text).err().map(|e| format!("Terminal error: {e}"))
+}
+
 // Called by the terminal reader when a bound session produces output.
 pub(crate) fn on_terminal_output(_app: &AppHandle, session_id: &str, _text: &str) {
   if let Ok(mut m) = term_relay().lock() {
@@ -1146,7 +1205,7 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
           Err(e) => format!("Could not start the CLI: {e}"),
         };
       }
-      if matches!(cmd, "/exit" | "/cli-stop") || cmd == "/cli stop" {
+      if matches!(cmd, "/exit" | "/stop" | "/cli-stop") || cmd == "/cli stop" {
         return match chat_cli_get(&key) {
           Some(sid) => { let _ = crate::terminal::terminal_kill(sid); chat_cli_set(&key, None); "CLI session ended.".into() }
           None => "No CLI session in this chat.".into(),
@@ -1158,11 +1217,7 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
           chat_cli_set(&key, None);
           return "CLI session ended. Send /cli to start another.".into();
         }
-        if cmd == "/screen" {
-          let t = crate::terminal::tail_text(&sid, 40);
-          return if t.trim().is_empty() { "(no output yet)".into() } else { t };
-        }
-        if let Err(e) = crate::terminal::write_line(&sid, text) { return format!("Terminal error: {e}"); }
+        if let Some(r) = drive_terminal(&sid, text, &bot, chat_id) { return r; }
         return String::new(); // output is relayed
       }
       // A bot bound to a terminal pipes the message into the CLI's stdin. If the
@@ -1171,14 +1226,7 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
         if !crate::terminal::session_alive(&bot.terminal_id) {
           return format!("This bot is bound to terminal '{}', which isn't running. Start it in the Terminal view.", bot.terminal_id);
         }
-        if text.trim() == "/screen" {
-          let t = crate::terminal::tail_text(&bot.terminal_id, 40);
-          return if t.trim().is_empty() { "(no output yet)".into() } else { t };
-        }
-        if let Ok(mut m) = term_relay().lock() {
-          m.insert(bot.terminal_id.clone(), TermRelay { token: bot.token.clone(), chat_id, last_output: std::time::Instant::now(), dirty: false, last_sent: String::new() });
-        }
-        if let Err(e) = crate::terminal::write_line(&bot.terminal_id, text) { return format!("Terminal error: {e}"); }
+        if let Some(r) = drive_terminal(&bot.terminal_id, text, &bot, chat_id) { return r; }
         return String::new(); // no immediate reply — output is relayed
       }
       if bot.agent_id.is_empty() || bot.agent_id == "manager" {
