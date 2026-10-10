@@ -92,7 +92,7 @@ export async function listTelegramLogs(): Promise<TelegramLogEntry[]> {
   try { return await invoke<TelegramLogEntry[]>('list_telegram_logs'); } catch { return []; }
 }
 // Telegram bots (multiple): each is long-polled and routed to an agent.
-export type TelegramBot = { id: string; name: string; agentId: string; enabled: boolean; token: string; webhookRegistered: boolean };
+export type TelegramBot = { id: string; name: string; agentId: string; terminalId: string; enabled: boolean; token: string; webhookRegistered: boolean };
 export async function listTelegramBots(): Promise<TelegramBot[]> {
   try { return await invoke<TelegramBot[]>('list_telegram_bots'); } catch { return []; }
 }
@@ -108,6 +108,32 @@ export async function setBotWebhook(botId: string, publicUrl?: string): Promise<
 }
 export async function clearBotWebhook(botId: string): Promise<void> {
   await invoke('telegram_clear_bot_webhook', { botId });
+}
+
+// Terminal sessions (PTY): run a real CLI and drive it from the panel or a bot.
+export type TerminalSession = { id: string; name: string; command: string; alive: boolean; excerpt: string };
+export async function terminalStart(name: string, command: string, cwd?: string, cols?: number, rows?: number): Promise<{ id: string; name: string }> {
+  return await invoke('terminal_start', { name, command, cwd: cwd ?? null, cols: cols ?? null, rows: rows ?? null });
+}
+export async function terminalWrite(id: string, data: string): Promise<void> {
+  await invoke('terminal_write', { id, data });
+}
+export async function terminalRead(id: string, from: number): Promise<{ data: number[]; next: number }> {
+  return await invoke('terminal_read', { id, from });
+}
+export async function terminalResize(id: string, cols: number, rows: number): Promise<void> {
+  await invoke('terminal_resize', { id, cols, rows });
+}
+export async function terminalList(): Promise<TerminalSession[]> {
+  try { return await invoke<TerminalSession[]>('terminal_list'); } catch { return []; }
+}
+export async function terminalKill(id: string): Promise<void> {
+  await invoke('terminal_kill', { id });
+}
+export async function terminalAttach(id: string, onOutput: (s: string) => void): Promise<void> {
+  const ch = new Channel<string>();
+  ch.onmessage = (s) => onOutput(s);
+  await invoke('terminal_attach', { id, onOutput: ch });
 }
 export type WebhookHealth = {
   tunnelUrl: string | null;

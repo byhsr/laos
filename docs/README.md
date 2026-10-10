@@ -23,6 +23,7 @@ tool registry, workflow execution, memory, and the Telegram adapter.
 | [integrations.md](./integrations.md) | Integration catalog, how providers become tools, credential storage/masking, OAuth, testing |
 | [mcp.md](./mcp.md) | The generic MCP connector: servers, tool discovery/import, how a call runs, limits |
 | [pc-control.md](./pc-control.md) | Native PC control (computer use): the `pc_control` permission, tools, the see→act loop, and platform limits |
+| [terminal.md](./terminal.md) | PTY terminal sessions: run a CLI in the panel and bridge it to a Telegram bot |
 | [memory.md](./memory.md) | Context assembly, the rolling window, summarization, long-term facts, chat sessions, day context, recall, and the built-in `agent-memory` (fox) connector |
 | [webhooks.md](./webhooks.md) | Telegram tunnel + webhook receiver + long-poll, the OAuth loopback, health checks and logs |
 | [data-model.md](./data-model.md) | SQLite schema, migrations, record types, memory keys, ID conventions |

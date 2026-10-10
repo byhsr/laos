@@ -1,4 +1,4 @@
-import { Blocks, Bot, Brain, Home, ListChecks, Send, Settings, Terminal, Workflow } from 'lucide-react';
+import { Blocks, Bot, Brain, Home, ListChecks, Send, Settings, SquareTerminal, Terminal, Workflow } from 'lucide-react';
 import type { View } from '../types';
 import { navLabel, useNavLabels, type NavKey } from '../hooks/useNavLabels';
 import { IconButton } from './ui/Button';
@@ -15,6 +15,7 @@ const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
   { key: 'workshop', view: 'workshop', icon: <Blocks size={12} /> },
   { key: 'runs', view: 'runs', icon: <Terminal size={12} /> },
   { key: 'telegram', view: 'telegram', icon: <Send size={12} /> },
+  { key: 'terminal', view: 'terminal', icon: <SquareTerminal size={12} /> },
 ];
 
 export function Rail({ view, setView }: { view: View; setView: (v: View) => void }) {

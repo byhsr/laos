@@ -80,14 +80,14 @@ fn ensure_webhook_secret(conn: &Connection) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-struct TelegramBot { id: String, name: String, token: String, agent_id: String, enabled: bool, webhook_secret: String, webhook_registered: bool }
+struct TelegramBot { id: String, name: String, token: String, agent_id: String, terminal_id: String, enabled: bool, webhook_secret: String, webhook_registered: bool }
 
 fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
   let mut out = Vec::new();
-  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, enabled, webhook_secret, webhook_registered FROM telegram_bots ORDER BY name") {
+  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, enabled, webhook_secret, webhook_registered FROM telegram_bots ORDER BY name") {
     if let Ok(rows) = stmt.query_map([], |row| Ok(TelegramBot {
-      id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, enabled: row.get::<_, i64>(4)? != 0,
-      webhook_secret: row.get(5)?, webhook_registered: row.get::<_, i64>(6)? != 0,
+      id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?,
+      enabled: row.get::<_, i64>(5)? != 0, webhook_secret: row.get(6)?, webhook_registered: row.get::<_, i64>(7)? != 0,
     })) {
       for r in rows { if let Ok(b) = r { out.push(b); } }
     }
@@ -96,9 +96,9 @@ fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
 }
 
 fn load_bot(conn: &Connection, id: &str) -> Option<TelegramBot> {
-  conn.query_row("SELECT id, name, token, agent_id, enabled, webhook_secret, webhook_registered FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
-    id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, enabled: row.get::<_, i64>(4)? != 0,
-    webhook_secret: row.get(5)?, webhook_registered: row.get::<_, i64>(6)? != 0,
+  conn.query_row("SELECT id, name, token, agent_id, terminal_id, enabled, webhook_secret, webhook_registered FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
+    id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?,
+    enabled: row.get::<_, i64>(5)? != 0, webhook_secret: row.get(6)?, webhook_registered: row.get::<_, i64>(7)? != 0,
   })).ok()
 }
 
@@ -121,7 +121,7 @@ fn mask_token(t: &str) -> String { if t.is_empty() { String::new() } else { "•
 pub fn list_telegram_bots(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
   let conn = db(&app)?;
   Ok(load_bots(&conn).into_iter().map(|b| serde_json::json!({
-    "id": b.id, "name": b.name, "agentId": b.agent_id, "enabled": b.enabled, "token": mask_token(&b.token),
+    "id": b.id, "name": b.name, "agentId": b.agent_id, "terminalId": b.terminal_id, "enabled": b.enabled, "token": mask_token(&b.token),
     "webhookRegistered": b.webhook_registered,
   })).collect())
 }
@@ -133,6 +133,7 @@ pub fn save_telegram_bot(app: AppHandle, bot: serde_json::Value) -> Result<Strin
     .unwrap_or_else(|| format!("bot-{}", chrono::Utc::now().timestamp_millis()));
   let name = bot.get("name").and_then(|v| v.as_str()).unwrap_or("Telegram").to_string();
   let agent_id = bot.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+  let terminal_id = bot.get("terminalId").and_then(|v| v.as_str()).unwrap_or("").to_string();
   let enabled = bot.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
   // Preserve the stored token when the UI echoes the mask or sends nothing.
   let incoming = bot.get("token").and_then(|v| v.as_str()).unwrap_or("");
@@ -140,9 +141,9 @@ pub fn save_telegram_bot(app: AppHandle, bot: serde_json::Value) -> Result<Strin
     load_bot(&conn, &id).map(|b| b.token).unwrap_or_default()
   } else { incoming.to_string() };
   conn.execute(
-    "INSERT INTO telegram_bots (id, name, token, agent_id, enabled, updated_at) VALUES (?1,?2,?3,?4,?5,?6)
-     ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, enabled=excluded.enabled, updated_at=excluded.updated_at",
-    params![id, name, token, agent_id, if enabled { 1 } else { 0 }, now()],
+    "INSERT INTO telegram_bots (id, name, token, agent_id, terminal_id, enabled, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, terminal_id=excluded.terminal_id, enabled=excluded.enabled, updated_at=excluded.updated_at",
+    params![id, name, token, agent_id, terminal_id, if enabled { 1 } else { 0 }, now()],
   ).map_err(|e| e.to_string())?;
   Ok(id)
 }
@@ -757,7 +758,7 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
             let secret = conn.as_ref().and_then(|c| webhook_secret(c)).unwrap_or_default();
             let token = conn.as_ref().and_then(|c| telegram_token(c).ok().flatten());
             token.map(|t| (secret, t.clone(), TelegramBot {
-              id: "bot-default".into(), name: "Telegram".into(), token: t, agent_id: "manager".into(),
+              id: "bot-default".into(), name: "Telegram".into(), token: t, agent_id: "manager".into(), terminal_id: String::new(),
               enabled: true, webhook_secret: String::new(), webhook_registered: true,
             }))
           }
@@ -809,6 +810,48 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
       }
       let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
     });
+  }
+}
+
+// Output relay: a session bound to a bot relays a debounced tail of its output to
+// the chat that last messaged it.
+struct TermRelay { token: String, chat_id: i64, last_output: std::time::Instant, dirty: bool, last_sent: String }
+static TERM_RELAY: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, TermRelay>>> = std::sync::OnceLock::new();
+fn term_relay() -> &'static std::sync::Mutex<std::collections::HashMap<String, TermRelay>> {
+  TERM_RELAY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+// Called by the terminal reader when a bound session produces output.
+pub(crate) fn on_terminal_output(_app: &AppHandle, session_id: &str, _text: &str) {
+  if let Ok(mut m) = term_relay().lock() {
+    if let Some(r) = m.get_mut(session_id) { r.last_output = std::time::Instant::now(); r.dirty = true; }
+  }
+}
+
+// Flushes quiet output to the bound chat (skips when the tail is unchanged, so a
+// redrawing TUI doesn't spam).
+pub(crate) async fn terminal_relay_loop(_app: AppHandle) {
+  loop {
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    let due: Vec<(String, String, i64)> = {
+      let mut m = match term_relay().lock() { Ok(m) => m, Err(_) => continue };
+      let mut out = Vec::new();
+      for (sid, r) in m.iter_mut() {
+        if r.dirty && r.last_output.elapsed() >= std::time::Duration::from_millis(1200) {
+          out.push((sid.clone(), r.token.clone(), r.chat_id));
+          r.dirty = false;
+        }
+      }
+      out
+    };
+    for (sid, token, chat_id) in due {
+      let tail = crate::terminal::tail_text(&sid, 30);
+      if tail.trim().is_empty() { continue; }
+      let changed = term_relay().lock().map(|m| m.get(&sid).map(|r| r.last_sent != tail).unwrap_or(false)).unwrap_or(false);
+      if !changed { continue; }
+      if let Ok(mut m) = term_relay().lock() { if let Some(r) = m.get_mut(&sid) { r.last_sent = tail.clone(); } }
+      let _ = telegram_send_message(&token, chat_id, &tail).await;
+    }
   }
 }
 
@@ -875,6 +918,19 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
       Err(_) => "No tasks.".into(),
     },
     _ => {
+      // A bot bound to a terminal pipes the message into the CLI's stdin and lets
+      // its output relay back. `/screen` dumps the current tail on demand.
+      if !bot.terminal_id.is_empty() && crate::terminal::session_alive(&bot.terminal_id) {
+        if text.trim() == "/screen" {
+          let t = crate::terminal::tail_text(&bot.terminal_id, 40);
+          return if t.trim().is_empty() { "(no output yet)".into() } else { t };
+        }
+        if let Ok(mut m) = term_relay().lock() {
+          m.insert(bot.terminal_id.clone(), TermRelay { token: bot.token.clone(), chat_id, last_output: std::time::Instant::now(), dirty: false, last_sent: String::new() });
+        }
+        if let Err(e) = crate::terminal::write_line(&bot.terminal_id, text) { return format!("Terminal error: {e}"); }
+        return String::new(); // no immediate reply — output is relayed
+      }
       if bot.agent_id.is_empty() || bot.agent_id == "manager" {
         telegram_manager_turn(app, text).await
       } else {

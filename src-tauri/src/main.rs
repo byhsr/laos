@@ -14,6 +14,7 @@ mod provider;
 mod storage;
 mod tasks;
 mod telegram;
+mod terminal;
 mod tg_markdown;
 mod tools;
 mod tooltext;
@@ -31,6 +32,8 @@ fn main() {
       tauri::async_runtime::spawn(telegram::telegram_reconcile_on_boot(handle.clone()));
       // Start the Telegram long-poll adapter (no-op until a token is configured).
       tauri::async_runtime::spawn(telegram::telegram_loop(handle.clone()));
+      // Relay terminal-session output to bots bound to them.
+      tauri::async_runtime::spawn(telegram::terminal_relay_loop(handle.clone()));
       // Start the local webhook receiver (used when a tunnel is active).
       tauri::async_runtime::spawn(telegram::telegram_webhook_server(handle, 14789));
       Ok(())
@@ -95,6 +98,14 @@ fn main() {
       manager::confirm_manager_tool,
       chat::stream_chat,
       chat::cancel_chat,
+      // Terminal sessions (PTY)
+      terminal::terminal_start,
+      terminal::terminal_write,
+      terminal::terminal_read,
+      terminal::terminal_attach,
+      terminal::terminal_resize,
+      terminal::terminal_list,
+      terminal::terminal_kill,
       // Built-in memory connector (fox) — host-driven feedback
       fox::rate_turn,
       // Memory + chat sessions

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, Bot, Check, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { listTelegramLogs, listTelegramBots, saveTelegramBot, deleteTelegramBot, setBotWebhook, clearBotWebhook, type TelegramLogEntry, type TelegramBot } from '../../runtime';
+import { listTelegramLogs, listTelegramBots, saveTelegramBot, deleteTelegramBot, setBotWebhook, clearBotWebhook, terminalList, type TelegramLogEntry, type TelegramBot, type TerminalSession } from '../../runtime';
 import { useAgentsStore } from '../../hooks/useAgents';
 import { Button, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -15,7 +15,7 @@ const fmtTime = (s?: string | null) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleTimeString();
 };
 
-const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', enabled: true, token: '', webhookRegistered: false });
+const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', terminalId: '', enabled: true, token: '', webhookRegistered: false });
 
 // Telegram: manage multiple bots (each long-polled and routed to an agent), plus
 // the activity log. Polls the log while the view is open.
@@ -24,10 +24,14 @@ export function TelegramView() {
   const [logs, setLogs] = useState<TelegramLogEntry[]>([]);
   const [bots, setBots] = useState<TelegramBot[]>([]);
   const [editing, setEditing] = useState<TelegramBot | null>(null);
+  const [target, setTarget] = useState<'agent' | 'terminal'>('agent');
+  const [terminals, setTerminals] = useState<TerminalSession[]>([]);
   const [saving, setSaving] = useState(false);
 
   const load = async () => setLogs(await listTelegramLogs());
-  const loadBots = async () => setBots(await listTelegramBots());
+  const loadBots = async () => { setBots(await listTelegramBots()); setTerminals(await terminalList()); };
+
+  const openEdit = (b: TelegramBot) => { setEditing(b); setTarget(b.terminalId ? 'terminal' : 'agent'); };
 
   useEffect(() => {
     load();
@@ -63,7 +67,7 @@ export function TelegramView() {
       <div className="shrink-0">
         <div className="mb-2 flex items-center justify-between">
           <span className="font-mono text-[10px] tracking-wider text-muted uppercase">bots</span>
-          <Button icon={<Plus size={12} />} onClick={() => setEditing(blankBot())}>add bot</Button>
+          <Button icon={<Plus size={12} />} onClick={() => openEdit(blankBot())}>add bot</Button>
         </div>
 
         <div className="grid gap-2">
@@ -72,7 +76,7 @@ export function TelegramView() {
               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-background text-muted"><Bot size={14} /></span>
               <div className="min-w-0 flex-1">
                 <b className="block truncate font-mono text-[11px] text-foreground">{b.name}</b>
-                <span className="block truncate font-mono text-[10px] text-muted">{agentName(b.agentId)}{b.token ? ' · token set' : ' · no token'}{b.enabled ? '' : ' · disabled'}{b.webhookRegistered ? ' · webhook' : ' · long-poll'}</span>
+                <span className="block truncate font-mono text-[10px] text-muted">→ {b.terminalId ? `terminal: ${terminals.find((t) => t.id === b.terminalId)?.name ?? b.terminalId}` : `agent: ${agentName(b.agentId)}`}{b.token ? ' · token set' : ' · no token'}{b.enabled ? '' : ' · disabled'}{b.webhookRegistered ? ' · webhook' : ' · long-poll'}</span>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 {b.id && (
@@ -84,7 +88,7 @@ export function TelegramView() {
                     } catch (e) { toast(e instanceof Error ? e.message : String(e), 'error'); }
                   }}>{b.webhookRegistered ? 'webhook off' : 'webhook on'}</Button>
                 )}
-                <Button onClick={() => setEditing({ ...b })}>edit</Button>
+                <Button onClick={() => openEdit({ ...b })}>edit</Button>
                 <IconButton label="delete bot" onClick={async () => { await deleteTelegramBot(b.id); await loadBots(); }}><Trash2 size={12} /></IconButton>
               </div>
             </Card>
@@ -98,8 +102,22 @@ export function TelegramView() {
             <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} placeholder="e.g. Support bot" className={INPUT_CLS} />
             <label className={`${FIELD_LABEL_CLS} mt-2`}>bot token</label>
             <input type="password" value={editing.token} onChange={(e) => setEditing({ ...editing, token: e.target.value })} placeholder="123456:ABC…" className={INPUT_CLS} />
-            <label className={`${FIELD_LABEL_CLS} mt-2`}>agent</label>
-            <Select value={editing.agentId} options={agentOptions} onChange={(v) => setEditing({ ...editing, agentId: v })} />
+            <label className={`${FIELD_LABEL_CLS} mt-2`}>target</label>
+            <Select
+              value={target}
+              options={[{ value: 'agent', label: 'an agent' }, { value: 'terminal', label: 'a terminal session' }]}
+              onChange={(v) => { const t = v as 'agent' | 'terminal'; setTarget(t); setEditing(t === 'agent' ? { ...editing, terminalId: '' } : { ...editing, terminalId: terminals[0]?.id ?? '' }); }}
+            />
+            {target === 'agent' ? (
+              <Select value={editing.agentId} options={agentOptions} onChange={(v) => setEditing({ ...editing, agentId: v })} />
+            ) : (
+              <Select
+                value={editing.terminalId}
+                options={terminals.map((t) => ({ value: t.id, label: `${t.name}${t.alive ? '' : ' (exited)'}` }))}
+                onChange={(v) => setEditing({ ...editing, terminalId: v })}
+                placeholder="select a session…"
+              />
+            )}
             <div className="-mx-2 mt-1.5">
               <Checkbox checked={editing.enabled} onChange={(next) => setEditing({ ...editing, enabled: next })} label="enabled" />
             </div>

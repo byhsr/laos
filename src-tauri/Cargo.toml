@@ -22,6 +22,7 @@ regex = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "net", "time", "sync"] }
 # Parser only — the built-in HTML writer and CLI are not used.
 pulldown-cmark = { version = "0.13.4", default-features = false }
+portable-pty = "0.9.0"
 
 [target."cfg(windows)".dependencies]
 arboard = "3.6.1"
