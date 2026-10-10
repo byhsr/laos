@@ -109,6 +109,22 @@ fn is_authorized(bot: &TelegramBot, user_id: Option<i64>) -> bool {
   matches!(user_id, Some(id) if list.iter().any(|x| x == &id.to_string()))
 }
 
+// Basic auth with trust-on-first-use: when a bot has no allowlist, the first
+// sender is bound as its owner (persisted), and every later message is locked to
+// that id. Once bound it behaves exactly like an explicit allowlist.
+fn authorize_and_bind(app: &AppHandle, bot: &TelegramBot, user_id: Option<i64>) -> bool {
+  let list: Vec<String> = serde_json::from_str(&bot.allowed_users).unwrap_or_default();
+  if !list.is_empty() {
+    return matches!(user_id, Some(id) if list.iter().any(|x| x == &id.to_string()));
+  }
+  let Some(id) = user_id else { return false };
+  if let Ok(conn) = db(app) {
+    let arr = serde_json::json!([id.to_string()]).to_string();
+    let _ = conn.execute("UPDATE telegram_bots SET allowed_users=?1, updated_at=?2 WHERE id=?3", params![arr, now(), bot.id]);
+  }
+  true
+}
+
 // One-time migration: fold the legacy single telegram token (integration_configs
 // row) into a bot row so existing setups keep working.
 fn migrate_legacy_bot(conn: &Connection) {
@@ -917,7 +933,7 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
             return;
           }
         }
-        if !is_authorized(&bot, user_id) {
+        if !authorize_and_bind(&app, &bot, user_id) {
           if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.map(|c| c.to_string()).unwrap_or_default(), text.as_deref().unwrap_or(""), "", "blocked", &bot.name); }
           let t2 = token.clone();
           if let Some(cid) = chat_id { tokio::spawn(async move { let _ = telegram_send_message(&t2, cid, "This bot is private.").await; }); }
@@ -1049,8 +1065,9 @@ async fn poll_bot(app: AppHandle, bot: TelegramBot) {
         let _ = telegram_send_message(&current.token, chat_id, &format!("Your Telegram user id is {}.", user_id.map(|u| u.to_string()).unwrap_or_default())).await;
         continue;
       }
-      // Private bots: only listed user ids get through.
-      if !is_authorized(&current, user_id) {
+      // Auth: an allowlist locks the bot to its ids; empty binds the first
+      // sender as owner (trust-on-first-use), then locks to them.
+      if !authorize_and_bind(&app, &current, user_id) {
         if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "blocked", &current.name); }
         let _ = telegram_send_message(&current.token, chat_id, "This bot is private.").await;
         continue;
