@@ -156,6 +156,96 @@ pub fn delete_telegram_bot(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// Ask the user (inline-keyboard buttons + free-text input)
+// ---------------------------------------------------------------------------
+
+enum Pending {
+  Choice { options: Vec<String>, tx: tokio::sync::oneshot::Sender<String> },
+  Text(tokio::sync::oneshot::Sender<String>),
+}
+static PENDING: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Pending>>> = std::sync::OnceLock::new();
+fn pending() -> &'static std::sync::Mutex<std::collections::HashMap<String, Pending>> {
+  PENDING.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+// The chat an in-flight Telegram turn came from, so an agent tool can prompt it.
+static ACTIVE_CHAT: std::sync::OnceLock<std::sync::Mutex<Option<(String, i64)>>> = std::sync::OnceLock::new();
+fn active_chat_store() -> &'static std::sync::Mutex<Option<(String, i64)>> { ACTIVE_CHAT.get_or_init(|| std::sync::Mutex::new(None)) }
+pub(crate) fn set_active_chat(v: Option<(String, i64)>) { if let Ok(mut s) = active_chat_store().lock() { *s = v; } }
+pub(crate) fn active_chat() -> Option<(String, i64)> { active_chat_store().lock().ok().and_then(|s| s.clone()) }
+
+async fn telegram_send_markup(token: &str, chat_id: i64, text: &str, reply_markup: serde_json::Value) -> Result<(), String> {
+  let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+  let body = serde_json::json!({ "chat_id": chat_id, "text": text, "reply_markup": reply_markup });
+  let resp = http::client().post(&url).json(&body).send().await.map_err(|e| format!("Could not reach Telegram: {e}"))?;
+  if resp.status().is_success() { Ok(()) } else { Err(telegram_error(&resp.text().await.unwrap_or_default())) }
+}
+
+async fn telegram_answer_callback(token: &str, callback_id: &str, text: &str) {
+  let url = format!("https://api.telegram.org/bot{token}/answerCallbackQuery");
+  let _ = http::client().post(&url).json(&serde_json::json!({ "callback_query_id": callback_id, "text": text })).send().await;
+}
+
+// Sends a question with buttons and awaits the tap (or times out).
+pub(crate) async fn ask_choice(app: &AppHandle, bot_id: &str, chat_id: i64, question: &str, options: &[String], timeout_secs: u64) -> Result<String, String> {
+  let token = { let conn = db(app)?; load_bot(&conn, bot_id).map(|b| b.token).ok_or("Bot not found.")? };
+  let token_id = generate_webhook_secret();
+  let keyboard: Vec<serde_json::Value> = options.iter().enumerate()
+    .map(|(i, o)| serde_json::json!([{ "text": o, "callback_data": format!("ask:{token_id}:{i}") }]))
+    .collect();
+  let (tx, rx) = tokio::sync::oneshot::channel();
+  pending().lock().map_err(|_| "pending poisoned".to_string())?.insert(token_id.clone(), Pending::Choice { options: options.to_vec(), tx });
+  telegram_send_markup(&token, chat_id, question, serde_json::json!({ "inline_keyboard": keyboard })).await?;
+  match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), rx).await {
+    Ok(Ok(v)) => Ok(v),
+    _ => { if let Ok(mut m) = pending().lock() { m.remove(&token_id); } Err("No answer (timed out).".into()) }
+  }
+}
+
+// Sends a question and resolves with the next text message from that chat.
+pub(crate) async fn ask_text(app: &AppHandle, bot_id: &str, chat_id: i64, question: &str, timeout_secs: u64) -> Result<String, String> {
+  let token = { let conn = db(app)?; load_bot(&conn, bot_id).map(|b| b.token).ok_or("Bot not found.")? };
+  let key = format!("text:{}:{}", bot_id, chat_id);
+  let (tx, rx) = tokio::sync::oneshot::channel();
+  pending().lock().map_err(|_| "pending poisoned".to_string())?.insert(key.clone(), Pending::Text(tx));
+  telegram_send_message(&token, chat_id, question).await?;
+  match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), rx).await {
+    Ok(Ok(v)) => Ok(v),
+    _ => { if let Ok(mut m) = pending().lock() { m.remove(&key); } Err("No answer (timed out).".into()) }
+  }
+}
+
+// Resolves a pending text input for a chat; true when consumed (don't route on).
+fn resolve_text_input(bot_id: &str, chat_id: i64, text: &str) -> bool {
+  let key = format!("text:{}:{}", bot_id, chat_id);
+  let taken = pending().lock().ok().and_then(|mut m| m.remove(&key));
+  if let Some(Pending::Text(tx)) = taken { let _ = tx.send(text.to_string()); true } else { false }
+}
+
+// Resolves a button tap. Returns (callback_query_id, chosen value) when consumed.
+fn handle_callback(cq: &serde_json::Value) -> Option<(String, String)> {
+  let data = cq.get("data").and_then(|d| d.as_str()).unwrap_or("");
+  let cq_id = cq.get("id").and_then(|d| d.as_str()).unwrap_or("").to_string();
+  let rest = data.strip_prefix("ask:")?;
+  let mut parts = rest.splitn(2, ':');
+  let token_id = parts.next()?;
+  let idx: usize = parts.next().and_then(|s| s.parse().ok())?;
+  let taken = pending().lock().ok().and_then(|mut m| m.remove(token_id))?;
+  match taken {
+    Pending::Choice { options, tx } => { let v = options.get(idx).cloned().unwrap_or_default(); let _ = tx.send(v.clone()); Some((cq_id, v)) }
+    _ => None,
+  }
+}
+
+// Command surface for the panel/future use.
+#[tauri::command]
+pub async fn telegram_ask(app: AppHandle, bot_id: String, chat_id: i64, question: String, options: Vec<String>, timeout_secs: Option<u64>) -> Result<String, String> {
+  let t = timeout_secs.unwrap_or(300);
+  if options.is_empty() { ask_text(&app, &bot_id, chat_id, &question, t).await }
+  else { ask_choice(&app, &bot_id, chat_id, &question, &options, t).await }
+}
+
+// ---------------------------------------------------------------------------
 // Telegram tunnel + webhook (one-click expose)
 // ---------------------------------------------------------------------------
 
@@ -781,6 +871,15 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
       let body = req.split("\r\n\r\n").nth(1).unwrap_or("");
       if let Ok(update) = serde_json::from_str::<serde_json::Value>(body.trim_end_matches('\0')) {
         let update_id = update.get("update_id").and_then(|u| u.as_i64()).unwrap_or(0);
+        // Button taps.
+        if let Some(cq) = update.get("callback_query") {
+          if let Some((cq_id, value)) = handle_callback(cq) {
+            let t2 = token.clone();
+            tokio::spawn(async move { telegram_answer_callback(&t2, &cq_id, &value).await; });
+          }
+          let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
+          return;
+        }
         let text = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string());
         let chat_id = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64());
         // Health self-test probe — acknowledge without routing to the LLM.
@@ -789,13 +888,21 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
           return;
         }
         if let (Some(text), Some(chat_id)) = (text, chat_id) {
+          // A pending "next message" input consumes this without routing it on.
+          if resolve_text_input(&bot.id, chat_id, &text) {
+            if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "input", &bot.name); }
+            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
+            return;
+          }
           if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "received", &bot.name); }
           // Acknowledge before doing the model work, so Telegram doesn't time out
           // and re-deliver the update (which multiplies provider calls).
           let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
           if first_time_update(update_id) {
             tokio::spawn(async move {
+              set_active_chat(Some((bot.id.clone(), chat_id)));
               let reply = route_bot_message(&app, &bot, chat_id, &text).await;
+              set_active_chat(None);
               let send_result = telegram_send_message(&token, chat_id, &reply).await;
               if let Ok(c) = db(&app) {
                 match send_result {
@@ -887,14 +994,30 @@ async fn poll_bot(app: AppHandle, bot: TelegramBot) {
     for update in updates {
       let update_id = update.get("update_id").and_then(|u| u.as_i64()).unwrap_or(0);
       offset = update_id + 1;
+      // Button taps (inline keyboard).
+      if let Some(cq) = update.get("callback_query") {
+        if let Some((cq_id, value)) = handle_callback(cq) {
+          let _ = telegram_answer_callback(&current.token, &cq_id, &value).await;
+          if let Ok(c) = db(&app) { telegram_log(&c, "in", "", &value, "", "callback", &current.name); }
+        }
+        continue;
+      }
       let Some(text) = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string()) else { continue };
       let Some(chat_id) = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64()) else { continue };
-      if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "received", &bot.name); }
-      let reply = route_bot_message(&app, &bot, chat_id, &text).await;
-      let send_result = telegram_send_message(&bot.token, chat_id, &reply).await;
+      // A pending "next message" input consumes this without routing it on.
+      if resolve_text_input(&current.id, chat_id, &text) {
+        if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "input", &current.name); }
+        continue;
+      }
+      if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "received", &current.name); }
+      // Let an agent tool (ask_user) prompt this chat for the duration of the turn.
+      set_active_chat(Some((current.id.clone(), chat_id)));
+      let reply = route_bot_message(&app, &current, chat_id, &text).await;
+      set_active_chat(None);
+      let send_result = telegram_send_message(&current.token, chat_id, &reply).await;
       if let Ok(c) = db(&app) {
         match send_result {
-          Ok(()) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", &bot.name),
+          Ok(()) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", &current.name),
           Err(e) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &e),
         }
       }

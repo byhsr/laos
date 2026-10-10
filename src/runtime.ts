@@ -109,6 +109,11 @@ export async function setBotWebhook(botId: string, publicUrl?: string): Promise<
 export async function clearBotWebhook(botId: string): Promise<void> {
   await invoke('telegram_clear_bot_webhook', { botId });
 }
+// Ask the user a question over Telegram; with options it shows inline buttons,
+// otherwise it waits for the next message. Returns the answer.
+export async function telegramAsk(botId: string, chatId: number, question: string, options: string[], timeoutSecs?: number): Promise<string> {
+  return await invoke<string>('telegram_ask', { botId, chatId, question, options, timeoutSecs: timeoutSecs ?? null });
+}
 
 // Terminal sessions (PTY): run a real CLI and drive it from the panel or a bot.
 export type TerminalSession = { id: string; name: string; command: string; alive: boolean; excerpt: string };

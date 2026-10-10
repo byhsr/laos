@@ -108,6 +108,8 @@ manager_tool!(ManagerWorkspaceStatus, "get_workspace_status", "Get a condensed w
 manager_tool!(ManagerRecallMemory, "recall_memory", "Recall what was discussed or done recently: long-term facts, the last chat summary, and today's/yesterday's condensed context. Call this when the user asks 'what have we done/talked about', to continue prior work, or to reference past decisions. Does NOT inject history into the conversation — it returns it as tool output.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerKnowledgeBase, "knowledge_base", "Read and write the shared knowledge base. Params: action ('list' | 'get' | 'search' | 'save'), title (string, for save/search), content (string, for save), id (string, for get/save). Use it to store durable reference material (company wiki, ICP notes, decisions) that any agent can consult later.", serde_json::json!({ "action": { "type": "string" }, "title": { "type": "string" }, "content": { "type": "string" }, "id": { "type": "string" } }), serde_json::json!(["action"]));
 
+manager_tool!(ManagerAskUser, "ask_user", "Ask the user a question and wait for the answer. Over Telegram this shows buttons when options are given, or waits for their next message otherwise. Params: question (string), options (array of strings, optional).", serde_json::json!({ "question": { "type": "string" }, "options": { "type": "array", "items": { "type": "string" } } }), serde_json::json!(["question"]));
+
 pub(crate) fn manager_tools() -> Vec<Box<dyn AgentTool>> {
   vec![
     Box::new(ManagerListAgents),
@@ -134,6 +136,7 @@ pub(crate) fn manager_tools() -> Vec<Box<dyn AgentTool>> {
     Box::new(ManagerWorkspaceStatus),
     Box::new(ManagerRecallMemory),
     Box::new(ManagerKnowledgeBase),
+    Box::new(ManagerAskUser),
     Box::new(SearchFilesTool),
     Box::new(ReadAnyFileTool),
     Box::new(RunCommandTool),
@@ -656,6 +659,20 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
     "search_files" => SearchFilesTool.run(args).await,
     "read_file_any" => ReadAnyFileTool.run(args).await,
     "run_command" => RunCommandTool.run(args).await,
+    "ask_user" => {
+      let question = args.get("question").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let options: Vec<String> = args.get("options").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+      match crate::telegram::active_chat() {
+        Some((bot_id, chat_id)) => {
+          if options.is_empty() {
+            crate::telegram::ask_text(app, &bot_id, chat_id, &question, 300).await
+          } else {
+            crate::telegram::ask_choice(app, &bot_id, chat_id, &question, &options, 300).await
+          }
+        }
+        None => Ok("ask_user works from a Telegram chat; there isn't one in this turn.".into()),
+      }
+    }
     _ => Err(format!("Manager tool '{name}' not implemented.")),
   }
 }
