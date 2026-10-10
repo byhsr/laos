@@ -981,6 +981,19 @@ fn term_relay() -> &'static std::sync::Mutex<std::collections::HashMap<String, T
   TERM_RELAY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
+// Chat-bound CLI sessions started with `/cli`: "{bot_id}:{chat_id}" -> terminal id.
+static CHAT_CLI: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = std::sync::OnceLock::new();
+fn chat_cli() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+  CHAT_CLI.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+fn chat_cli_get(key: &str) -> Option<String> { chat_cli().lock().ok().and_then(|m| m.get(key).cloned()) }
+fn chat_cli_set(key: &str, id: Option<&str>) {
+  if let Ok(mut m) = chat_cli().lock() {
+    match id { Some(v) => { m.insert(key.to_string(), v.to_string()); }, None => { m.remove(key); } }
+  }
+}
+fn default_shell() -> String { if cfg!(windows) { "cmd".to_string() } else { "sh".to_string() } }
+
 // Called by the terminal reader when a bound session produces output.
 pub(crate) fn on_terminal_output(_app: &AppHandle, session_id: &str, _text: &str) {
   if let Ok(mut m) = term_relay().lock() {
@@ -1109,6 +1122,49 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
       Err(_) => "No tasks.".into(),
     },
     _ => {
+      let key = format!("{}:{}", bot.id, chat_id);
+      let cmd = text.trim();
+      // `/cli [command]` — start a CLI session bound to this chat and pipe the
+      // following messages into its stdin. This is a terminal, not a conversation:
+      // it returns before the agent path, so nothing here is ever written to
+      // memory (terminal sessions never teach memory).
+      if cmd == "/cli" || cmd.starts_with("/cli ") {
+        if let Some(prev) = chat_cli_get(&key) { let _ = crate::terminal::terminal_kill(prev); }
+        let launch = cmd.strip_prefix("/cli").map(|s| s.trim().to_string()).unwrap_or_default();
+        let command = if launch.is_empty() { default_shell() } else { launch };
+        return match crate::terminal::terminal_start(app.clone(), format!("tg-{chat_id}"), command.clone(), None, None, None) {
+          Ok(v) => {
+            let sid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            if sid.is_empty() { "Could not start the session.".into() } else {
+              chat_cli_set(&key, Some(&sid));
+              if let Ok(mut m) = term_relay().lock() {
+                m.insert(sid.clone(), TermRelay { token: bot.token.clone(), chat_id, last_output: std::time::Instant::now(), dirty: false, last_sent: String::new() });
+              }
+              format!("CLI started (`{command}`). Send a command; /screen to peek, /exit to end.")
+            }
+          }
+          Err(e) => format!("Could not start the CLI: {e}"),
+        };
+      }
+      if matches!(cmd, "/exit" | "/cli-stop") || cmd == "/cli stop" {
+        return match chat_cli_get(&key) {
+          Some(sid) => { let _ = crate::terminal::terminal_kill(sid); chat_cli_set(&key, None); "CLI session ended.".into() }
+          None => "No CLI session in this chat.".into(),
+        };
+      }
+      // A chat-bound CLI session owns the message.
+      if let Some(sid) = chat_cli_get(&key) {
+        if !crate::terminal::session_alive(&sid) {
+          chat_cli_set(&key, None);
+          return "CLI session ended. Send /cli to start another.".into();
+        }
+        if cmd == "/screen" {
+          let t = crate::terminal::tail_text(&sid, 40);
+          return if t.trim().is_empty() { "(no output yet)".into() } else { t };
+        }
+        if let Err(e) = crate::terminal::write_line(&sid, text) { return format!("Terminal error: {e}"); }
+        return String::new(); // output is relayed
+      }
       // A bot bound to a terminal pipes the message into the CLI's stdin. If the
       // session isn't running we say so — never silently fall back to an agent.
       if !bot.terminal_id.is_empty() {
