@@ -88,18 +88,10 @@ fn ensure_browser_server(_app: &AppHandle, conn: &Connection) -> Result<(), Stri
   Ok(())
 }
 
-// Imports the memory tools into the registry once, so agents — and the Manager,
-// which receives every enabled MCP tool — can use memory without a manual sync.
-// Best-effort: if fox isn't built or node is missing this silently does nothing,
-// and the Memory view / MCP panel surfaces the reason.
-fn import_memory_tools_once(app: &AppHandle) {
-  let count: i64 = match db(app) {
-    Ok(conn) => conn
-      .query_row("SELECT COUNT(*) FROM tools WHERE kind='mcp' AND integration_id=?1", params![MEMORY_SERVER_ID], |r| r.get(0))
-      .unwrap_or(0),
-    Err(_) => return,
-  };
-  if count > 0 { return; }
+// Re-imports the memory tools on every launch: the memory connector (fox) evolves
+// — it gained namespaces — and import rebuilds its rows, so new commands appear in
+// the registry. Best-effort.
+fn sync_memory_tools(app: &AppHandle) {
   let _ = crate::mcp::import_mcp_tools(app.clone(), MEMORY_SERVER_ID.to_string());
 }
 
@@ -135,7 +127,7 @@ pub async fn initialize_storage(app: AppHandle) -> Result<(), String> {
   // which may download on first run), so run it off the main thread — a cold
   // start must never block the UI or flash a console.
   tauri::async_runtime::spawn_blocking(move || {
-    import_memory_tools_once(&app);
+    sync_memory_tools(&app);
     import_browser_tools_once(&app);
   }).await.map_err(|e| e.to_string())?;
   Ok(())
@@ -407,6 +399,8 @@ pub fn save_project(app: AppHandle, project: ProjectRecord) -> Result<String, St
      ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, updated_at=excluded.updated_at",
     params![id, project.name, project.description, created, now],
   ).map_err(|e| e.to_string())?;
+  // Mirror the project into fox as a namespace so its memory is tracked together.
+  crate::fox::register_namespace(&app, &id, &project.name, &project.description);
   Ok(id)
 }
 
@@ -414,6 +408,7 @@ pub fn save_project(app: AppHandle, project: ProjectRecord) -> Result<String, St
 pub fn delete_project(app: AppHandle, id: String) -> Result<(), String> {
   let conn = db(&app)?;
   conn.execute("DELETE FROM projects WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+  crate::fox::remove_namespace(&app, &id);
   Ok(())
 }
 

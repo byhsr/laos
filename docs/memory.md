@@ -196,3 +196,7 @@ Setup / wiring:
   directly through the generic `mcp::call_mcp_tool` command → `list_memories` /
   `search` / `get_self_model` / `stats`.
 - After editing fox, rebuild it: `npm --prefix <fox> run build` (tsc → `dist/mcp/server.js`).
+- fox (agent-memory 0.1.0) also has a **namespaces** registry and a **scoped** self-model: a lup
+  **project** registers a `project` namespace on save (`create_namespace`) and removes it on
+  delete, so project memory is tracked together. The Memory view lists namespaces
+  (`list_namespaces`); memory tools are re-imported on every launch so new fox commands appear.

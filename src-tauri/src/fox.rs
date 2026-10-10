@@ -32,6 +32,21 @@ fn scope(agent_id: &str) -> serde_json::Value {
   serde_json::json!({ "type": "agent", "id": agent_id })
 }
 
+/// Registers a project as a fox namespace, so its memory is tracked together
+/// (fox's namespace registry, added in agent-memory 0.1.0). Best-effort.
+pub(crate) fn register_namespace(app: &AppHandle, id: &str, name: &str, description: &str) {
+  let _ = call(app, "create_namespace", serde_json::json!({
+    "scope": { "type": "project", "id": id },
+    "name": name,
+    "description": description,
+  }));
+}
+
+/// Unregisters a project's namespace (its memory is left in place). Best-effort.
+pub(crate) fn remove_namespace(app: &AppHandle, id: &str) {
+  let _ = call(app, "remove_namespace", serde_json::json!({ "scope": { "type": "project", "id": id } }));
+}
+
 /// Records both sides of a finished turn as experience. Best-effort. When the
 /// session belongs to a project, the experience is filed under the project's
 /// scope, so a project's memory accumulates across its conversations.

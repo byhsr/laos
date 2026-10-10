@@ -20,8 +20,9 @@ type FoxMemory = {
 };
 type FoxSelfEntry = { id: string; key: string; value: string; confidence?: number; importance?: number; updatedAt?: number };
 type FoxStats = { events: number; memories: number; selfModelEntries: number };
+type FoxNamespace = { namespace: { key: string; type: string; id: string | null; name: string; description?: string | null }; counts: { events: number; memories: number; selfModelEntries: number }; lastActivityAt?: number | null };
 
-type Tab = 'memories' | 'self';
+type Tab = 'memories' | 'self' | 'namespaces';
 
 const fmtDate = (ms?: number | null) => {
   if (!ms) return '';
@@ -38,6 +39,7 @@ export function MemoryView() {
   const [submitted, setSubmitted] = useState('');
   const [memories, setMemories] = useState<FoxMemory[]>([]);
   const [selfEntries, setSelfEntries] = useState<FoxSelfEntry[]>([]);
+  const [namespaces, setNamespaces] = useState<FoxNamespace[]>([]);
   const [stats, setStats] = useState<FoxStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -80,6 +82,13 @@ export function MemoryView() {
   }, [agentId, submitted]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Namespaces = tracked scopes (projects). Loaded on demand from the connector.
+  const loadNamespaces = useCallback(async () => {
+    try { setNamespaces(((await callMcpTool(MEMORY_SERVER, 'list_namespaces', {})) as FoxNamespace[]) ?? []); }
+    catch { setNamespaces([]); }
+  }, []);
+  useEffect(() => { if (tab === 'namespaces') void loadNamespaces(); }, [tab, loadNamespaces]);
 
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -176,7 +185,7 @@ export function MemoryView() {
           <IconButton label="export memory" className="h-[30px] w-[30px] shrink-0" onClick={() => void exportMemory()}><Download size={13} /></IconButton>
           <IconButton label="import memory" className="h-[30px] w-[30px] shrink-0" onClick={() => fileRef.current?.click()}><Upload size={13} /></IconButton>
           <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => void importMemory(e)} />
-          {([['memories', 'memories'], ['self', 'self-model']] as const).map(([key, label]) => (
+          {([['memories', 'memories'], ['self', 'self-model'], ['namespaces', 'namespaces']] as const).map(([key, label]) => (
             <button key={key} className={tabCls(tab === key)} onClick={() => setTab(key)}>{label}</button>
           ))}
         </div>
@@ -244,6 +253,27 @@ export function MemoryView() {
                   {s.importance !== undefined && <span className="ml-auto font-mono text-[10px] text-muted">imp {pct(s.importance)}</span>}
                 </div>
                 <p className="m-0 text-[12.5px] leading-[1.6] break-words whitespace-pre-wrap text-foreground/80">{s.value}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'namespaces' ? '' : 'hidden'}`}>
+        {namespaces.length === 0 ? (
+          <p className="m-0 px-1 font-mono text-[11px] text-muted">no namespaces yet — a project registers one, and turns in it file their memory there</p>
+        ) : (
+          <div className="grid gap-2">
+            {namespaces.map((n) => (
+              <div key={n.namespace.key} className="rounded-xl border border-border bg-surface px-3.5 py-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 rounded bg-background px-1.5 py-0.5 font-mono text-[9.5px] text-muted">{n.namespace.type}</span>
+                  <b className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground">{n.namespace.name}</b>
+                  {fmtDate(n.lastActivityAt) && <span className="shrink-0 font-mono text-[10px] text-muted">{fmtDate(n.lastActivityAt)}</span>}
+                </div>
+                {n.namespace.description && <p className="mt-1 mb-0 font-mono text-[10px] text-muted">{n.namespace.description}</p>}
+                <div className="mt-1 font-mono text-[10px] text-muted">
+                  {n.counts.memories.toLocaleString()} memories · {n.counts.events.toLocaleString()} events · {n.counts.selfModelEntries.toLocaleString()} self-model
+                </div>
               </div>
             ))}
           </div>
