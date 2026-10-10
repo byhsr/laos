@@ -151,12 +151,14 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({ "role": "system", "content": system })];
   messages.extend(window);
 
-  // Provider, endpoint, key and reasoning setting all resolve in one place now.
-  let mut resolved = provider::resolve(&conn, &agent.model, None)?;
-  // The agent's own reasoning wins over the model's default.
-  provider::apply_agent_reasoning(&mut resolved, &agent.reasoning);
-  let is_ollama = resolved.kind == provider::Kind::Ollama;
-  let is_anthropic = resolved.kind == provider::Kind::Anthropic;
+  // Resolve with a local fallback: if the configured model can't be used (no key
+  // or unknown provider), fall back to a local Ollama model so the turn still replies.
+  let primary = provider::resolve(&conn, &agent.model, None);
+  let fallback_candidates = crate::fallback::local_candidates(&conn);
+  let (mut resolved, fallback_note) = crate::fallback::resolve_with_fallback(primary, fallback_candidates.clone(), &agent.reasoning).await?;
+  if let Some(note) = &fallback_note { emit_status(&on_event, "think", note); }
+  let mut is_ollama = resolved.kind == provider::Kind::Ollama;
+  let mut is_anthropic = resolved.kind == provider::Kind::Anthropic;
 
   // Tool-call rounds (non-streaming) run first, then the final reply streams.
   // Usage is accumulated across every round (and the final stream) so a run's
@@ -171,22 +173,19 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
       // Keep only the latest screenshot in the request; older ones are dropped so
       // a vision loop doesn't re-send every image on every round.
       strip_old_images(&mut messages);
-      let mut body = serde_json::json!({
-        "model": resolved.model,
-        "messages": messages,
-        "tools": tool_schemas(&tools),
-        "stream": false,
-      });
-      let budget = provider::apply_reasoning(&mut body, &resolved, http::CHAT_MAX_TOKENS);
-      if is_ollama {
-        provider::apply_ollama_options(&mut body, budget);
-      } else {
-        http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
-      }
-      // Anthropic isn't OpenAI-compatible: translate the body out, and the
-      // response back into the OpenAI shape the parser below expects.
-      if is_anthropic { body = crate::anthropic::to_wire(&body); }
-      let response = http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
+      let mut body = build_tool_body(&resolved, &messages, &tools);
+      let response = match http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await {
+        Ok(r) => r,
+        Err(e) => match crate::fallback::fallback_resolved(fallback_candidates.clone()).await {
+          Some((fb, cand)) => {
+            emit_status(&on_event, "think", &format!("Model error ({e}); retrying with local {cand}."));
+            resolved = fb; is_ollama = resolved.kind == provider::Kind::Ollama; is_anthropic = resolved.kind == provider::Kind::Anthropic;
+            body = build_tool_body(&resolved, &messages, &tools);
+            http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?
+          }
+          None => return Err(e),
+        },
+      };
       let mut parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
       if is_anthropic { parsed = crate::anthropic::normalize_response(&parsed); }
       // Ollama reports prompt_eval_count/eval_count; OpenAI-compatible usage.{prompt,completion}_tokens.
@@ -258,20 +257,19 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   emit_status(&on_event, "write", "Writing the reply…");
   strip_old_images(&mut messages);
   let client = http::stream_client();
-  let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "stream": true });
-  let budget = provider::apply_reasoning(&mut body, &resolved, http::CHAT_MAX_TOKENS);
-  if is_ollama {
-    provider::apply_ollama_options(&mut body, budget);
-  } else {
-    let is_openrouter = resolved.kind == provider::Kind::OpenRouter;
-    http::apply_openai_defaults(&mut body, is_openrouter, budget);
-    // Ask for usage on the final chunk so the recorded run has real token counts.
-    if is_openrouter { body["usage"] = serde_json::json!({ "include": true }); }
-    else { body["stream_options"] = serde_json::json!({ "include_usage": true }); }
-  }
-  // Anthropic's own stream shape; translate the body (its usage fields are OpenAI-only).
-  if is_anthropic { body = crate::anthropic::to_wire(&body); }
-  let response = http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
+  let mut body = build_stream_body(&resolved, &messages);
+  let response = match http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await {
+    Ok(r) => r,
+    Err(e) => match crate::fallback::fallback_resolved(fallback_candidates.clone()).await {
+      Some((fb, cand)) => {
+        emit_status(&on_event, "think", &format!("Model error ({e}); retrying with local {cand}."));
+        resolved = fb; is_ollama = resolved.kind == provider::Kind::Ollama; is_anthropic = resolved.kind == provider::Kind::Anthropic;
+        body = build_stream_body(&resolved, &messages);
+        http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?
+      }
+      None => return Err(e),
+    },
+  };
   let mut stream = response.bytes_stream();
   let mut buffer = String::new();
   let mut delta = String::new();
@@ -394,6 +392,35 @@ fn emit_status(on_event: &tauri::ipc::Channel<String>, kind: &str, text: &str) {
 // actually thinking. Only providers that expose it send anything.
 fn emit_reasoning(on_event: &tauri::ipc::Channel<String>, text: &str) {
   let _ = on_event.send(serde_json::json!({ "type": "reasoning", "text": text }).to_string());
+}
+
+// Builds a non-streaming tool-round request body for the given provider.
+fn build_tool_body(resolved: &provider::Resolved, messages: &[serde_json::Value], tools: &[Box<dyn AgentTool>]) -> serde_json::Value {
+  let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "tools": tool_schemas(tools), "stream": false });
+  let budget = provider::apply_reasoning(&mut body, resolved, http::CHAT_MAX_TOKENS);
+  if resolved.kind == provider::Kind::Ollama {
+    provider::apply_ollama_options(&mut body, budget);
+  } else {
+    http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
+  }
+  if resolved.kind == provider::Kind::Anthropic { body = crate::anthropic::to_wire(&body); }
+  body
+}
+
+// Builds the final streaming request body for the given provider.
+fn build_stream_body(resolved: &provider::Resolved, messages: &[serde_json::Value]) -> serde_json::Value {
+  let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "stream": true });
+  let budget = provider::apply_reasoning(&mut body, resolved, http::CHAT_MAX_TOKENS);
+  if resolved.kind == provider::Kind::Ollama {
+    provider::apply_ollama_options(&mut body, budget);
+  } else {
+    let is_openrouter = resolved.kind == provider::Kind::OpenRouter;
+    http::apply_openai_defaults(&mut body, is_openrouter, budget);
+    if is_openrouter { body["usage"] = serde_json::json!({ "include": true }); }
+    else { body["stream_options"] = serde_json::json!({ "include_usage": true }); }
+  }
+  if resolved.kind == provider::Kind::Anthropic { body = crate::anthropic::to_wire(&body); }
+  body
 }
 
 // Runs a single tool call. State-changing tools go through the confirmation popup

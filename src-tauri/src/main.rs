@@ -3,6 +3,7 @@ mod agents;
 mod anthropic;
 mod chat;
 mod db;
+mod fallback;
 mod fox;
 mod http;
 mod integrations;

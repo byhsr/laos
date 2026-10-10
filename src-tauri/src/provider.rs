@@ -57,6 +57,7 @@ impl Reasoning {
   }
 }
 
+#[derive(Clone)]
 pub(crate) struct Resolved {
   pub(crate) kind: Kind,
   /// Provider root: the stored host for Ollama, the completions URL otherwise.

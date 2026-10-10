@@ -240,6 +240,23 @@ handle it in `apply_reasoning`. Nothing else in the backend changes — all five
 up. Non-compatible providers also need a response-shape adapter where replies are parsed.
 Always update the endpoint table above.
 
+## Model fallback
+
+`fallback.rs` keeps a turn alive when the configured model can't be used:
+
+- **Resolve-time.** If `provider::resolve` fails (no API key, unknown provider prefix), the turn
+  falls back to a local model: enabled `ollama:` models first, then the built-in default
+  `ollama:qwen3:8b`.
+- **Request-time.** If a request fails before it starts (in a tool round or the final stream), the
+  chat path retries once against the same local fallback.
+- **Made available.** Before using an Ollama fallback, Ollama is started if it isn't reachable
+  (`ollama serve`, best-effort) and the model is pulled if it isn't present (best-effort).
+- A `status` step reports the switch ("… using local …") so the user knows why the reply came from
+  a different model.
+
+`chat.rs` (`stream_chat`, so agent + Manager chat) and `manager.rs` (`manager_turn`, Telegram) use
+it; the resolve helper is `fallback::resolve_with_fallback`.
+
 ## Quick reference
 
 - Tool-round cap: `MAX_TOOL_ROUNDS = 5` (`tools/mod.rs`).

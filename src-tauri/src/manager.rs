@@ -311,9 +311,13 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   // Endpoint, key and reasoning all resolve in one place. This path used to pass
   // `!is_groq` as its "is OpenRouter" flag, which routed an unknown prefix to
   // OpenRouter instead of failing.
-  let mut resolved = provider::resolve(&conn, &manager.model, None)?;
-  // The Manager's own reasoning wins over the model's default.
-  provider::apply_agent_reasoning(&mut resolved, &manager.reasoning);
+  // Resolve with a local fallback so a bot/Telegram turn still replies when the
+  // configured model is unusable.
+  let (resolved, _fb) = crate::fallback::resolve_with_fallback(
+    provider::resolve(&conn, &manager.model, None),
+    crate::fallback::local_candidates(&conn),
+    &manager.reasoning,
+  ).await?;
   let is_ollama = resolved.kind == provider::Kind::Ollama;
   let is_anthropic = resolved.kind == provider::Kind::Anthropic;
   let mut final_output = String::new();
