@@ -212,6 +212,7 @@ fn main() {
       app_settings::set_launch_at_login,
       app_settings::set_default_shell,
       app_settings::set_cli_shortcuts,
+      app_settings::set_autonomy,
     ])
     .build(tauri::generate_context!())
     .expect("error while running Local Agent OS")

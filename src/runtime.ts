@@ -482,15 +482,18 @@ export async function appVersion(): Promise<string> {
 
 // App settings: background/tray mode + launch at login.
 export type CliShortcut = { name: string; command: string; cwd: string };
-export type AppSettings = { runInBackground: boolean; launchAtLogin: boolean; autostartEnabled: boolean; defaultShell: string; cliShortcuts: CliShortcut[] };
+export type AppSettings = { runInBackground: boolean; launchAtLogin: boolean; autostartEnabled: boolean; defaultShell: string; cliShortcuts: CliShortcut[]; autonomy: boolean };
 export async function getAppSettings(): Promise<AppSettings> {
-  try { return await invoke<AppSettings>('get_app_settings'); } catch { return { runInBackground: true, launchAtLogin: false, autostartEnabled: false, defaultShell: '', cliShortcuts: [] }; }
+  try { return await invoke<AppSettings>('get_app_settings'); } catch { return { runInBackground: true, launchAtLogin: false, autostartEnabled: false, defaultShell: '', cliShortcuts: [], autonomy: true }; }
 }
 export async function setRunInBackground(enabled: boolean): Promise<void> {
   await invoke('set_run_in_background', { enabled });
 }
 export async function setLaunchAtLogin(enabled: boolean): Promise<void> {
   await invoke('set_launch_at_login', { enabled });
+}
+export async function setAutonomy(enabled: boolean): Promise<void> {
+  await invoke('set_autonomy', { enabled });
 }
 export async function setDefaultShell(shell: string): Promise<void> {
   await invoke('set_default_shell', { shell });

@@ -426,7 +426,9 @@ fn build_stream_body(resolved: &provider::Resolved, messages: &[serde_json::Valu
 // Runs a single tool call. State-changing tools go through the confirmation popup
 // first; everything else executes immediately.
 async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value, on_event: &tauri::ipc::Channel<String>, stream_id: Option<&str>) -> Result<ToolOutput, String> {
-  if !requires_confirmation(name) {
+  // Autonomy (the default) runs state-changing tools straight away; otherwise the
+  // state-changing ones go through the approval popup first.
+  if crate::app_settings::autonomy(app) || !requires_confirmation(name) {
     return Ok(execute_tool(app, tools, is_manager, name, args).await);
   }
   let request_id = format!("req-{}", chrono::Utc::now().timestamp_millis());

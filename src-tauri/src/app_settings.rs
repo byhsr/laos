@@ -41,6 +41,12 @@ pub(crate) fn run_in_background(app: &AppHandle) -> bool {
   db(app).ok().map(|c| flag(get(&c, "run_in_background"), true)).unwrap_or(true)
 }
 
+/// When on, state-changing tools run without the in-app approval popup and the
+/// manager doesn't stop to ask the user a question — it proceeds on its own.
+pub(crate) fn autonomy(app: &AppHandle) -> bool {
+  db(app).ok().map(|c| flag(get(&c, "autonomy"), true)).unwrap_or(true)
+}
+
 /// Shell launched when a session starts without an explicit command (`/cli`, new
 /// terminals). Empty/unset falls back to the platform default (cmd / sh).
 pub(crate) fn default_shell(app: &AppHandle) -> String {
@@ -73,7 +79,14 @@ pub fn get_app_settings(app: AppHandle) -> Result<Value, String> {
     "autostartEnabled": app.autolaunch().is_enabled().unwrap_or(false),
     "defaultShell": default_shell(&app),
     "cliShortcuts": cli_shortcuts(&conn),
+    "autonomy": autonomy(&app),
   }))
+}
+
+#[tauri::command]
+pub fn set_autonomy(app: AppHandle, enabled: bool) -> Result<(), String> {
+  let conn = db(&app)?;
+  set(&conn, "autonomy", if enabled { "1" } else { "0" })
 }
 
 #[tauri::command]

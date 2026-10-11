@@ -351,7 +351,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
         // One dispatcher for every path. This used to be a second,
         // hand-maintained copy of the tool logic, and the two drifted apart —
         // a tool could be offered to the model and then come back "unknown".
-        let result = if name == "run_command" {
+        let result = if name == "run_command" && !crate::app_settings::autonomy(app) {
           // Shell execution is gated behind a confirmation popup in the app.
           // This path has no way to ask, so refuse rather than run it silently.
           Err("run_command needs your approval, which this channel can't ask for. Run it from the Manager chat in the app.".to_string())
@@ -381,7 +381,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
       }
       messages.push(ChatMessage { role: "assistant".into(), content: Some(content), tool_calls: None, tool_call_id: None });
       for call in text_calls {
-        let result = if call.name == "run_command" {
+        let result = if call.name == "run_command" && !crate::app_settings::autonomy(app) {
           Err("run_command needs your approval, which this channel can't ask for. Run it from the Manager chat in the app.".to_string())
         } else {
           run_manager_tool(app, &tools, &call.name, &call.args).await
@@ -664,17 +664,22 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
     "read_file_any" => ReadAnyFileTool.run(args).await,
     "run_command" => RunCommandTool.run(args).await,
     "ask_user" => {
-      let question = args.get("question").and_then(|v| v.as_str()).unwrap_or("").to_string();
-      let options: Vec<String> = args.get("options").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
-      match crate::telegram::active_chat() {
-        Some((bot_id, chat_id)) => {
-          if options.is_empty() {
-            crate::telegram::ask_text(app, &bot_id, chat_id, &question, 300).await
-          } else {
-            crate::telegram::ask_choice(app, &bot_id, chat_id, &question, &options, 300).await
+      if crate::app_settings::autonomy(app) {
+        // No one is at the keyboard — don't stall the turn waiting for an answer.
+        Ok("Autonomy is on and no one is at the keyboard. Use your best judgment and continue without asking.".into())
+      } else {
+        let question = args.get("question").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let options: Vec<String> = args.get("options").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+        match crate::telegram::active_chat() {
+          Some((bot_id, chat_id)) => {
+            if options.is_empty() {
+              crate::telegram::ask_text(app, &bot_id, chat_id, &question, 300).await
+            } else {
+              crate::telegram::ask_choice(app, &bot_id, chat_id, &question, &options, 300).await
+            }
           }
+          None => Ok("ask_user works from a Telegram chat; there isn't one in this turn.".into()),
         }
-        None => Ok("ask_user works from a Telegram chat; there isn't one in this turn.".into()),
       }
     }
     _ => Err(format!("Manager tool '{name}' not implemented.")),

@@ -8,7 +8,7 @@ import { Button } from '../ui/Button';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS } from '../ui/Input';
 import { tabCls } from '../ui/tabs';
 import { toast } from '../../hooks/useToast';
-import { appVersion, checkForUpdate, getAppSettings, setRunInBackground, setLaunchAtLogin, type UpdateInfo } from '../../runtime';
+import { appVersion, checkForUpdate, getAppSettings, setRunInBackground, setLaunchAtLogin, setAutonomy, type UpdateInfo } from '../../runtime';
 import { Checkbox } from '../ui/Checkbox';
 import { NAV_SECTIONS, useNavLabels } from '../../hooks/useNavLabels';
 import { THEMES, activeTheme, applyTheme, type ThemeKey } from '../../theme';
@@ -31,13 +31,14 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
   const [theme, setTheme] = useState<ThemeKey>(activeTheme);
   const [bg, setBg] = useState(true);
   const [login, setLogin] = useState(false);
+  const [autonomy, setAutonomyOn] = useState(true);
 
   const navLabels = useNavLabels((s) => s.labels);
   const setNavLabel = useNavLabels((s) => s.setLabel);
   const resetNavLabels = useNavLabels((s) => s.reset);
 
   useEffect(() => { appVersion().then(setVersion); }, []);
-  useEffect(() => { getAppSettings().then((s) => { setBg(s.runInBackground); setLogin(s.launchAtLogin); }); }, []);
+  useEffect(() => { getAppSettings().then((s) => { setBg(s.runInBackground); setLogin(s.launchAtLogin); setAutonomyOn(s.autonomy); }); }, []);
 
   const toggleBg = async (next: boolean) => {
     setBg(next);
@@ -53,6 +54,14 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
       await setLaunchAtLogin(next);
       toast(next ? 'will launch at login' : 'removed from startup', 'success');
     } catch (e) { setLogin(!next); toast(typeof e === 'string' ? e : 'could not update startup', 'error'); }
+  };
+
+  const toggleAutonomy = async (next: boolean) => {
+    setAutonomyOn(next);
+    try {
+      await setAutonomy(next);
+      toast(next ? 'autonomous — no per-action approval' : 'will ask before state-changing actions', 'success');
+    } catch (e) { setAutonomyOn(!next); toast(typeof e === 'string' ? e : 'could not save', 'error'); }
   };
 
   const pickTheme = (key: ThemeKey) => {
@@ -106,6 +115,14 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
                 </button>
               ))}
             </div>
+          </Card>
+
+          <Card className="hover:bg-surface">
+            <h3 className="m-0 font-mono text-xs lowercase text-foreground">autonomy</h3>
+            <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">
+              Let agents run state-changing tools (commands, file writes, delegating) without stopping for the approval popup.
+            </p>
+            <Checkbox checked={autonomy} onChange={toggleAutonomy} label="autonomous — don't ask before each action" />
           </Card>
 
           <Card className="hover:bg-surface">
