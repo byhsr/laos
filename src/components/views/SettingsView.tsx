@@ -8,7 +8,8 @@ import { Button } from '../ui/Button';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS } from '../ui/Input';
 import { tabCls } from '../ui/tabs';
 import { toast } from '../../hooks/useToast';
-import { appVersion, checkForUpdate, type UpdateInfo } from '../../runtime';
+import { appVersion, checkForUpdate, getAppSettings, setRunInBackground, setLaunchAtLogin, type UpdateInfo } from '../../runtime';
+import { Checkbox } from '../ui/Checkbox';
 import { NAV_SECTIONS, useNavLabels } from '../../hooks/useNavLabels';
 import { THEMES, activeTheme, applyTheme, type ThemeKey } from '../../theme';
 
@@ -28,12 +29,31 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
   const [checking, setChecking] = useState(false);
   const [found, setFound] = useState<UpdateInfo | null>(null);
   const [theme, setTheme] = useState<ThemeKey>(activeTheme);
+  const [bg, setBg] = useState(true);
+  const [login, setLogin] = useState(false);
 
   const navLabels = useNavLabels((s) => s.labels);
   const setNavLabel = useNavLabels((s) => s.setLabel);
   const resetNavLabels = useNavLabels((s) => s.reset);
 
   useEffect(() => { appVersion().then(setVersion); }, []);
+  useEffect(() => { getAppSettings().then((s) => { setBg(s.runInBackground); setLogin(s.launchAtLogin); }); }, []);
+
+  const toggleBg = async (next: boolean) => {
+    setBg(next);
+    try {
+      await setRunInBackground(next);
+      toast(next ? 'keeps running in the tray' : 'closing the window will quit', 'success');
+    } catch (e) { setBg(!next); toast(typeof e === 'string' ? e : 'could not save', 'error'); }
+  };
+
+  const toggleLogin = async (next: boolean) => {
+    setLogin(next);
+    try {
+      await setLaunchAtLogin(next);
+      toast(next ? 'will launch at login' : 'removed from startup', 'success');
+    } catch (e) { setLogin(!next); toast(typeof e === 'string' ? e : 'could not update startup', 'error'); }
+  };
 
   const pickTheme = (key: ThemeKey) => {
     applyTheme(key);
@@ -85,6 +105,17 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
                   <b className="font-mono text-[10px] text-muted">{t.key}</b>
                 </button>
               ))}
+            </div>
+          </Card>
+
+          <Card className="hover:bg-surface">
+            <h3 className="m-0 font-mono text-xs lowercase text-foreground">background</h3>
+            <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">
+              Keep the app running in the system tray so the Telegram bots keep polling when the window is closed.
+            </p>
+            <div className="grid gap-2.5">
+              <Checkbox checked={bg} onChange={toggleBg} label="keep running in the tray (closing hides the window)" />
+              <Checkbox checked={login} onChange={toggleLogin} label="launch at login" />
             </div>
           </Card>
 

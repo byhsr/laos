@@ -2,6 +2,7 @@
 mod agents;
 mod agent_memory;
 mod anthropic;
+mod app_settings;
 mod chat;
 mod db;
 mod fallback;
@@ -23,12 +24,55 @@ mod tooltext;
 mod updater;
 mod workflows;
 
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::Manager;
+
+fn show_main(app: &tauri::AppHandle) {
+  if let Some(w) = app.get_webview_window("main") {
+    let _ = w.show();
+    let _ = w.unminimize();
+    let _ = w.set_focus();
+  }
+}
+
+// System tray so the app keeps running (Telegram keeps polling) when the window
+// is closed to the tray: left-click or Show brings it back, Quit exits for real.
+fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+  let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+  let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+  let menu = Menu::with_items(app, &[&show, &quit])?;
+  let mut builder = TrayIconBuilder::with_id("lup-tray")
+    .menu(&menu)
+    .show_menu_on_left_click(false)
+    .on_menu_event(|app, event| match event.id.as_ref() {
+      "show" => show_main(app),
+      "quit" => app.exit(0),
+      _ => {}
+    })
+    .on_tray_icon_event(|tray, event| {
+      if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+        show_main(tray.app_handle());
+      }
+    });
+  if let Some(icon) = app.default_window_icon() { builder = builder.icon(icon.clone()); }
+  builder.build(app)?;
+  Ok(())
+}
+
 fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
+    .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
     .setup(|app| {
       let handle = app.handle().clone();
+      // System tray: keep the app alive in the background.
+      let _ = build_tray(&handle);
+      // Launched by the OS at login — come up hidden in the tray.
+      if std::env::args().any(|a| a == "--hidden") {
+        if let Some(w) = app.get_webview_window("main") { let _ = w.hide(); }
+      }
       // A tunnel from the previous session never survives a restart — clear its
       // dead webhook so long-polling takes over instead of silently stalling.
       tauri::async_runtime::spawn(telegram::telegram_reconcile_on_boot(handle.clone()));
@@ -39,6 +83,15 @@ fn main() {
       // Start the local webhook receiver (used when a tunnel is active).
       tauri::async_runtime::spawn(telegram::telegram_webhook_server(handle, 14789));
       Ok(())
+    })
+    .on_window_event(|window, event| {
+      if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        // Hide to the tray instead of quitting, so Telegram keeps polling.
+        if app_settings::run_in_background(window.app_handle()) {
+          api.prevent_close();
+          let _ = window.hide();
+        }
+      }
     })
     .invoke_handler(tauri::generate_handler![
       // Storage: bootstrap + CRUD
@@ -153,6 +206,12 @@ fn main() {
       telegram::telegram_stop_tunnel,
       telegram::telegram_tunnel_status,
       telegram::telegram_webhook_health,
+      // App settings (background mode + launch at login)
+      app_settings::get_app_settings,
+      app_settings::set_run_in_background,
+      app_settings::set_launch_at_login,
+      app_settings::set_default_shell,
+      app_settings::set_cli_shortcuts,
     ])
     .build(tauri::generate_context!())
     .expect("error while running Local Agent OS")

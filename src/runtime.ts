@@ -479,3 +479,22 @@ export async function restartApp(): Promise<void> {
 export async function appVersion(): Promise<string> {
   try { return await invoke<string>('app_version'); } catch { return ''; }
 }
+
+// App settings: background/tray mode + launch at login.
+export type CliShortcut = { name: string; command: string; cwd: string };
+export type AppSettings = { runInBackground: boolean; launchAtLogin: boolean; autostartEnabled: boolean; defaultShell: string; cliShortcuts: CliShortcut[] };
+export async function getAppSettings(): Promise<AppSettings> {
+  try { return await invoke<AppSettings>('get_app_settings'); } catch { return { runInBackground: true, launchAtLogin: false, autostartEnabled: false, defaultShell: '', cliShortcuts: [] }; }
+}
+export async function setRunInBackground(enabled: boolean): Promise<void> {
+  await invoke('set_run_in_background', { enabled });
+}
+export async function setLaunchAtLogin(enabled: boolean): Promise<void> {
+  await invoke('set_launch_at_login', { enabled });
+}
+export async function setDefaultShell(shell: string): Promise<void> {
+  await invoke('set_default_shell', { shell });
+}
+export async function setCliShortcuts(shortcuts: CliShortcut[]): Promise<void> {
+  await invoke('set_cli_shortcuts', { shortcuts });
+}
