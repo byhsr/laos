@@ -992,8 +992,6 @@ fn chat_cli_set(key: &str, id: Option<&str>) {
     match id { Some(v) => { m.insert(key.to_string(), v.to_string()); }, None => { m.remove(key); } }
   }
 }
-fn default_shell() -> String { if cfg!(windows) { "cmd".to_string() } else { "sh".to_string() } }
-
 // Raw key sequences for driving a TUI over Telegram (`/key`, `/pick`).
 fn key_bytes(k: &str) -> String {
   match k {
@@ -1214,9 +1212,22 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
       // memory (terminal sessions never teach memory).
       if cmd == "/cli" || cmd.starts_with("/cli ") {
         if let Some(prev) = chat_cli_get(&key) { let _ = crate::terminal::terminal_kill(prev); }
-        let launch = cmd.strip_prefix("/cli").map(|s| s.trim().to_string()).unwrap_or_default();
-        let command = if launch.is_empty() { default_shell() } else { launch };
-        return match crate::terminal::terminal_start(app.clone(), format!("tg-{chat_id}"), command.clone(), None, None, None) {
+        let rest = cmd.strip_prefix("/cli").unwrap_or("").trim();
+        let (head, tail) = match rest.split_once(char::is_whitespace) { Some((a, b)) => (a, b.trim()), None => (rest, "") };
+        // A configured shortcut wins: `/cli <name> [extra]` opens in its folder with its command.
+        let (command, cwd) = match crate::app_settings::resolve_cli_shortcut(app, head) {
+          Some(sc) => {
+            let base = if sc.command.trim().is_empty() { crate::app_settings::default_shell(app) } else { sc.command.trim().to_string() };
+            let command = if tail.is_empty() { base } else { format!("{base} {tail}") };
+            let cwd = if sc.cwd.trim().is_empty() { None } else { Some(sc.cwd.trim().to_string()) };
+            (command, cwd)
+          }
+          None => {
+            let command = if rest.is_empty() { crate::app_settings::default_shell(app) } else { rest.to_string() };
+            (command, None)
+          }
+        };
+        return match crate::terminal::terminal_start(app.clone(), format!("tg-{chat_id}"), command.clone(), cwd.clone(), None, None) {
           Ok(v) => {
             let sid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
             if sid.is_empty() { "Could not start the session.".into() } else {
@@ -1225,7 +1236,8 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
                 m.insert(sid.clone(), TermRelay { token: bot.token.clone(), chat_id, last_output: std::time::Instant::now(), dirty: false, last_sent: String::new(), live: true });
               }
               if let Ok(c) = db(app) { telegram_log(&c, "sys", &chat_id.to_string(), &command, "", "info", "CLI session started"); }
-              format!("CLI started (`{command}`). Send a command; /screen to peek, /exit to end.")
+              let where_ = cwd.as_deref().map(|c| format!(" in {c}")).unwrap_or_default();
+              format!("CLI started (`{command}`{where_}). Send a command; /screen to peek, /exit to end.")
             }
           }
           Err(e) => format!("Could not start the CLI: {e}"),
