@@ -80,14 +80,15 @@ fn ensure_webhook_secret(conn: &Connection) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-struct TelegramBot { id: String, name: String, token: String, agent_id: String, terminal_id: String, allowed_users: String, enabled: bool, webhook_secret: String, webhook_registered: bool }
+struct TelegramBot { id: String, name: String, token: String, agent_id: String, terminal_id: String, allowed_users: String, enabled: bool, webhook_secret: String, webhook_registered: bool, capture: bool }
 
 fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
   let mut out = Vec::new();
-  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered FROM telegram_bots ORDER BY name") {
+  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture FROM telegram_bots ORDER BY name") {
     if let Ok(rows) = stmt.query_map([], |row| Ok(TelegramBot {
       id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
       enabled: row.get::<_, i64>(6)? != 0, webhook_secret: row.get(7)?, webhook_registered: row.get::<_, i64>(8)? != 0,
+      capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
     })) {
       for r in rows { if let Ok(b) = r { out.push(b); } }
     }
@@ -96,9 +97,10 @@ fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
 }
 
 fn load_bot(conn: &Connection, id: &str) -> Option<TelegramBot> {
-  conn.query_row("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
+  conn.query_row("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
     id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
     enabled: row.get::<_, i64>(6)? != 0, webhook_secret: row.get(7)?, webhook_registered: row.get::<_, i64>(8)? != 0,
+    capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
   })).ok()
 }
 
@@ -145,7 +147,7 @@ pub fn list_telegram_bots(app: AppHandle) -> Result<Vec<serde_json::Value>, Stri
   let conn = db(&app)?;
   Ok(load_bots(&conn).into_iter().map(|b| serde_json::json!({
     "id": b.id, "name": b.name, "agentId": b.agent_id, "terminalId": b.terminal_id, "enabled": b.enabled, "token": mask_token(&b.token),
-    "webhookRegistered": b.webhook_registered,
+    "webhookRegistered": b.webhook_registered, "capture": b.capture,
     "allowedUsers": serde_json::from_str::<serde_json::Value>(&b.allowed_users).unwrap_or_else(|_| serde_json::json!([])),
   })).collect())
 }
@@ -172,10 +174,11 @@ pub fn save_telegram_bot(app: AppHandle, bot: serde_json::Value) -> Result<Strin
     load_bot(&conn, &id).map(|b| b.token).unwrap_or_default()
   } else { incoming.to_string() };
   let allowed_users = allowed_users.unwrap_or_else(|| load_bot(&conn, &id).map(|b| b.allowed_users).unwrap_or_else(|| "[]".into()));
+  let capture = bot.get("capture").and_then(|v| v.as_bool()).unwrap_or(false);
   conn.execute(
-    "INSERT INTO telegram_bots (id, name, token, agent_id, terminal_id, allowed_users, enabled, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
-     ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, terminal_id=excluded.terminal_id, allowed_users=excluded.allowed_users, enabled=excluded.enabled, updated_at=excluded.updated_at",
-    params![id, name, token, agent_id, terminal_id, allowed_users, if enabled { 1 } else { 0 }, now()],
+    "INSERT INTO telegram_bots (id, name, token, agent_id, terminal_id, allowed_users, enabled, capture, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, terminal_id=excluded.terminal_id, allowed_users=excluded.allowed_users, enabled=excluded.enabled, capture=excluded.capture, updated_at=excluded.updated_at",
+    params![id, name, token, agent_id, terminal_id, allowed_users, if enabled { 1 } else { 0 }, if capture { 1 } else { 0 }, now()],
   ).map_err(|e| e.to_string())?;
   Ok(id)
 }
@@ -881,7 +884,7 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
             let token = conn.as_ref().and_then(|c| telegram_token(c).ok().flatten());
             token.map(|t| (secret, t.clone(), TelegramBot {
               id: "bot-default".into(), name: "Telegram".into(), token: t, agent_id: "manager".into(), terminal_id: String::new(), allowed_users: "[]".into(),
-              enabled: true, webhook_secret: String::new(), webhook_registered: true,
+              enabled: true, webhook_secret: String::new(), webhook_registered: true, capture: false,
             }))
           }
         }
@@ -1206,6 +1209,23 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
     _ => {
       let key = format!("{}:{}", bot.id, chat_id);
       let cmd = text.trim();
+      // Second brain: the capture commands (/n, /tdl, /r, /p, /lib, /items, /done)
+      // work on any bot; free text is filed only on a bot marked as capture.
+      if let Some(res) = crate::capture::command(app, cmd, &bot.name) {
+        return match res { Ok(r) => r, Err(e) => format!("{e}\n{}", crate::capture::help()) };
+      }
+      if cmd == "/capture" {
+        return crate::capture::help();
+      }
+      if bot.capture {
+        return match crate::capture::remember(app, cmd, &bot.name).await {
+          Ok(item) => {
+            let title = if item.title.trim().is_empty() { item.body.clone() } else { item.title.clone() };
+            format!("Saved {} — {title}", item.kind)
+          }
+          Err(e) => e,
+        };
+      }
       // `/cli [command]` — start a CLI session bound to this chat and pipe the
       // following messages into its stdin. This is a terminal, not a conversation:
       // it returns before the agent path, so nothing here is ever written to

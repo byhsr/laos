@@ -3,6 +3,7 @@ mod agents;
 mod agent_memory;
 mod anthropic;
 mod app_settings;
+mod capture;
 mod chat;
 mod db;
 mod fallback;
@@ -213,6 +214,11 @@ fn main() {
       app_settings::set_default_shell,
       app_settings::set_cli_shortcuts,
       app_settings::set_autonomy,
+      // Capture (second brain)
+      capture::item_list,
+      capture::item_save,
+      capture::item_delete,
+      capture::item_toggle,
     ])
     .build(tauri::generate_context!())
     .expect("error while running Local Agent OS")
