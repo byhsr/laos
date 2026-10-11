@@ -1026,7 +1026,7 @@ fn parse_keys(spec: &str) -> String {
 // Drives a terminal session with one message: control commands reply, plain text
 // is piped to stdin and answered by the relayed output. Returns Some(reply) when
 // it answered directly, None when the input was piped.
-fn drive_terminal(sid: &str, text: &str, bot: &TelegramBot, chat_id: i64) -> Option<String> {
+fn drive_terminal(app: &AppHandle, sid: &str, text: &str, bot: &TelegramBot, chat_id: i64) -> Option<String> {
   let cmd = text.trim();
   if cmd == "/screen" {
     let t = crate::terminal::compact_text(sid, 40);
@@ -1035,6 +1035,7 @@ fn drive_terminal(sid: &str, text: &str, bot: &TelegramBot, chat_id: i64) -> Opt
   if cmd == "/live" || cmd.starts_with("/live ") {
     let on = !matches!(cmd.split_whitespace().nth(1), Some("off"));
     if let Ok(mut m) = term_relay().lock() { if let Some(r) = m.get_mut(sid) { r.live = on; } }
+    if let Ok(c) = db(app) { telegram_log(&c, "sys", &chat_id.to_string(), "", "", "info", if on { "Live output on" } else { "Live output off" }); }
     return Some(if on { "Live output on.".into() } else { "Live output off — use /screen for the current screen.".into() });
   }
   if let Some(rest) = cmd.strip_prefix("/key") {
@@ -1072,7 +1073,7 @@ pub(crate) fn on_terminal_output(_app: &AppHandle, session_id: &str, _text: &str
 
 // Flushes quiet output to the bound chat (skips when the tail is unchanged, so a
 // redrawing TUI doesn't spam).
-pub(crate) async fn terminal_relay_loop(_app: AppHandle) {
+pub(crate) async fn terminal_relay_loop(app: AppHandle) {
   loop {
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
     let due: Vec<(String, String, i64)> = {
@@ -1096,7 +1097,10 @@ pub(crate) async fn terminal_relay_loop(_app: AppHandle) {
       let Some((changed, live)) = state else { continue };
       // Remember what we saw even when paused, so re-enabling doesn't dump a backlog.
       if let Ok(mut m) = term_relay().lock() { if let Some(r) = m.get_mut(&sid) { r.last_sent = tail.clone(); } }
-      if live && changed { let _ = telegram_send_message(&token, chat_id, &tail).await; }
+      if live && changed {
+        let _ = telegram_send_message(&token, chat_id, &tail).await;
+        if let Ok(c) = db(&app) { telegram_log(&c, "out", &chat_id.to_string(), "", &tail, "relay", ""); }
+      }
     }
   }
 }
@@ -1220,6 +1224,7 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
               if let Ok(mut m) = term_relay().lock() {
                 m.insert(sid.clone(), TermRelay { token: bot.token.clone(), chat_id, last_output: std::time::Instant::now(), dirty: false, last_sent: String::new(), live: true });
               }
+              if let Ok(c) = db(app) { telegram_log(&c, "sys", &chat_id.to_string(), &command, "", "info", "CLI session started"); }
               format!("CLI started (`{command}`). Send a command; /screen to peek, /exit to end.")
             }
           }
@@ -1228,7 +1233,12 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
       }
       if matches!(cmd, "/exit" | "/stop" | "/cli-stop") || cmd == "/cli stop" {
         return match chat_cli_get(&key) {
-          Some(sid) => { let _ = crate::terminal::terminal_kill(sid); chat_cli_set(&key, None); "CLI session ended.".into() }
+          Some(sid) => {
+            let _ = crate::terminal::terminal_kill(sid);
+            chat_cli_set(&key, None);
+            if let Ok(c) = db(app) { telegram_log(&c, "sys", &chat_id.to_string(), "", "", "info", "CLI session ended"); }
+            "CLI session ended.".into()
+          }
           None => "No CLI session in this chat.".into(),
         };
       }
@@ -1236,9 +1246,10 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
       if let Some(sid) = chat_cli_get(&key) {
         if !crate::terminal::session_alive(&sid) {
           chat_cli_set(&key, None);
+          if let Ok(c) = db(app) { telegram_log(&c, "sys", &chat_id.to_string(), "", "", "info", "CLI session ended (process exited)"); }
           return "CLI session ended. Send /cli to start another.".into();
         }
-        if let Some(r) = drive_terminal(&sid, text, &bot, chat_id) { return r; }
+        if let Some(r) = drive_terminal(app, &sid, text, &bot, chat_id) { return r; }
         return String::new(); // output is relayed
       }
       // A bot bound to a terminal pipes the message into the CLI's stdin. If the
@@ -1247,7 +1258,7 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
         if !crate::terminal::session_alive(&bot.terminal_id) {
           return format!("This bot is bound to terminal '{}', which isn't running. Start it in the Terminal view.", bot.terminal_id);
         }
-        if let Some(r) = drive_terminal(&bot.terminal_id, text, &bot, chat_id) { return r; }
+        if let Some(r) = drive_terminal(app, &bot.terminal_id, text, &bot, chat_id) { return r; }
         return String::new(); // no immediate reply — output is relayed
       }
       if bot.agent_id.is_empty() || bot.agent_id == "manager" {
