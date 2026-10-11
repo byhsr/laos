@@ -1055,7 +1055,12 @@ fn drive_terminal(sid: &str, text: &str, bot: &TelegramBot, chat_id: i64) -> Opt
   if let Ok(mut m) = term_relay().lock() {
     m.insert(sid.to_string(), TermRelay { token: bot.token.clone(), chat_id, last_output: std::time::Instant::now(), dirty: false, last_sent: String::new(), live: true });
   }
-  crate::terminal::write_line(sid, text).err().map(|e| format!("Terminal error: {e}"))
+  // Type on a background thread: the per-keystroke delay must not block the
+  // message-handling task. Writes serialize on the session writer lock.
+  let sid2 = sid.to_string();
+  let text2 = text.to_string();
+  std::thread::spawn(move || { let _ = crate::terminal::write_line(&sid2, &text2); });
+  None
 }
 
 // Called by the terminal reader when a bound session produces output.
@@ -1157,17 +1162,24 @@ async fn poll_bot(app: AppHandle, bot: TelegramBot) {
         continue;
       }
       if let Ok(c) = db(&app) { telegram_log(&c, "in", &chat_id.to_string(), &text, "", "received", &current.name); }
-      // Let an agent tool (ask_user) prompt this chat for the duration of the turn.
-      set_active_chat(Some((current.id.clone(), chat_id)));
-      let reply = route_bot_message(&app, &current, chat_id, &text).await;
-      set_active_chat(None);
-      let send_result = telegram_send_message(&current.token, chat_id, &reply).await;
-      if let Ok(c) = db(&app) {
-        match send_result {
-          Ok(()) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", &current.name),
-          Err(e) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &e),
+      // Handle each message in its own task: a slow turn — or a CLI session being
+      // typed into — must never block the long-poll loop from receiving the next
+      // message. (The webhook path already spawns the same way.)
+      let task_app = app.clone();
+      let task_bot = current.clone();
+      tokio::spawn(async move {
+        // Let an agent tool (ask_user) prompt this chat for the duration of the turn.
+        set_active_chat(Some((task_bot.id.clone(), chat_id)));
+        let reply = route_bot_message(&task_app, &task_bot, chat_id, &text).await;
+        set_active_chat(None);
+        let send_result = telegram_send_message(&task_bot.token, chat_id, &reply).await;
+        if let Ok(c) = db(&task_app) {
+          match send_result {
+            Ok(()) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "sent", &task_bot.name),
+            Err(e) => telegram_log(&c, "out", &chat_id.to_string(), &text, &reply, "error", &e),
+          }
         }
-      }
+      });
     }
   }
 }
