@@ -1079,7 +1079,9 @@ pub(crate) async fn terminal_relay_loop(_app: AppHandle) {
       let mut m = match term_relay().lock() { Ok(m) => m, Err(_) => continue };
       let mut out = Vec::new();
       for (sid, r) in m.iter_mut() {
-        if r.dirty && r.last_output.elapsed() >= std::time::Duration::from_millis(1200) {
+        // Wait for the TUI to go quiet: while it's "working" (spinner, status) the
+        // output keeps changing, so nothing is sent until the turn is actually done.
+        if r.dirty && r.last_output.elapsed() >= std::time::Duration::from_millis(2200) {
           out.push((sid.clone(), r.token.clone(), r.chat_id));
           r.dirty = false;
         }

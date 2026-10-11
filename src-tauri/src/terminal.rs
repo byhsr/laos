@@ -23,6 +23,9 @@ struct TermSession {
   writer: Mutex<Box<dyn Write + Send>>,
   child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
   subscribers: Arc<Mutex<Vec<tauri::ipc::Channel<String>>>>,
+  // Renders the screen from the raw byte stream, so the relay can read the visible
+  // text instead of reconstructing it from cursor-positioning escapes.
+  parser: Arc<Mutex<vt100::Parser>>,
 }
 
 fn registry() -> &'static Mutex<HashMap<String, Arc<TermSession>>> {
@@ -62,25 +65,55 @@ fn strip_ansi(s: &str) -> String {
   out
 }
 
-// A compact view of a session for the Telegram relay: ANSI stripped, blank and
-// rule-only lines dropped, consecutive repeats collapsed with numbers normalised
-// (so a ticking spinner like "· Working… 5s" stops producing new "content" every
-// frame). This is what keeps a redrawing TUI from spamming the chat.
+// Leading UI glyphs a TUI puts before prompts/spinners/answers (·, ○, ✻, ❯, and
+// braille spinners). Stripped so we judge the text itself, not the marker — an
+// answer like "⠶ Hey! …" must survive.
+fn strip_lead_glyphs(l: &str) -> String {
+  l.trim_start_matches(|c: char| matches!(c,
+    '·' | '○' | '◇' | '◆' | '✻' | '✳' | '✽' | '✦' | '⏺' | '❯' | '➜' | '›' | '»' | '•' |
+    '⠋' | '⠙' | '⠹' | '⠸' | '⠼' | '⠴' | '⠦' | '⠧' | '⠇' | '⠏' | '⠶' | '⠷' | '⠿'
+  )).trim_start().to_string()
+}
+
+// UI chrome a TUI redraws constantly — prompts, spinner status, hints, the banner.
+// Judged on the glyph-stripped text, so a real answer carrying a spinner marker is kept.
+// Deliberately narrow: only fixed UI strings and status lines, so file bodies, TODOs,
+// diffs and code (which may contain words like "models:" or "exit") are never dropped.
+fn is_chrome(t: &str) -> bool {
+  let l = t.trim();
+  if l.is_empty() { return true; }
+  // rule/separator lines
+  if l.chars().count() >= 3 && l.chars().all(|c| matches!(c, '─' | '═' | '━' | '—' | '-' | '_' | '=' | '·' | '~' | ' ')) { return true; }
+  // ASCII-art / logo blocks
+  let total = l.chars().count();
+  let blocks = l.chars().filter(|c| matches!(c, '█' | '▓' | '▒' | '░')).count();
+  if total > 0 && blocks * 2 >= total { return true; }
+  let low = l.to_lowercase();
+  if low.contains("esc to interrupt") || low.contains("for shortcuts") || low.contains("ask your question")
+    || low.contains("pastes images") || low.contains("pastes text only") || low.contains("invalid json")
+    || low.contains("command code v") || low.contains("alt+v") || low.contains("ctrl+o to expand") {
+    return true;
+  }
+  // status lines: "Worked for 5s" / "Thought for 1 second" (short, after glyph strip)
+  if (low.starts_with("worked for") || low.starts_with("thought for")) && low.len() < 40 { return true; }
+  false
+}
+
+// A compact view of a session for the Telegram relay: the rendered screen with
+// chrome lines dropped. No byte-level guessing — the VT parser already applied
+// cursor moves and erases, so there are no partial frames to collapse.
 pub(crate) fn compact_text(id: &str, max_lines: usize) -> String {
   let Ok(s) = get_session(id) else { return String::new() };
-  let ring = match s.ring.lock() { Ok(r) => r, Err(_) => return String::new() };
-  let text = strip_ansi(&String::from_utf8_lossy(&ring.iter().copied().collect::<Vec<u8>>()));
+  let text = match s.parser.lock() { Ok(p) => p.screen().contents(), Err(_) => return String::new() };
   let mut out: Vec<String> = Vec::new();
-  let mut last_sig: Option<String> = None;
   for raw in text.lines() {
-    let line = raw.trim_end().to_string();
-    let t = line.trim();
-    if t.is_empty() { continue; }
-    if t.chars().count() >= 3 && t.chars().all(|c| matches!(c, '─' | '═' | '━' | '—' | '-' | '_' | '=' | '·' | ' ')) { continue; }
-    let sig: String = line.chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).collect();
-    if last_sig.as_deref() == Some(sig.as_str()) { continue; }
-    last_sig = Some(sig);
-    out.push(line);
+    let line = raw.trim_end();
+    if line.trim().is_empty() { continue; }
+    // The input prompt echoes what we sent — not output.
+    if line.trim_start().starts_with('❯') { continue; }
+    let core = strip_lead_glyphs(line);
+    if is_chrome(&core) { continue; }
+    out.push(core);
   }
   let start = out.len().saturating_sub(max_lines);
   out[start..].join("\n")
@@ -111,12 +144,13 @@ pub fn terminal_start(app: AppHandle, name: String, command: String, cwd: Option
   let ring: Arc<Mutex<VecDeque<u8>>> = Arc::new(Mutex::new(VecDeque::new()));
   let total: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
   let subscribers: Arc<Mutex<Vec<tauri::ipc::Channel<String>>>> = Arc::new(Mutex::new(Vec::new()));
+  let parser = Arc::new(Mutex::new(vt100::Parser::new(size.rows, size.cols, 0)));
 
   let session = Arc::new(TermSession {
     id: id.clone(), name: name.clone(), command: command.clone(),
     alive: alive.clone(), ring: ring.clone(), total: total.clone(),
     master: Mutex::new(pair.master), writer: Mutex::new(writer), child: Mutex::new(child),
-    subscribers: subscribers.clone(),
+    subscribers: subscribers.clone(), parser: parser.clone(),
   });
   registry().lock().map_err(|_| "terminal registry poisoned".to_string())?.insert(id.clone(), session);
 
@@ -136,6 +170,7 @@ pub fn terminal_start(app: AppHandle, name: String, command: String, cwd: Option
             while r.len() > RING_CAP { r.pop_front(); }
           }
           if let Ok(mut t) = total.lock() { *t += n as u64; }
+          if let Ok(mut p) = parser.lock() { p.process(chunk); }
           let text = String::from_utf8_lossy(chunk).to_string();
           if let Ok(mut subs) = subscribers.lock() {
             subs.retain(|ch| ch.send(text.clone()).is_ok());
@@ -165,8 +200,12 @@ pub fn terminal_write(id: String, data: String) -> Result<(), String> {
 #[tauri::command]
 pub fn terminal_resize(id: String, cols: u16, rows: u16) -> Result<(), String> {
   let s = get_session(&id)?;
-  let m = s.master.lock().map_err(|_| "session locked".to_string())?;
-  m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).map_err(|e| e.to_string())
+  {
+    let m = s.master.lock().map_err(|_| "session locked".to_string())?;
+    m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).map_err(|e| e.to_string())?;
+  }
+  if let Ok(mut p) = s.parser.lock() { p.set_size(rows, cols); }
+  Ok(())
 }
 
 #[tauri::command]
