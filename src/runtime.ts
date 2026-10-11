@@ -92,7 +92,7 @@ export async function listTelegramLogs(): Promise<TelegramLogEntry[]> {
   try { return await invoke<TelegramLogEntry[]>('list_telegram_logs'); } catch { return []; }
 }
 // Telegram bots (multiple): each is long-polled and routed to an agent.
-export type TelegramBot = { id: string; name: string; agentId: string; terminalId: string; allowedUsers: (string | number)[]; enabled: boolean; token: string; webhookRegistered: boolean };
+export type TelegramBot = { id: string; name: string; agentId: string; terminalId: string; allowedUsers: (string | number)[]; enabled: boolean; token: string; webhookRegistered: boolean; capture?: boolean };
 export async function listTelegramBots(): Promise<TelegramBot[]> {
   try { return await invoke<TelegramBot[]>('list_telegram_bots'); } catch { return []; }
 }
@@ -500,4 +500,24 @@ export async function setDefaultShell(shell: string): Promise<void> {
 }
 export async function setCliShortcuts(shortcuts: CliShortcut[]): Promise<void> {
   await invoke('set_cli_shortcuts', { shortcuts });
+}
+
+// Capture (second brain): notes, todos, reminders, promises and links.
+export type Item = {
+  id: string; kind: string; title: string; body: string; url: string; tags: string[];
+  collection: string; status: string; due_at: string | null; source: string;
+  created_at: string; updated_at: string;
+};
+export const ITEM_KINDS = ['note', 'todo', 'reminder', 'promise', 'link'] as const;
+export async function itemList(kind?: string): Promise<Item[]> {
+  return await invoke<Item[]>('item_list', { kind: kind ?? null });
+}
+export async function itemSave(item: Item): Promise<Item> {
+  return await invoke<Item>('item_save', { item });
+}
+export async function itemDelete(id: string): Promise<void> {
+  await invoke('item_delete', { id });
+}
+export async function itemToggle(id: string): Promise<void> {
+  await invoke('item_toggle', { id });
 }

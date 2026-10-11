@@ -15,7 +15,7 @@ const fmtTime = (s?: string | null) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleTimeString();
 };
 
-const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', terminalId: '', allowedUsers: [], enabled: true, token: '', webhookRegistered: false });
+const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', terminalId: '', allowedUsers: [], enabled: true, token: '', webhookRegistered: false, capture: false });
 
 // Telegram: manage multiple bots (each long-polled and routed to an agent), plus
 // the activity log. Polls the log while the view is open.
@@ -77,7 +77,7 @@ export function TelegramView() {
               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-background text-muted"><Bot size={14} /></span>
               <div className="min-w-0 flex-1">
                 <b className="block truncate font-mono text-[11px] text-foreground">{b.name}</b>
-                <span className="block truncate font-mono text-[10px] text-muted">→ {b.terminalId ? `terminal: ${terminals.find((t) => t.id === b.terminalId)?.name ?? b.terminalId}` : `agent: ${agentName(b.agentId)}`}{b.token ? ' · token set' : ' · no token'}{b.allowedUsers?.length ? ` · ${b.allowedUsers.length} allowed` : ' · unclaimed'}{b.enabled ? '' : ' · disabled'}{b.webhookRegistered ? ' · webhook' : ' · long-poll'}</span>
+                <span className="block truncate font-mono text-[10px] text-muted">→ {b.terminalId ? `terminal: ${terminals.find((t) => t.id === b.terminalId)?.name ?? b.terminalId}` : `agent: ${agentName(b.agentId)}`}{b.capture ? ' · capture' : ''}{b.token ? ' · token set' : ' · no token'}{b.allowedUsers?.length ? ` · ${b.allowedUsers.length} allowed` : ' · unclaimed'}{b.enabled ? '' : ' · disabled'}{b.webhookRegistered ? ' · webhook' : ' · long-poll'}</span>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 {b.id && (
@@ -121,6 +121,7 @@ export function TelegramView() {
             )}
             <div className="-mx-2 mt-1.5">
               <Checkbox checked={editing.enabled} onChange={(next) => setEditing({ ...editing, enabled: next })} label="enabled" />
+              <Checkbox checked={!!editing.capture} onChange={(next) => setEditing({ ...editing, capture: next })} label="second brain — file free text as items" />
             </div>
             <label className={`${FIELD_LABEL_CLS} mt-2`}>allowed users (Telegram ids)</label>
             <input

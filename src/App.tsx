@@ -30,6 +30,7 @@ import { Onboarding, type OnboardingPatch } from './components/Onboarding';
 import { WorkshopView } from './components/views/WorkshopView';
 import { MemoryView } from './components/views/MemoryView';
 import { TerminalView } from './components/views/TerminalView';
+import { ItemsView } from './components/views/ItemsView';
 import { SkillFormDrawer } from './components/views/SkillsView';
 import { ScriptFormDrawer } from './components/views/ScriptsView';
 import { ProjectFormDrawer } from './components/views/ProjectsView';
@@ -252,6 +253,7 @@ export default function App() {
           <div className={pane(view === 'tasks')}><TasksView agents={agents} /></div>
           <div className={pane(view === 'telegram')}><TelegramView /></div>
           <div className={pane(view === 'terminal')}><TerminalView /></div>
+          <div className={pane(view === 'items')}><ItemsView /></div>
           <div className={pane(view === 'runs')}>
             <RunsConsole runs={runs} agents={agents} onOpenAgent={openAgent} onClear={clearRuns} />
           </div>
