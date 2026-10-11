@@ -179,12 +179,24 @@ pub fn terminal_kill(id: String) -> Result<(), String> {
   Ok(())
 }
 
-/// Writes a line to a session's stdin (used by the Telegram bridge).
+/// Writes a line to a session's stdin (used by the Telegram bridge). The text is
+/// typed one character at a time, then Enter is sent as its own keystroke: a TUI
+/// (Ink/readline) sees a fast text-plus-newline burst as a paste and holds it, so
+/// the line just sits there and never reaches the tool. Real keystrokes submit.
 pub(crate) fn write_line(id: &str, line: &str) -> Result<(), String> {
   let s = get_session(id)?;
+  {
+    let mut w = s.writer.lock().map_err(|_| "session locked".to_string())?;
+    for ch in line.chars() {
+      let mut buf = [0u8; 4];
+      w.write_all(ch.encode_utf8(&mut buf).as_bytes()).map_err(|e| e.to_string())?;
+      w.flush().map_err(|e| e.to_string())?;
+      std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+  }
+  if !line.is_empty() { std::thread::sleep(std::time::Duration::from_millis(90)); }
   let mut w = s.writer.lock().map_err(|_| "session locked".to_string())?;
-  w.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
-  w.write_all(b"\r\n").map_err(|e| e.to_string())?;
+  w.write_all(b"\r").map_err(|e| e.to_string())?;
   w.flush().map_err(|e| e.to_string())
 }
 
