@@ -975,7 +975,7 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
 
 // Output relay: a session bound to a bot relays a debounced tail of its output to
 // the chat that last messaged it.
-struct TermRelay { token: String, chat_id: i64, last_output: std::time::Instant, dirty: bool, last_sent: String }
+struct TermRelay { token: String, chat_id: i64, last_output: std::time::Instant, dirty: bool, last_sent: String, live: bool }
 static TERM_RELAY: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, TermRelay>>> = std::sync::OnceLock::new();
 fn term_relay() -> &'static std::sync::Mutex<std::collections::HashMap<String, TermRelay>> {
   TERM_RELAY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
@@ -1029,8 +1029,13 @@ fn parse_keys(spec: &str) -> String {
 fn drive_terminal(sid: &str, text: &str, bot: &TelegramBot, chat_id: i64) -> Option<String> {
   let cmd = text.trim();
   if cmd == "/screen" {
-    let t = crate::terminal::tail_text(sid, 40);
+    let t = crate::terminal::compact_text(sid, 40);
     return Some(if t.trim().is_empty() { "(no output yet)".into() } else { t });
+  }
+  if cmd == "/live" || cmd.starts_with("/live ") {
+    let on = !matches!(cmd.split_whitespace().nth(1), Some("off"));
+    if let Ok(mut m) = term_relay().lock() { if let Some(r) = m.get_mut(sid) { r.live = on; } }
+    return Some(if on { "Live output on.".into() } else { "Live output off — use /screen for the current screen.".into() });
   }
   if let Some(rest) = cmd.strip_prefix("/key") {
     let seq = parse_keys(rest.trim());
@@ -1048,7 +1053,7 @@ fn drive_terminal(sid: &str, text: &str, bot: &TelegramBot, chat_id: i64) -> Opt
     return crate::terminal::terminal_write(sid.to_string(), seq).err().map(|e| format!("Terminal error: {e}"));
   }
   if let Ok(mut m) = term_relay().lock() {
-    m.insert(sid.to_string(), TermRelay { token: bot.token.clone(), chat_id, last_output: std::time::Instant::now(), dirty: false, last_sent: String::new() });
+    m.insert(sid.to_string(), TermRelay { token: bot.token.clone(), chat_id, last_output: std::time::Instant::now(), dirty: false, last_sent: String::new(), live: true });
   }
   crate::terminal::write_line(sid, text).err().map(|e| format!("Terminal error: {e}"))
 }
@@ -1077,12 +1082,14 @@ pub(crate) async fn terminal_relay_loop(_app: AppHandle) {
       out
     };
     for (sid, token, chat_id) in due {
-      let tail = crate::terminal::tail_text(&sid, 30);
+      // Compact view: repeats/rules collapsed, so a redrawing TUI doesn't spam.
+      let tail = crate::terminal::compact_text(&sid, 20);
       if tail.trim().is_empty() { continue; }
-      let changed = term_relay().lock().map(|m| m.get(&sid).map(|r| r.last_sent != tail).unwrap_or(false)).unwrap_or(false);
-      if !changed { continue; }
+      let state = term_relay().lock().ok().and_then(|m| m.get(&sid).map(|r| (r.last_sent != tail, r.live)));
+      let Some((changed, live)) = state else { continue };
+      // Remember what we saw even when paused, so re-enabling doesn't dump a backlog.
       if let Ok(mut m) = term_relay().lock() { if let Some(r) = m.get_mut(&sid) { r.last_sent = tail.clone(); } }
-      let _ = telegram_send_message(&token, chat_id, &tail).await;
+      if live && changed { let _ = telegram_send_message(&token, chat_id, &tail).await; }
     }
   }
 }
@@ -1197,7 +1204,7 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
             if sid.is_empty() { "Could not start the session.".into() } else {
               chat_cli_set(&key, Some(&sid));
               if let Ok(mut m) = term_relay().lock() {
-                m.insert(sid.clone(), TermRelay { token: bot.token.clone(), chat_id, last_output: std::time::Instant::now(), dirty: false, last_sent: String::new() });
+                m.insert(sid.clone(), TermRelay { token: bot.token.clone(), chat_id, last_output: std::time::Instant::now(), dirty: false, last_sent: String::new(), live: true });
               }
               format!("CLI started (`{command}`). Send a command; /screen to peek, /exit to end.")
             }

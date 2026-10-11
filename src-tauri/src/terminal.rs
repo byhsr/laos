@@ -36,19 +36,54 @@ fn get_session(id: &str) -> Result<Arc<TermSession>, String> {
 }
 
 // Strips ANSI escape sequences and control chars for a plain-text excerpt.
+// Handles CSI (`ESC [ … final`), OSC (`ESC ] … BEL` / `ESC \`, e.g. window titles)
+// and single-char escapes — otherwise OSC payloads leak in as text.
 fn strip_ansi(s: &str) -> String {
   let mut out = String::with_capacity(s.len());
   let mut chars = s.chars().peekable();
   while let Some(c) = chars.next() {
     if c == '\u{1b}' {
-      if chars.peek() == Some(&'[') {
-        chars.next();
-        while let Some(&n) = chars.peek() { chars.next(); if ('@'..='~').contains(&n) { break; } }
-      } else { let _ = chars.next(); }
+      match chars.peek() {
+        Some('[') => { chars.next(); while let Some(&n) = chars.peek() { chars.next(); if ('@'..='~').contains(&n) { break; } } }
+        Some(']') => {
+          chars.next();
+          while let Some(&n) = chars.peek() {
+            chars.next();
+            if n == '\u{7}' { break; }
+            if n == '\u{1b}' { if chars.peek() == Some(&'\\') { chars.next(); } break; }
+          }
+        }
+        Some('(') | Some(')') | Some('*') | Some('+') => { chars.next(); chars.next(); }
+        _ => { let _ = chars.next(); }
+      }
     } else if c == '\r' { /* drop CR */ }
     else if c == '\n' || c == '\t' || !c.is_control() { out.push(c); }
   }
   out
+}
+
+// A compact view of a session for the Telegram relay: ANSI stripped, blank and
+// rule-only lines dropped, consecutive repeats collapsed with numbers normalised
+// (so a ticking spinner like "· Working… 5s" stops producing new "content" every
+// frame). This is what keeps a redrawing TUI from spamming the chat.
+pub(crate) fn compact_text(id: &str, max_lines: usize) -> String {
+  let Ok(s) = get_session(id) else { return String::new() };
+  let ring = match s.ring.lock() { Ok(r) => r, Err(_) => return String::new() };
+  let text = strip_ansi(&String::from_utf8_lossy(&ring.iter().copied().collect::<Vec<u8>>()));
+  let mut out: Vec<String> = Vec::new();
+  let mut last_sig: Option<String> = None;
+  for raw in text.lines() {
+    let line = raw.trim_end().to_string();
+    let t = line.trim();
+    if t.is_empty() { continue; }
+    if t.chars().count() >= 3 && t.chars().all(|c| matches!(c, '─' | '═' | '━' | '—' | '-' | '_' | '=' | '·' | ' ')) { continue; }
+    let sig: String = line.chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).collect();
+    if last_sig.as_deref() == Some(sig.as_str()) { continue; }
+    last_sig = Some(sig);
+    out.push(line);
+  }
+  let start = out.len().saturating_sub(max_lines);
+  out[start..].join("\n")
 }
 
 /// Runs a command line through the platform shell inside a PTY.
@@ -200,7 +235,8 @@ pub(crate) fn write_line(id: &str, line: &str) -> Result<(), String> {
   w.flush().map_err(|e| e.to_string())
 }
 
-/// The plain-text tail of a session's buffer (used by the Telegram `/screen`).
+/// The plain-text tail of a session's buffer (raw-ish; kept for the panel).
+#[allow(dead_code)]
 pub(crate) fn tail_text(id: &str, max_lines: usize) -> String {
   let Ok(s) = get_session(id) else { return String::new() };
   let ring = match s.ring.lock() { Ok(r) => r, Err(_) => return String::new() };
