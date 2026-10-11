@@ -1,6 +1,6 @@
 [package]
 name = "local-agent-os"
-version = "0.1.15"
+version = "0.1.16"
 description = "A local-first desktop agent workspace"
 edition = "2021"
 
