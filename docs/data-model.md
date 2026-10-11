@@ -139,11 +139,19 @@ scopes its turn memory (`chat.rs` passes it to `fox::record_turn`).
 `id` (INTEGER PK AUTOINCREMENT), `direction`, `chat_id`, `text`, `reply`, `status`, `detail`,
 `created_at`. Pruned to the newest 500 rows. `detail` carries the bot's name (or an error).
 
+### `items`
+
+The second brain ([capture.md](./capture.md)): `id` (PK), `kind` (`note` | `todo` |
+`reminder` | `promise` | `link`), `title`, `body`, `url`, `tags` (JSON), `collection`,
+`status` (`active` | `done`), `due_at` (nullable; no scheduler yet), `source` (bot name, or
+`app` from the panel), `created_at`, `updated_at`.
+
 ### `telegram_bots`
 
 `id` (PK), `name`, `token`, `agent_id` (`''`/`manager` = the Manager), `terminal_id` (bound
 PTY session, or `''`), `allowed_users` (JSON array of Telegram user ids; empty = open),
-`enabled`, `webhook_secret`, `webhook_registered`, `updated_at`. One
+`capture` (added by migration; ticked = free text is filed as an item, see
+[capture.md](./capture.md)), `enabled`, `webhook_secret`, `webhook_registered`, `updated_at`. One
 long-poll loop runs per enabled bot (`telegram.rs`); incoming messages route to the bot's agent
 **or** into its bound terminal session. A bot can instead register a
 webhook at `{base}/webhook/telegram/{botId}` with its own secret, so **one tunnel serves many
