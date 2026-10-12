@@ -221,9 +221,9 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
      - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent â€” file access is just a permission value in the create_agent call.\n\
      - Never store secrets (API keys/tokens) without the user's explicit approval in the confirmation popup.\n\
      - Delegate domain work to agents rather than doing it inline.\n\n\
-     Workspace context:\n{context}\n\n{skills}{memory_note}{pc_note}\
+     Workspace context:\n{context}\n\n{skills}{memory_note}{pc_note}{identity}\
      Return a concise, helpful reply to the user."
-  ))
+  , identity = crate::app_settings::identity_prompt(conn)))
 }
 
 

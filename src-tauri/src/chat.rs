@@ -147,6 +147,10 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     format!("You are {}. Objective: {}\n{skills}\n{memory_note}{pc_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
 
+  // Who the assistant is and who it's talking to (persona/tone are identity here,
+  // not decoration like an agent's avatar).
+  let system = format!("{system}{}", crate::app_settings::identity_prompt(&conn));
+
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
   let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({ "role": "system", "content": system })];
   messages.extend(window);

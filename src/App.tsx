@@ -37,7 +37,7 @@ import { ProjectFormDrawer } from './components/views/ProjectsView';
 import { Toaster } from './components/ui/Toaster';
 import { UpdatePrompt } from './components/ui/UpdatePrompt';
 import { toast } from './hooks/useToast';
-import { checkForUpdate, type UpdateInfo } from './runtime';
+import { checkForUpdate, onReminder, type UpdateInfo } from './runtime';
 
 // Every view lives in a pane that scrolls internally — the shell itself never
 // scrolls, so there is never a double scrollbar or a page that jumps.
@@ -106,6 +106,9 @@ export default function App() {
     }, 4000);
     return () => clearTimeout(t);
   }, []);
+  // Reminders fire from the backend's 30s scheduler; surface them in-app too.
+  useEffect(() => onReminder((r) => toast(`⏰ ${r.kind}: ${r.title}`, 'success')), []);
+
   // Navigation is a history, so the chrome's back/forward buttons are real.
   // The stack holds views only — the selected agent persists on its own, so
   // stepping away from an agent window and back lands on the same agent.

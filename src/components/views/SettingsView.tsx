@@ -8,7 +8,7 @@ import { Button } from '../ui/Button';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS } from '../ui/Input';
 import { tabCls } from '../ui/tabs';
 import { toast } from '../../hooks/useToast';
-import { appVersion, checkForUpdate, getAppSettings, setRunInBackground, setLaunchAtLogin, setAutonomy, type UpdateInfo } from '../../runtime';
+import { appVersion, checkForUpdate, getAppSettings, getIdentity, setIdentity, setRunInBackground, setLaunchAtLogin, setAutonomy, type Identity, type UpdateInfo } from '../../runtime';
 import { Checkbox } from '../ui/Checkbox';
 import { NAV_SECTIONS, useNavLabels } from '../../hooks/useNavLabels';
 import { THEMES, activeTheme, applyTheme, type ThemeKey } from '../../theme';
@@ -32,6 +32,7 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
   const [bg, setBg] = useState(true);
   const [login, setLogin] = useState(false);
   const [autonomy, setAutonomyOn] = useState(true);
+  const [who, setWho] = useState<Identity>({ userName: '', botName: '', persona: '', tone: '', timezone: '', verbosity: 0 });
 
   const navLabels = useNavLabels((s) => s.labels);
   const setNavLabel = useNavLabels((s) => s.setLabel);
@@ -39,6 +40,12 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
 
   useEffect(() => { appVersion().then(setVersion); }, []);
   useEffect(() => { getAppSettings().then((s) => { setBg(s.runInBackground); setLogin(s.launchAtLogin); setAutonomyOn(s.autonomy); }); }, []);
+  useEffect(() => { getIdentity().then(setWho); }, []);
+
+  const saveWho = async () => {
+    try { await setIdentity(who); toast('saved', 'success'); }
+    catch (e) { toast(typeof e === 'string' ? e : 'could not save', 'error'); }
+  };
 
   const toggleBg = async (next: boolean) => {
     setBg(next);
@@ -115,6 +122,41 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
                 </button>
               ))}
             </div>
+          </Card>
+
+          <Card className="hover:bg-surface">
+            <h3 className="m-0 font-mono text-xs lowercase text-foreground">you &amp; your assistant</h3>
+            <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">
+              Who the assistant is and who it's talking to — injected into every chat prompt.
+            </p>
+            <div className="grid gap-2">
+              <label className="flex items-center gap-3">
+                <span className={`${GROUP_LABEL_CLS} w-[92px] shrink-0`}>your name</span>
+                <input value={who.userName} onChange={(e) => setWho({ ...who, userName: e.target.value })} placeholder="what it calls you" className={`${INPUT_CLS} min-w-0 flex-1`} />
+              </label>
+              <label className="flex items-center gap-3">
+                <span className={`${GROUP_LABEL_CLS} w-[92px] shrink-0`}>bot name</span>
+                <input value={who.botName} onChange={(e) => setWho({ ...who, botName: e.target.value })} placeholder="what it calls itself" className={`${INPUT_CLS} min-w-0 flex-1`} />
+              </label>
+              <label className="flex items-center gap-3">
+                <span className={`${GROUP_LABEL_CLS} w-[92px] shrink-0`}>persona</span>
+                <input value={who.persona} onChange={(e) => setWho({ ...who, persona: e.target.value })} placeholder="kind, warm, a bit witty…" className={`${INPUT_CLS} min-w-0 flex-1`} />
+              </label>
+              <label className="flex items-center gap-3">
+                <span className={`${GROUP_LABEL_CLS} w-[92px] shrink-0`}>tone</span>
+                <select value={who.tone} onChange={(e) => setWho({ ...who, tone: e.target.value })} className={`${INPUT_CLS} w-[140px]`}>
+                  <option value="">default</option>
+                  <option value="short">short</option>
+                  <option value="detailed">detailed</option>
+                  <option value="witty">witty</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-3">
+                <span className={`${GROUP_LABEL_CLS} w-[92px] shrink-0`}>timezone</span>
+                <input value={who.timezone} onChange={(e) => setWho({ ...who, timezone: e.target.value })} placeholder="informational — times use the system zone" className={`${INPUT_CLS} min-w-0 flex-1`} />
+              </label>
+            </div>
+            <div className="mt-4"><Button variant="primary" onClick={() => void saveWho()}>save</Button></div>
           </Card>
 
           <Card className="hover:bg-surface">

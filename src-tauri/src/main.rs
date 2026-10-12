@@ -220,6 +220,9 @@ fn main() {
       app_settings::set_default_shell,
       app_settings::set_cli_shortcuts,
       app_settings::set_autonomy,
+      // Identity (who the assistant is / who it's talking to)
+      app_settings::get_identity,
+      app_settings::set_identity,
       // Capture (second brain)
       capture::item_list,
       capture::item_save,

@@ -20,6 +20,47 @@ pub struct CliShortcut {
   #[serde(default)] pub cwd: String,
 }
 
+// Who the assistant is and who it's talking to (fren's userConfig). Per-machine,
+// so it lives in settings; `timezone` is informational — times use the system zone.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Identity {
+  #[serde(default)] pub user_name: String,
+  #[serde(default)] pub bot_name: String,
+  #[serde(default)] pub persona: String,
+  #[serde(default)] pub tone: String,
+  #[serde(default)] pub timezone: String,
+  #[serde(default)] pub verbosity: i64,
+}
+
+pub(crate) fn identity(conn: &Connection) -> Identity {
+  get(conn, "identity").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+/// The identity lines appended to every system prompt (empty when unset).
+pub(crate) fn identity_prompt(conn: &Connection) -> String {
+  let i = identity(conn);
+  let mut parts = Vec::new();
+  if !i.bot_name.trim().is_empty() { parts.push(format!("You are {}.", i.bot_name.trim())); }
+  if !i.user_name.trim().is_empty() { parts.push(format!("You're talking to {}.", i.user_name.trim())); }
+  if !i.persona.trim().is_empty() { parts.push(format!("Persona: {}", i.persona.trim())); }
+  if !i.tone.trim().is_empty() { parts.push(format!("Tone: {} — keep replies {}.", i.tone.trim(), i.tone.trim())); }
+  if parts.is_empty() { String::new() } else { format!("\n{}", parts.join(" ")) }
+}
+
+#[tauri::command]
+pub fn get_identity(app: AppHandle) -> Result<Identity, String> {
+  let conn = db(&app)?;
+  Ok(identity(&conn))
+}
+
+#[tauri::command]
+pub fn set_identity(app: AppHandle, identity: Identity) -> Result<(), String> {
+  let conn = db(&app)?;
+  let json = serde_json::to_string(&identity).map_err(|e| e.to_string())?;
+  set(&conn, "identity", &json)
+}
+
 pub(crate) fn get(conn: &Connection, key: &str) -> Option<String> {
   conn.query_row("SELECT value FROM settings WHERE key=?1", params![key], |r| r.get(0)).ok()
 }

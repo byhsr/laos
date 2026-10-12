@@ -1,4 +1,5 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { Agent, Integration, ModelConfig, Project, Run, RunEvent, Script, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
 
 // Streams a chat completion, calling onDelta with each token chunk and onConfirm
@@ -502,13 +503,14 @@ export async function setCliShortcuts(shortcuts: CliShortcut[]): Promise<void> {
   await invoke('set_cli_shortcuts', { shortcuts });
 }
 
-// Capture (second brain): notes, todos, reminders, promises and links.
+// Capture / Lumin: notes, todos, reminders, promises, links and habits.
 export type Item = {
   id: string; kind: string; title: string; body: string; url: string; tags: string[];
-  collection: string; status: string; due_at: string | null; source: string;
-  created_at: string; updated_at: string;
+  collection: string; status: string; due_at: string | null; cadence: string; streak: number;
+  last_done_at: string | null; project_id: string; fired_at: string | null;
+  source: string; created_at: string; updated_at: string;
 };
-export const ITEM_KINDS = ['note', 'todo', 'reminder', 'promise', 'link'] as const;
+export const ITEM_KINDS = ['note', 'todo', 'reminder', 'promise', 'link', 'habit'] as const;
 export async function itemList(kind?: string): Promise<Item[]> {
   return await invoke<Item[]>('item_list', { kind: kind ?? null });
 }
@@ -518,6 +520,39 @@ export async function itemSave(item: Item): Promise<Item> {
 export async function itemDelete(id: string): Promise<void> {
   await invoke('item_delete', { id });
 }
-export async function itemToggle(id: string): Promise<void> {
-  await invoke('item_toggle', { id });
+export async function itemToggle(id: string): Promise<string> {
+  return await invoke<string>('item_toggle', { id });
+}
+export async function itemDue(upcoming = false): Promise<Item[]> {
+  return await invoke<Item[]>('item_due', { upcoming });
+}
+export async function reminderSnooze(id: string, minutes = 10): Promise<void> {
+  await invoke('reminder_snooze', { id, minutes });
+}
+
+// Learning layer: insights the assistant proposes, which the user accepts/dismisses.
+export type Insight = { id: string; kind: string; title: string; body: string; confidence: number; status: string; created_at: string; updated_at: string };
+export async function insightList(status?: string): Promise<Insight[]> {
+  try { return await invoke<Insight[]>('insight_list', { status: status ?? null }); } catch { return []; }
+}
+export async function insightAccept(id: string): Promise<void> { await invoke('insight_accept', { id }); }
+export async function insightDismiss(id: string): Promise<void> { await invoke('insight_dismiss', { id }); }
+export async function reflectNow(): Promise<number> { return await invoke<number>('reflect_now'); }
+
+// Subscribe to reminders firing (the backend emits `lumin-reminder`).
+export function onReminder(cb: (r: { id: string; kind: string; title: string }) => void): () => void {
+  let unlisten: (() => void) | null = null;
+  listen<{ id: string; kind: string; title: string }>('lumin-reminder', (e) => cb(e.payload))
+    .then((un) => { unlisten = un; })
+    .catch(() => {});
+  return () => { unlisten?.(); };
+}
+
+// Identity: who the assistant is and who it's talking to.
+export type Identity = { userName: string; botName: string; persona: string; tone: string; timezone: string; verbosity: number };
+export async function getIdentity(): Promise<Identity> {
+  try { return await invoke<Identity>('get_identity'); } catch { return { userName: '', botName: '', persona: '', tone: '', timezone: '', verbosity: 0 }; }
+}
+export async function setIdentity(identity: Identity): Promise<void> {
+  await invoke('set_identity', { identity });
 }
