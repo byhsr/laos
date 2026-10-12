@@ -9,12 +9,14 @@ mod db;
 mod fallback;
 mod fox;
 mod http;
+mod insights;
 mod integrations;
 mod manager;
 mod mcp;
 mod memory;
 mod models;
 mod provider;
+mod reminders;
 mod storage;
 mod tasks;
 mod telegram;
@@ -81,6 +83,10 @@ fn main() {
       tauri::async_runtime::spawn(telegram::telegram_loop(handle.clone()));
       // Relay terminal-session output to bots bound to them.
       tauri::async_runtime::spawn(telegram::terminal_relay_loop(handle.clone()));
+      // Fire due reminders (and recurring habits) to the bot that captured them.
+      tauri::async_runtime::spawn(reminders::reminder_loop(handle.clone()));
+      // The learning layer: reflect on what's been filed every half hour.
+      tauri::async_runtime::spawn(insights::insight_loop(handle.clone()));
       // Start the local webhook receiver (used when a tunnel is active).
       tauri::async_runtime::spawn(telegram::telegram_webhook_server(handle, 14789));
       Ok(())
@@ -219,6 +225,14 @@ fn main() {
       capture::item_save,
       capture::item_delete,
       capture::item_toggle,
+      // Reminders + habits (scheduler)
+      reminders::item_due,
+      reminders::reminder_snooze,
+      // Learning layer (insights)
+      insights::insight_list,
+      insights::insight_accept,
+      insights::insight_dismiss,
+      insights::reflect_now,
     ])
     .build(tauri::generate_context!())
     .expect("error while running Local Agent OS")

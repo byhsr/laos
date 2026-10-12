@@ -366,6 +366,30 @@ async fn telegram_send_message(token: &str, chat_id: i64, text: &str) -> Result<
   Ok(())
 }
 
+// A proactive send (the reminder scheduler), addressed by a string chat id.
+pub(crate) async fn notify(token: &str, chat_id: &str, text: &str) -> Result<(), String> {
+  let chat: i64 = chat_id.trim().parse().map_err(|_| "bad chat id".to_string())?;
+  telegram_send_message(token, chat, text).await
+}
+
+// The bot's token + the chat to message unprompted (its owner), by bot name.
+pub(crate) fn owner_target(conn: &Connection, bot_name: &str) -> Option<(String, String)> {
+  conn.query_row("SELECT token, owner_chat_id FROM telegram_bots WHERE name=?1", params![bot_name],
+    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).ok()
+    .filter(|(t, c)| !t.is_empty() && !c.is_empty())
+}
+
+// Remembers who to message unprompted: the first chat that reaches an authorized
+// bot. Only ever fills an empty value, so it doesn't drift.
+fn record_owner(app: &AppHandle, bot_id: &str, chat_id: i64) {
+  if let Ok(conn) = db(app) {
+    let _ = conn.execute(
+      "UPDATE telegram_bots SET owner_chat_id=?1 WHERE id=?2 AND (owner_chat_id IS NULL OR owner_chat_id='')",
+      params![chat_id.to_string(), bot_id],
+    );
+  }
+}
+
 #[tauri::command]
 pub fn list_telegram_logs(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
   let conn = db(&app)?;
@@ -1194,6 +1218,7 @@ async fn poll_bot(app: AppHandle, bot: TelegramBot) {
 // Routes an inbound bot message: local commands, else the bot's agent (or the
 // Manager when the bot has none).
 async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, text: &str) -> String {
+  record_owner(app, &bot.id, chat_id);
   match text.trim() {
     "/agents" | "/agents@" => match db(app) {
       Ok(c) => {
@@ -1219,10 +1244,7 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
       }
       if bot.capture {
         return match crate::capture::remember(app, cmd, &bot.name).await {
-          Ok(item) => {
-            let title = if item.title.trim().is_empty() { item.body.clone() } else { item.title.clone() };
-            format!("Saved {} — {title}", item.kind)
-          }
+          Ok(reply) => reply,
           Err(e) => e,
         };
       }
