@@ -141,17 +141,27 @@ scopes its turn memory (`chat.rs` passes it to `fox::record_turn`).
 
 ### `items`
 
-The second brain ([capture.md](./capture.md)): `id` (PK), `kind` (`note` | `todo` |
-`reminder` | `promise` | `link`), `title`, `body`, `url`, `tags` (JSON), `collection`,
-`status` (`active` | `done`), `due_at` (nullable; no scheduler yet), `source` (bot name, or
-`app` from the panel), `created_at`, `updated_at`.
+Lumin's store ([lumin.md](./lumin.md)): `id` (PK), `kind` (`note` | `todo` | `reminder` |
+`promise` | `link` | `habit`), `title`, `body`, `url`, `tags` (JSON), `collection`,
+`status` (`active` | `done`), `due_at` (RFC3339; the scheduler fires on it), `cadence`
+(`''` | `daily` | `weekly` | `monthly`; recurring items roll forward), `streak` (habits),
+`last_done_at`, `project_id` (scopes an item to a project), `fired_at` (`NULL` = not yet
+fired), `source` (bot name, `app` or `insight`), `created_at`, `updated_at`.
+
+### `insights`
+
+The learning layer's proposals: `id` (PK), `kind` (`goal` | `preference` | `pattern` |
+`habit_suggestion`), `title`, `body`, `confidence`, `status` (`new` | `accepted` |
+`dismissed`), `created_at`, `updated_at`.
 
 ### `telegram_bots`
 
 `id` (PK), `name`, `token`, `agent_id` (`''`/`manager` = the Manager), `terminal_id` (bound
 PTY session, or `''`), `allowed_users` (JSON array of Telegram user ids; empty = open),
 `capture` (added by migration; ticked = free text is filed as an item, see
-[capture.md](./capture.md)), `enabled`, `webhook_secret`, `webhook_registered`, `updated_at`. One
+[lumin.md](./lumin.md)), `owner_chat_id` (added by migration; the chat the scheduler messages
+unprompted, filled from the first authorized sender), `enabled`, `webhook_secret`,
+`webhook_registered`, `updated_at`. One
 long-poll loop runs per enabled bot (`telegram.rs`); incoming messages route to the bot's agent
 **or** into its bound terminal session. A bot can instead register a
 webhook at `{base}/webhook/telegram/{botId}` with its own secret, so **one tunnel serves many

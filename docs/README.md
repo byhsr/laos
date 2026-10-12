@@ -24,7 +24,7 @@ tool registry, workflow execution, memory, and the Telegram adapter.
 | [mcp.md](./mcp.md) | The generic MCP connector: servers, tool discovery/import, how a call runs, limits |
 | [pc-control.md](./pc-control.md) | Native PC control (computer use): the `pc_control` permission, tools, the see→act loop, and platform limits |
 | [terminal.md](./terminal.md) | PTY terminal sessions: run a CLI in the panel and bridge it to a Telegram bot |
-| [capture.md](./capture.md) | The second brain: filing notes/todos/reminders/promises/links from Telegram, the items store, and LLM classification |
+| [lumin.md](./lumin.md) | **Lumin** (the second brain): the extractor anchor layer, items, habits, reminders + scheduler, and the bounded learning layer |
 | [memory.md](./memory.md) | Context assembly, the rolling window, summarization, long-term facts, chat sessions, day context, recall, and the built-in `agent-memory` (fox) connector |
 | [webhooks.md](./webhooks.md) | Telegram tunnel + webhook receiver + long-poll, the OAuth loopback, health checks and logs |
 | [data-model.md](./data-model.md) | SQLite schema, migrations, record types, memory keys, ID conventions |
@@ -57,7 +57,9 @@ src-tauri/                   Backend (Rust / Tauri v2)
   src/tasks.rs               Task lifecycle + runs feed
   src/integrations.rs        Integration catalog, credential masking/merge, OAuth
   src/telegram.rs            Telegram tunnel, webhook receiver, long-poll loop
-  src/capture.rs             The second brain: items store + Telegram filing + classification
+  src/capture.rs             Lumin: the extractor (messy text -> intent) and the items store
+  src/reminders.rs           The scheduler: fires due reminders + habits, in-app and to Telegram
+  src/insights.rs            The learning layer: aggregates items, proposes goals/patterns
   src/tg_markdown.rs         Markdown → Telegram HTML subset
   src/updater.rs             In-app updater: check manifest, install, restart
 
@@ -144,7 +146,7 @@ Find the row for what you're changing, update the listed code and doc together.
 | MCP servers, discovery, or the connector protocol | `src-tauri/src/mcp.rs`, `src-tauri/src/tools/mcp.rs`, `src/components/views/McpServers.tsx` | [mcp.md](./mcp.md) |
 | OAuth scopes, redirect port, or token exchange | `src-tauri/src/integrations.rs` | [integrations.md](./integrations.md), [webhooks.md](./webhooks.md) |
 | Telegram tunnel/webhook/polling/receiver | `src-tauri/src/telegram.rs`, `src-tauri/src/tg_markdown.rs` | [webhooks.md](./webhooks.md) |
-| Capture: an item kind, the commands, or classification | `src-tauri/src/capture.rs`, `src-tauri/src/telegram.rs`, `src/components/views/ItemsView.tsx` | [capture.md](./capture.md) |
+| Capture / Lumin: the extractor, an item kind, habits, the scheduler, or the learning layer | `src-tauri/src/capture.rs`, `src-tauri/src/reminders.rs`, `src-tauri/src/insights.rs`, `src/components/views/ItemsView.tsx` | [lumin.md](./lumin.md) |
 | App settings (background, shell, shortcuts, autonomy) | `src-tauri/src/app_settings.rs`, `src/components/views/SettingsView.tsx` | [architecture.md](./architecture.md) |
 | Memory, context assembly, or summarization | `src-tauri/src/memory.rs`, `src-tauri/src/chat.rs` | [memory.md](./memory.md) |
 | The memory connector (fox/`agent-memory`), its capture/active-context/distill/feedback loop, or the Memory view | `src-tauri/src/fox.rs`, `src-tauri/src/storage.rs` (`ensure_memory_server`), `src-tauri/src/chat.rs`, `src-tauri/src/memory.rs`, `src-tauri/src/mcp.rs` (`call_mcp_tool`), `src/components/views/MemoryView.tsx` | [memory.md](./memory.md) |
