@@ -32,6 +32,13 @@ pub(crate) fn integration_definitions() -> Vec<IntegrationRecord> {
     IntegrationRecord { id: "telegram".into(), name: "Telegram".into(), provider: "telegram".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
       IntegrationAction { name: "telegram_send".into(), description: "Send a Telegram message".into() },
     ] },
+    // Web search connectors: one API key each.
+    IntegrationRecord { id: "exa".into(), name: "Exa".into(), provider: "exa".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
+      IntegrationAction { name: "exa_search".into(), description: "Search the web with Exa (neural) and get ranked results".into() },
+    ] },
+    IntegrationRecord { id: "parallel".into(), name: "Parallel".into(), provider: "parallel".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
+      IntegrationAction { name: "parallel_search".into(), description: "Search the web with Parallel Web Systems".into() },
+    ] },
   ]
 }
 
@@ -134,6 +141,21 @@ pub async fn test_integration(app: AppHandle, id: String) -> Result<bool, String
   let cfg = integration_secret(&conn, &id)?;
   let token = cfg.get("token").and_then(|t| t.as_str()).or_else(|| cfg.get("apiKey").and_then(|t| t.as_str())).unwrap_or("");
   if token.is_empty() { return Ok(false); }
+  // Exa and Parallel take the key in an x-api-key header, so they're probed with
+  // a tiny search instead of the Bearer GET below.
+  if id == "exa" || id == "parallel" {
+    let (url, body) = if id == "exa" {
+      ("https://api.exa.ai/search", serde_json::json!({ "query": "ping", "numResults": 1, "contents": { "highlights": true } }))
+    } else {
+      ("https://api.parallel.ai/v1/search", serde_json::json!({ "objective": "ping", "search_queries": ["ping"], "mode": "turbo" }))
+    };
+    let response = http::client().post(url)
+      .header("x-api-key", token)
+      .json(&body).send().await.map_err(|e| e.to_string())?;
+    let ok = response.status().is_success();
+    conn.execute("UPDATE integration_configs SET connected=?1 WHERE id=?2", params![if ok { 1 } else { 0 }, id]).map_err(|e| e.to_string())?;
+    return Ok(ok);
+  }
   let url: String = match id.as_str() {
     "notion" => "https://api.notion.com/v1/users/me".into(),
     "airtable" => "https://api.airtable.com/v0/meta/whoami".into(),

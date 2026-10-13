@@ -29,11 +29,13 @@ impl AgentTool for IntegrationTool {
       "sheets_update" => "Update cells in a Google Sheet. Params: spreadsheetId (string), range (string), values (array of arrays).".into(),
       "docs_create" => "Create a Google Doc with content. Params: title (string), content (string).".into(),
       "docs_get" => "Read a Google Doc's content. Params: documentId (string).".into(),
+      "exa_search" => "Search the web with Exa and get ranked results. Params: query (string), numResults (integer, optional).".into(),
+      "parallel_search" => "Search the web with Parallel Web Systems and get ranked excerpts. Params: query (string).".into(),
       _ => "Integration action".into(),
     }
   }
   fn params_schema(&self) -> serde_json::Value {
-    serde_json::json!({ "type": "object", "properties": { "query": { "type": "string" }, "parentId": { "type": "string" }, "title": { "type": "string" }, "pageId": { "type": "string" }, "baseId": { "type": "string" }, "tableName": { "type": "string" }, "maxRecords": { "type": "integer" }, "fields": { "type": "object" }, "recordId": { "type": "string" }, "spreadsheetId": { "type": "string" }, "range": { "type": "string" }, "values": { "type": "array" }, "documentId": { "type": "string" }, "content": { "type": "string" } }, "required": [] })
+    serde_json::json!({ "type": "object", "properties": { "query": { "type": "string" }, "numResults": { "type": "integer" }, "parentId": { "type": "string" }, "title": { "type": "string" }, "pageId": { "type": "string" }, "baseId": { "type": "string" }, "tableName": { "type": "string" }, "maxRecords": { "type": "integer" }, "fields": { "type": "object" }, "recordId": { "type": "string" }, "spreadsheetId": { "type": "string" }, "range": { "type": "string" }, "values": { "type": "array" }, "documentId": { "type": "string" }, "content": { "type": "string" } }, "required": [] })
   }
   async fn run(&self, args: &serde_json::Value) -> Result<String, String> {
     let token = self.credentials.get("token").and_then(|t| t.as_str()).or_else(|| self.credentials.get("apiKey").and_then(|t| t.as_str())).or_else(|| self.credentials.get("accessToken").and_then(|t| t.as_str())).unwrap_or("");
@@ -128,6 +130,24 @@ impl AgentTool for IntegrationTool {
         let resp = client.get(format!("https://docs.googleapis.com/v1/documents/{}", arg("documentId")))
           .header("Authorization", format!("Bearer {token}"))
           .send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "exa_search" => {
+        let num = args.get("numResults").and_then(|v| v.as_i64()).unwrap_or(8);
+        let body = serde_json::json!({ "query": arg("query"), "type": "auto", "numResults": num, "contents": { "highlights": true } });
+        let resp = client.post("https://api.exa.ai/search")
+          .header("x-api-key", token)
+          .json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "parallel_search" => {
+        let query = arg("query");
+        let body = serde_json::json!({ "objective": query.clone(), "search_queries": [query], "mode": "basic" });
+        let resp = client.post("https://api.parallel.ai/v1/search")
+          .header("x-api-key", token)
+          .json(&body).send().await.map_err(|e| e.to_string())?;
         let text = resp.text().await.map_err(|e| e.to_string())?;
         Ok(clip(&text))
       }
