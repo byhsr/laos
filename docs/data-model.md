@@ -119,7 +119,9 @@ their memory; the active project is chosen in Workshop → projects and tags new
 ### `chat_sessions`
 
 `id` (PK), `agent_id`, `title`, `created_at`, `updated_at`, `summary` (added by migration),
-`project_id` (added by migration; '' = none). `title` defaults to `Chat`. A session's project
+`project_id` (added by migration; '' = none), `distilled_count` (added by migration; the message
+count at the last distillation, so a growing chat is re-learned every 8 messages). `title`
+defaults to `Chat`. A session's project
 scopes its turn memory (`chat.rs` passes it to `fox::record_turn`).
 
 ### `chat_messages`
@@ -167,7 +169,8 @@ PTY session, or `''`), `allowed_users` (JSON array of Telegram user ids; empty =
 `capture` (added by migration; ticked = free text is filed as an item, see
 [lumin.md](./lumin.md)), `owner_chat_id` (added by migration; the chat the scheduler messages
 unprompted, filled from the first authorized sender), `destination_id` (added by migration; the
-destination captured items are pushed to, or `''`), `enabled`, `webhook_secret`,
+destination captured items are pushed to, or `''`), `poll_offset` (added by migration; the
+persisted long-poll offset, so a restart can't replay old updates), `enabled`, `webhook_secret`,
 `webhook_registered`, `updated_at`. One
 long-poll loop runs per enabled bot (`telegram.rs`); incoming messages route to the bot's agent
 **or** into its bound terminal session. A bot can instead register a
@@ -183,7 +186,7 @@ bots** (routed by path) and only that bot's polling pauses. The legacy single
 | --- | --- |
 | `agents` | `is_manager`, `description`, `persona`, `skill_ids`, `pinned`, `avatar` |
 | `runs` | `prompt_tokens`, `completion_tokens` |
-| `chat_sessions` | `summary` |
+| `chat_sessions` | `summary`, `project_id`, `distilled_count` |
 
 There is no version table — migrations are single-column `ALTER`s that are safe to re-run.
 

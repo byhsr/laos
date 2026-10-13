@@ -12,13 +12,20 @@ Related: [harness.md](./harness.md) (the summarization call), [data-model.md](./
 | Tier | Stored in | In the prompt? | Purpose |
 | --- | --- | --- | --- |
 | **1. Rolling window** | `agent_conversations.messages` (JSON) / a session's `chat_messages` | Yes — last `ROLLING_WINDOW` messages of the **current session** | Coherent recent conversation. |
-| **2. Long-term memory** | `memory` rows: `__summary__` + `fact:*` | **No — pull only** | The agent's evolving "brain". |
-| **3. Time-based context** | `chat_sessions.summary`, `day_contexts` | **No — pull only** | Older chat/day summaries. |
+| **2. Long-term memory** | `am_*` typed memories + self-model; flat `memory` rows (`__summary__`, `fact:*`) | `am_*` **Yes — injected**; `memory` rows **pull only** | The agent's evolving "brain". |
+| **3. Time-based context** | `chat_sessions.summary`, `day_contexts` | **Yes — injected** | Older chat/day summaries. |
 
-**Memory is pull-only.** Nothing durable (tiers 2 and 3, or fox's active context) is injected
-into a turn by default: a fresh session starts clean, and memory enters the window only when
-the agent asks for it — the Manager's `recall_memory`, an attached memory tool, or the Memory
-view's search. Tiers 2 and 3 are still written in the background; they are just not pushed.
+**Memory is learned continuously and injected.** `memory_block` (used by `stream_chat` and
+`manager_turn`) appends what the agent has learned — `agent_memory::compile_context` (typed
+memories + self-model for the turn's scope) plus the day context — to every turn's system
+prompt. It is empty when there is nothing to recall, so a fresh agent's prompt is unchanged. The
+flat `memory` rows (`__summary__`, `fact:*`) remain pull-only, reachable via the Manager's
+`recall_memory`, an attached memory tool, or the Memory view.
+
+Learning happens *during* a session, not only at its close: `distill_if_due` re-distills a
+growing session every `DISTILL_EVERY` (8) new messages, and `close_session` distills again on
+close (and `delete_chat_session` distills before deleting). Re-distillation is safe because
+`fox::write_distilled` skips a memory title the scope already holds.
 
 ## Constants & keys
 
@@ -43,13 +50,13 @@ Per streaming turn (`chat.rs`):
    front of the reply the user is waiting for).
 3. Take the last `ROLLING_WINDOW` messages as the window.
 
-So the system prompt contains only: agent objective (+ a tool note, and a memory-usage note
-when a memory tool is attached). No memory summary, facts, day context, or fox active context
-is injected — memory is pull-only.
+So the system prompt contains: the agent's objective (+ a tool note, and a memory-usage note
+when a memory tool is attached), the identity lines, and **`memory_block`** — the learned typed
+memories + self-model for the turn's scope, plus the day context (last chat summary, today,
+yesterday). The block is empty until there is something to recall.
 
-> The Manager path (`build_manager_system_prompt`, used by both `stream_chat` and
-> `manager_turn`) is likewise clean: it injects no memory. `recall_memory` still returns the
-> full bundle on demand.
+> The Manager path (`build_manager_system_prompt` callers and `manager_turn`) gets the same
+> block. `recall_memory` still returns the full flat bundle on demand.
 
 ## Summarization (`summarize_old_turns`)
 
@@ -105,9 +112,9 @@ Where each step is triggered:
 | `recall_memory` (full context bundle) | `manager_tools()` | **Manager only** |
 | Reset | `useManagerStore.reset` → `clear_agent_memory` | per agent |
 
-All three tiers are still written for every agent, but only the rolling window is sent —
-tiers 2 and 3 are pull-only. The Manager additionally has `recall_memory` for pulling the full
-bundle on demand.
+The rolling window is sent every turn, and the learned `memory_block` is injected with it; the
+flat `memory` rows stay pull-only. The Manager additionally has `recall_memory` for pulling the
+full bundle on demand.
 
 ## Day context
 
@@ -169,15 +176,15 @@ memory — a keyed self-model plus a searchable store of typed memories
 registry. It is **on by default** with no setup, and `memory.rs` still owns conversation
 context.
 
-It is a pull layer by design: nothing is injected into the prompt — the host drives it
-(`src-tauri/src/fox.rs` is the host policy on top of the store), so memory is **learned**
-in the background and **recalled** on demand:
+It is driven by the host (`src-tauri/src/fox.rs` is the host policy on top of the store): memory
+is **learned** in the background, **injected** into the prompt, and **recalled** on demand:
 
 | Phase | Where | What happens |
 | --- | --- | --- |
 | **Capture** | `chat.rs` (`stream_chat_inner`) | After every turn, the user turn + reply are written as `am_events` (`user_message`/`assistant_message`). No tool call, no instruction. |
-| **Recall (on demand)** | `am_search` / `am_compile_context` / Memory view | Durable state stays in the `am_*` tables; nothing is injected. Recall brings a slice in only when asked. |
-| **Distill** | `memory.rs` (`close_chat_session` → `distill_session`) | When a chat closes, one model call extracts the agent's own **self-model entries + typed memories** from the transcript and writes them into the store. |
+| **Inject** | `memory.rs::memory_block` → `chat.rs`, `manager.rs` | Each turn's system prompt carries `compile_context` (typed memories + self-model for the scope) and the day context. Empty until there is something to recall. |
+| **Distill** | `memory.rs` (`distill_if_due` while the chat runs; `close_chat_session` on close) | One model call extracts the agent's own **self-model entries + typed memories** from the transcript and writes them into the store. Re-runs are de-duplicated by title. |
+| **Recall (on demand)** | `am_search` / `am_compile_context` / Memory view | A deeper pull than the injected slice — search, or the full compiled context. |
 | **Feedback loop** | `fox::rate_turn` + `MessageBubble` | A good/bad signal on a reply is recorded as an `outcome` event; a bad one triggers `reflect` (recurring failures → a reflection memory). |
 
 Data (all in the app SQLite DB; see [data-model.md](./data-model.md)):
