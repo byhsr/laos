@@ -154,13 +154,20 @@ The learning layer's proposals: `id` (PK), `kind` (`goal` | `preference` | `patt
 `habit_suggestion`), `title`, `body`, `confidence`, `status` (`new` | `accepted` |
 `dismissed`), `created_at`, `updated_at`.
 
+### `destinations`
+
+Where captured items are pushed ([mcp.md](./mcp.md)): `id` (PK, `dst-<ms>`), `name`,
+`server_id` (an `mcp_servers` id), `tool`, `arg_template` (JSON with
+`{{title}}`/`{{body}}`/`{{url}}`/`{{tags}}`/`{{kind}}`), `enabled`, `created_at`, `updated_at`.
+
 ### `telegram_bots`
 
 `id` (PK), `name`, `token`, `agent_id` (`''`/`manager` = the Manager), `terminal_id` (bound
 PTY session, or `''`), `allowed_users` (JSON array of Telegram user ids; empty = open),
 `capture` (added by migration; ticked = free text is filed as an item, see
 [lumin.md](./lumin.md)), `owner_chat_id` (added by migration; the chat the scheduler messages
-unprompted, filled from the first authorized sender), `enabled`, `webhook_secret`,
+unprompted, filled from the first authorized sender), `destination_id` (added by migration; the
+destination captured items are pushed to, or `''`), `enabled`, `webhook_secret`,
 `webhook_registered`, `updated_at`. One
 long-poll loop runs per enabled bot (`telegram.rs`); incoming messages route to the bot's agent
 **or** into its bound terminal session. A bot can instead register a

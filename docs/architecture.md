@@ -128,3 +128,17 @@ chat.rs     ── top-level command
   the UI only ever receives masked values. See [integrations.md](./integrations.md).
 - **Writes are recorded.** Agent runs and streaming chats insert into `runs`; tools and
   workflows read/write through the owning module's SQL. See [data-model.md](./data-model.md).
+
+## Workflow import / export
+
+Workflows move in and out as JSON, entirely in the webview (a Blob download plus a hidden
+`<input type=file>`) — the same permission-free pattern the Memory view uses; no dialog/fs
+plugin is wired up.
+
+An export is `{ version: 1, kind: 'lup-workflow', exportedAt, workflow: { name, nodes, edges } }`;
+**export all** packs every workflow under `kind: 'lup-workflows'`. Runs are not exported (they
+live in `workflow_runs`, keyed by workflow id).
+
+Import validates `kind`/shape and mints a **fresh id** before saving, so it can never overwrite
+an existing workflow — `storage::save_workflow` upserts by id. `CanvasView.tsx` owns this; the
+buttons sit in the builder header (import / export) and the list header (import / export all).

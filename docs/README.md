@@ -143,11 +143,11 @@ Find the row for what you're changing, update the listed code and doc together.
 | A Manager tool or the confirmation list | `src-tauri/src/manager.rs` (`manager_tools`, `dispatch_manager_tool`, `requires_confirmation`) | [tool-calls.md](./tool-calls.md) |
 | The confirmation popup UX | `src/components/ui/ConfirmDialog.tsx`, `src/hooks/useConfirm.ts`, `src/runtime.ts` | [tool-calls.md](./tool-calls.md) |
 | An integration provider, action, or credential field | `src-tauri/src/integrations.rs`, `src-tauri/src/tools/integration.rs` | [integrations.md](./integrations.md) |
-| MCP servers, discovery, or the connector protocol | `src-tauri/src/mcp.rs`, `src-tauri/src/tools/mcp.rs`, `src/components/views/McpServers.tsx` | [mcp.md](./mcp.md) |
+| MCP servers, discovery, tools from several accounts, or destinations (pushing items to a server) | `src-tauri/src/mcp.rs`, `src-tauri/src/tools/mcp.rs`, `src-tauri/src/destinations.rs`, `src/components/views/McpServers.tsx`, `src/components/views/Destinations.tsx` | [mcp.md](./mcp.md) |
 | OAuth scopes, redirect port, or token exchange | `src-tauri/src/integrations.rs` | [integrations.md](./integrations.md), [webhooks.md](./webhooks.md) |
 | Telegram tunnel/webhook/polling/receiver | `src-tauri/src/telegram.rs`, `src-tauri/src/tg_markdown.rs` | [webhooks.md](./webhooks.md) |
 | Capture / Lumin: the extractor, an item kind, habits, the scheduler, or the learning layer | `src-tauri/src/capture.rs`, `src-tauri/src/reminders.rs`, `src-tauri/src/insights.rs`, `src/components/views/ItemsView.tsx` | [lumin.md](./lumin.md) |
-| App settings (background, shell, shortcuts, autonomy) | `src-tauri/src/app_settings.rs`, `src/components/views/SettingsView.tsx` | [architecture.md](./architecture.md) |
+| App settings (background, shell, shortcuts, autonomy, identity) | `src-tauri/src/app_settings.rs`, `src/components/views/SettingsView.tsx` | [architecture.md](./architecture.md) |
 | Memory, context assembly, or summarization | `src-tauri/src/memory.rs`, `src-tauri/src/chat.rs` | [memory.md](./memory.md) |
 | The memory connector (fox/`agent-memory`), its capture/active-context/distill/feedback loop, or the Memory view | `src-tauri/src/fox.rs`, `src-tauri/src/storage.rs` (`ensure_memory_server`), `src-tauri/src/chat.rs`, `src-tauri/src/memory.rs`, `src-tauri/src/mcp.rs` (`call_mcp_tool`), `src/components/views/MemoryView.tsx` | [memory.md](./memory.md) |
 | A table, column, or migration | `src-tauri/src/db.rs` (+ the owning module's SQL) | [data-model.md](./data-model.md) |

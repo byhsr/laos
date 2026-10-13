@@ -67,9 +67,24 @@ Commands work on **any** bot. A bot ticked **second brain** also files free text
 | `/done <n>` | toggle done — a habit bumps its streak and schedules the next occurrence |
 | `/forget <n>` | delete · `/capture` the command list |
 | `/insights` | new insights · `/accept <n>` accept one |
+| `/send <n>` | push item *n* to this bot's destination |
 
 Filing runs *before* the agent and terminal paths, so capture never costs a model turn and —
 like terminal sessions — never writes agent memory.
+
+## Destinations — where ideas land
+
+Lumin is meant to sit *on top* of what you already use, so an item can be pushed straight into
+another system — a Notion database, an Obsidian vault, anything with an MCP server.
+
+A **destination** is an MCP server + one of its tools + a JSON arg template
+(`{{title}} {{body}} {{url}} {{tags}} {{kind}}`). Set one per capture bot and everything that bot
+files lands there automatically; any item can also be sent by hand from **send to ▸** in the
+Items view, or with `/send <n>`.
+
+That's what makes **several accounts** work: add one MCP server per account (e.g. *Notion —
+personal*, *Notion — work*), give each a destination, and point a bot at each. Full detail in
+[mcp.md](./mcp.md).
 
 ## Reminders + the scheduler
 

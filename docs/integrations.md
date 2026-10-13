@@ -19,6 +19,15 @@ Defined in `integrations::integration_definitions()`. Each entry is
 | `sheets` | Google Sheets | `google` | `sheets_read`, `sheets_append`, `sheets_update` | OAuth |
 | `docs` | Google Docs | `google` | `docs_create`, `docs_get` | OAuth |
 | `telegram` | Telegram | `telegram` | `telegram_send` | bot token |
+| `exa` | Exa | `exa` | `exa_search` | API key (`x-api-key`) |
+| `parallel` | Parallel | `parallel` | `parallel_search` | API key (`x-api-key`) |
+
+**Web search.** `exa` and `parallel` each need a single API key. `exa_search` posts to
+`https://api.exa.ai/search` (`type: auto`, highlights on); `parallel_search` posts to
+`https://api.parallel.ai/v1/search` (`objective` + `search_queries`, `mode: basic`). Both return
+the vendor's JSON as tool output, clipped like every other action. They're the honest way for an
+agent to search the web — the alternative is a generic `api` tool, but its key would sit
+unmasked in `tools.config_json`.
 
 Action implementations live in `src-tauri/src/tools/integration.rs` — a single `match` on the
 action name. The tool's `description()` and `params_schema()` are also switched there.

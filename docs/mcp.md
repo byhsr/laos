@@ -25,6 +25,34 @@ Imported tools are ordinary rows in the existing `tools` table with `kind='mcp'`
 description, schema}`. Because they're regular registry tools, agents attach them exactly like
 any other tool and `build_tools` needs only the `mcp` branch.
 
+## Several accounts of the same server
+
+Nothing stops two servers of the same kind — one per Notion account, say. Ids are unique, and
+each server's tools are separate rows.
+
+The one thing that had to be fixed is the **model-facing name**: it's derived from the server
+*name*, so two servers both called `Notion` produced byte-identical function names, the provider
+schema collided, and call resolution (a first-match name lookup) always hit the first server.
+`build_tools` / `mcp_tools_for` now track the names already claimed and give a colliding tool an
+alias with a `_2`, `_3`… suffix (`tools/mcp.rs`). A single server keeps its clean name.
+
+## Destinations — pushing items to a server
+
+A **destination** is an MCP server + one of its tools + a JSON arg template. It's how the second
+brain gets items *out*: capture an idea and it lands in the target account.
+
+`destinations` — `id` (PK, `dst-<ms>`), `name`, `server_id`, `tool`, `arg_template`, `enabled`,
+`created_at`, `updated_at`. `telegram_bots.destination_id` points a capture bot at one.
+
+The template's `{{title}}` `{{body}}` `{{url}}` `{{tags}}` `{{kind}}` placeholders are replaced
+with JSON-escaped values, then the whole thing must parse as JSON — so a broken template fails
+loudly instead of sending garbage. Default: `{"title": "{{title}}", "content": "{{body}}"}`.
+
+Pushing calls the server's tool directly (`mcp::load_server` + `call_tool`) on a blocking thread,
+so no agent is involved. A capture bot auto-pushes in the background (the chat reply never waits
+on a cold server; a failure is written to the Telegram log), any item can be pushed from the
+Items view's **send to ▸**, and `/send <n>` pushes from chat. See [lumin.md](./lumin.md).
+
 ## Commands
 
 | Command | Does |
