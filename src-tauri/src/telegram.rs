@@ -80,15 +80,16 @@ fn ensure_webhook_secret(conn: &Connection) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-struct TelegramBot { id: String, name: String, token: String, agent_id: String, terminal_id: String, allowed_users: String, enabled: bool, webhook_secret: String, webhook_registered: bool, capture: bool }
+struct TelegramBot { id: String, name: String, token: String, agent_id: String, terminal_id: String, allowed_users: String, enabled: bool, webhook_secret: String, webhook_registered: bool, capture: bool, destination_id: String }
 
 fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
   let mut out = Vec::new();
-  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture FROM telegram_bots ORDER BY name") {
+  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id FROM telegram_bots ORDER BY name") {
     if let Ok(rows) = stmt.query_map([], |row| Ok(TelegramBot {
       id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
       enabled: row.get::<_, i64>(6)? != 0, webhook_secret: row.get(7)?, webhook_registered: row.get::<_, i64>(8)? != 0,
       capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
+      destination_id: row.get::<_, String>(10).unwrap_or_default(),
     })) {
       for r in rows { if let Ok(b) = r { out.push(b); } }
     }
@@ -97,10 +98,11 @@ fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
 }
 
 fn load_bot(conn: &Connection, id: &str) -> Option<TelegramBot> {
-  conn.query_row("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
+  conn.query_row("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
     id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
     enabled: row.get::<_, i64>(6)? != 0, webhook_secret: row.get(7)?, webhook_registered: row.get::<_, i64>(8)? != 0,
     capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
+    destination_id: row.get::<_, String>(10).unwrap_or_default(),
   })).ok()
 }
 
@@ -147,7 +149,7 @@ pub fn list_telegram_bots(app: AppHandle) -> Result<Vec<serde_json::Value>, Stri
   let conn = db(&app)?;
   Ok(load_bots(&conn).into_iter().map(|b| serde_json::json!({
     "id": b.id, "name": b.name, "agentId": b.agent_id, "terminalId": b.terminal_id, "enabled": b.enabled, "token": mask_token(&b.token),
-    "webhookRegistered": b.webhook_registered, "capture": b.capture,
+    "webhookRegistered": b.webhook_registered, "capture": b.capture, "destinationId": b.destination_id,
     "allowedUsers": serde_json::from_str::<serde_json::Value>(&b.allowed_users).unwrap_or_else(|_| serde_json::json!([])),
   })).collect())
 }
@@ -175,10 +177,12 @@ pub fn save_telegram_bot(app: AppHandle, bot: serde_json::Value) -> Result<Strin
   } else { incoming.to_string() };
   let allowed_users = allowed_users.unwrap_or_else(|| load_bot(&conn, &id).map(|b| b.allowed_users).unwrap_or_else(|| "[]".into()));
   let capture = bot.get("capture").and_then(|v| v.as_bool()).unwrap_or(false);
+  // Where this bot's captured items are pushed ('' = nowhere).
+  let destination_id = bot.get("destinationId").and_then(|v| v.as_str()).unwrap_or("").to_string();
   conn.execute(
-    "INSERT INTO telegram_bots (id, name, token, agent_id, terminal_id, allowed_users, enabled, capture, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
-     ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, terminal_id=excluded.terminal_id, allowed_users=excluded.allowed_users, enabled=excluded.enabled, capture=excluded.capture, updated_at=excluded.updated_at",
-    params![id, name, token, agent_id, terminal_id, allowed_users, if enabled { 1 } else { 0 }, if capture { 1 } else { 0 }, now()],
+    "INSERT INTO telegram_bots (id, name, token, agent_id, terminal_id, allowed_users, enabled, capture, destination_id, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, terminal_id=excluded.terminal_id, allowed_users=excluded.allowed_users, enabled=excluded.enabled, capture=excluded.capture, destination_id=excluded.destination_id, updated_at=excluded.updated_at",
+    params![id, name, token, agent_id, terminal_id, allowed_users, if enabled { 1 } else { 0 }, if capture { 1 } else { 0 }, destination_id, now()],
   ).map_err(|e| e.to_string())?;
   Ok(id)
 }
@@ -387,6 +391,37 @@ fn record_owner(app: &AppHandle, bot_id: &str, chat_id: i64) {
       "UPDATE telegram_bots SET owner_chat_id=?1 WHERE id=?2 AND (owner_chat_id IS NULL OR owner_chat_id='')",
       params![chat_id.to_string(), bot_id],
     );
+  }
+}
+
+// Records a destination push failure in the Telegram log, where it's visible.
+pub(crate) fn log_destination(app: &AppHandle, bot_name: &str, detail: &str) {
+  if let Ok(conn) = db(app) {
+    let _ = conn.execute(
+      "INSERT INTO telegram_logs (direction, chat_id, text, reply, status, detail, created_at) VALUES ('out', '', '', '', 'error', ?1, ?2)",
+      params![format!("destination {bot_name}: {detail}"), chrono::Utc::now().to_rfc3339()],
+    );
+  }
+}
+
+// `/send <n>`: pushes the n-th item from /items to this bot's destination.
+async fn send_to_destination(app: &AppHandle, bot: &TelegramBot, rest: &str) -> String {
+  let (item_id, dest_name, dest_id) = {
+    let Ok(conn) = db(app) else { return "Could not read the database.".into() };
+    let Some(dest_id) = crate::destinations::bot_destination(&conn, &bot.name) else {
+      return "No destination set for this bot — pick one in its settings.".into();
+    };
+    let dest_name = crate::destinations::get(&conn, &dest_id).map(|d| d.name).unwrap_or_else(|| dest_id.clone());
+    let n: usize = rest.parse().unwrap_or(0);
+    let items = crate::capture::list(&conn, None);
+    let Some(item) = n.checked_sub(1).and_then(|i| items.get(i)) else {
+      return "Usage: /send <number> from /items.".into();
+    };
+    (item.id.clone(), dest_name, dest_id)
+  };
+  match crate::destinations::push(app.clone(), item_id, dest_id).await {
+    Ok(_) => format!("Sent to {dest_name}."),
+    Err(e) => format!("Could not send to {dest_name}: {e}"),
   }
 }
 
@@ -908,7 +943,7 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
             let token = conn.as_ref().and_then(|c| telegram_token(c).ok().flatten());
             token.map(|t| (secret, t.clone(), TelegramBot {
               id: "bot-default".into(), name: "Telegram".into(), token: t, agent_id: "manager".into(), terminal_id: String::new(), allowed_users: "[]".into(),
-              enabled: true, webhook_secret: String::new(), webhook_registered: true, capture: false,
+              enabled: true, webhook_secret: String::new(), webhook_registered: true, capture: false, destination_id: String::new(),
             }))
           }
         }
@@ -1241,6 +1276,10 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
       }
       if cmd == "/capture" {
         return crate::capture::help();
+      }
+      // `/send <n>` — push item n (from /items) to this bot's destination.
+      if let Some(rest) = cmd.strip_prefix("/send").filter(|r| r.is_empty() || r.starts_with(char::is_whitespace)) {
+        return send_to_destination(app, bot, rest.trim()).await;
       }
       if bot.capture {
         return match crate::capture::remember(app, cmd, &bot.name).await {

@@ -6,6 +6,7 @@ mod app_settings;
 mod capture;
 mod chat;
 mod db;
+mod destinations;
 mod fallback;
 mod fox;
 mod http;
@@ -236,6 +237,13 @@ fn main() {
       insights::insight_accept,
       insights::insight_dismiss,
       insights::reflect_now,
+      // Destinations (push items to an MCP server: e.g. a Notion account)
+      destinations::list_destinations,
+      destinations::save_destination,
+      destinations::delete_destination,
+      destinations::destination_tools,
+      destinations::test_destination,
+      destinations::push_item,
     ])
     .build(tauri::generate_context!())
     .expect("error while running Local Agent OS")

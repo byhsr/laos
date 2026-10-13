@@ -93,7 +93,7 @@ export async function listTelegramLogs(): Promise<TelegramLogEntry[]> {
   try { return await invoke<TelegramLogEntry[]>('list_telegram_logs'); } catch { return []; }
 }
 // Telegram bots (multiple): each is long-polled and routed to an agent.
-export type TelegramBot = { id: string; name: string; agentId: string; terminalId: string; allowedUsers: (string | number)[]; enabled: boolean; token: string; webhookRegistered: boolean; capture?: boolean };
+export type TelegramBot = { id: string; name: string; agentId: string; terminalId: string; allowedUsers: (string | number)[]; enabled: boolean; token: string; webhookRegistered: boolean; capture?: boolean; destinationId?: string };
 export async function listTelegramBots(): Promise<TelegramBot[]> {
   try { return await invoke<TelegramBot[]>('list_telegram_bots'); } catch { return []; }
 }
@@ -420,6 +420,32 @@ export async function rateTurn(agentId: string, signal: 'up' | 'down', content?:
 export async function callMcpTool(serverId: string, tool: string, args: Record<string, unknown>): Promise<unknown> {
   const text = await invoke<string>('call_mcp_tool', { serverId, tool, arguments: args });
   try { return JSON.parse(text); } catch { return text; }
+}
+
+// Destinations: named places (an MCP server + tool + arg template) an item can be
+// pushed to — how several Notion accounts each receive captured ideas.
+export type Destination = {
+  id: string; name: string; serverId: string; tool: string; argTemplate: string; enabled: boolean;
+  createdAt: string; updatedAt: string;
+};
+export const DEFAULT_ARG_TEMPLATE = '{\n  "title": "{{title}}",\n  "content": "{{body}}"\n}';
+export async function listDestinations(): Promise<Destination[]> {
+  try { return await invoke<Destination[]>('list_destinations'); } catch { return []; }
+}
+export async function saveDestination(destination: Destination): Promise<Destination> {
+  return await invoke<Destination>('save_destination', { destination });
+}
+export async function deleteDestination(id: string): Promise<void> {
+  await invoke('delete_destination', { id });
+}
+export async function destinationTools(serverId: string): Promise<string[]> {
+  try { return await invoke<string[]>('destination_tools', { serverId }); } catch { return []; }
+}
+export async function testDestination(destination: Destination): Promise<string> {
+  return await invoke<string>('test_destination', { destination });
+}
+export async function pushItem(id: string, destinationId: string): Promise<string> {
+  return await invoke<string>('push_item', { id, destinationId });
 }
 
 export async function listIntegrations(): Promise<Integration[]> {

@@ -9,6 +9,7 @@ import { Button, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS } from '../ui/Input';
 import { McpServers } from './McpServers';
+import { Destinations } from './Destinations';
 import { telegramRegisterCustomUrl, telegramRegisterWebhook, telegramStartTunnel, telegramStopTunnel, telegramTunnelStatus } from '../../runtime';
 
 // Third-party marks are rendered as themselves, in the app's foreground — the
@@ -226,6 +227,8 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
       </div>
 
       <McpServers />
+
+      <Destinations />
 
       {active && (
         <Modal

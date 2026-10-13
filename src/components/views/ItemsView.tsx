@@ -7,7 +7,7 @@ import { tabCls } from '../ui/tabs';
 import { toast } from '../../hooks/useToast';
 import {
   ITEM_KINDS, insightAccept, insightDismiss, insightList, itemDelete, itemList, itemSave, itemToggle,
-  reflectNow, reminderSnooze, type Insight, type Item,
+  listDestinations, pushItem, reflectNow, reminderSnooze, type Destination, type Insight, type Item,
 } from '../../runtime';
 
 const fmtDue = (iso: string | null) => {
@@ -23,6 +23,7 @@ const fmtDue = (iso: string | null) => {
 export function ItemsView() {
   const [items, setItems] = useState<Item[]>([]);
   const [insights, setInsights] = useState<Insight[]>([]);
+  const [destinations, setDestinations] = useState<Destination[]>([]);
   const [filter, setFilter] = useState<string>('all');
   const [kind, setKind] = useState<string>('note');
   const [text, setText] = useState('');
@@ -36,6 +37,16 @@ export function ItemsView() {
     } catch (e) { toast(e instanceof Error ? e.message : String(e), 'error'); }
   };
   useEffect(() => { void load(); }, [filter]);
+  useEffect(() => { listDestinations().then(setDestinations); }, []);
+
+  // Push one item to a destination (e.g. a Notion account via an MCP server).
+  const sendTo = async (it: Item, destinationId: string) => {
+    if (!destinationId) return;
+    setBusy(true);
+    try { toast(await pushItem(it.id, destinationId), 'success'); }
+    catch (e) { toast(e instanceof Error ? e.message : String(e), 'error'); }
+    finally { setBusy(false); }
+  };
 
   const add = async () => {
     const body = text.trim();
@@ -143,6 +154,17 @@ export function ItemsView() {
                   {it.url && <a href={it.url} target="_blank" rel="noreferrer" className="shrink-0 font-mono text-[10px] text-muted hover:text-foreground">link</a>}
                   {it.kind === 'reminder' && it.due_at && (
                     <button className="shrink-0 cursor-pointer font-mono text-[10px] text-muted hover:text-foreground" onClick={() => void reminderSnooze(it.id).then(load)}>snooze</button>
+                  )}
+                  {destinations.length > 0 && (
+                    <select
+                      value=""
+                      onChange={(e) => void sendTo(it, e.target.value)}
+                      title="send to…"
+                      className="shrink-0 cursor-pointer bg-transparent font-mono text-[10px] text-muted hover:text-foreground focus:outline-none"
+                    >
+                      <option value="">send to ▸</option>
+                      {destinations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    </select>
                   )}
                   <IconButton label="delete" onClick={() => void itemDelete(it.id).then(load)}><Trash2 size={11} /></IconButton>
                 </div>

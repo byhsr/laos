@@ -62,6 +62,8 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   if !bot_cols.iter().any(|c| c == "capture") { conn.execute("ALTER TABLE telegram_bots ADD COLUMN capture INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
   // Who to message unprompted (reminders): the first authorized sender.
   if !bot_cols.iter().any(|c| c == "owner_chat_id") { conn.execute("ALTER TABLE telegram_bots ADD COLUMN owner_chat_id TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  // Where a capture bot's items are pushed (an MCP destination, e.g. a Notion account).
+  if !bot_cols.iter().any(|c| c == "destination_id") { conn.execute("ALTER TABLE telegram_bots ADD COLUMN destination_id TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   // Items grew a schedule (habits, reminders) and a project.
   let item_cols = cols("items")?;
   if !item_cols.iter().any(|c| c == "cadence") { conn.execute("ALTER TABLE items ADD COLUMN cadence TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
@@ -71,6 +73,8 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   if !item_cols.iter().any(|c| c == "fired_at") { conn.execute("ALTER TABLE items ADD COLUMN fired_at TEXT", []).map_err(|e| e.to_string())?; }
   // The learning layer's proposals (goals, preferences, patterns, habit nudges).
   conn.execute("CREATE TABLE IF NOT EXISTS insights (id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'new', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
+  // Named MCP destinations: where captured items are pushed (e.g. a Notion account).
+  conn.execute("CREATE TABLE IF NOT EXISTS destinations (id TEXT PRIMARY KEY, name TEXT NOT NULL, server_id TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '', arg_template TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
   // Native agent-memory tables (was the fox MCP server).
   crate::agent_memory::ensure_schema(&conn)?;
   Ok(conn)

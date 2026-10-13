@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, Bot, Check, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { listTelegramLogs, listTelegramBots, saveTelegramBot, deleteTelegramBot, setBotWebhook, clearBotWebhook, terminalList, type TelegramLogEntry, type TelegramBot, type TerminalSession } from '../../runtime';
+import { listTelegramLogs, listTelegramBots, saveTelegramBot, deleteTelegramBot, setBotWebhook, clearBotWebhook, terminalList, listDestinations, type TelegramLogEntry, type TelegramBot, type TerminalSession, type Destination } from '../../runtime';
 import { useAgentsStore } from '../../hooks/useAgents';
 import { Button, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -15,7 +15,7 @@ const fmtTime = (s?: string | null) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleTimeString();
 };
 
-const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', terminalId: '', allowedUsers: [], enabled: true, token: '', webhookRegistered: false, capture: false });
+const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', terminalId: '', allowedUsers: [], enabled: true, token: '', webhookRegistered: false, capture: false, destinationId: '' });
 
 // Telegram: manage multiple bots (each long-polled and routed to an agent), plus
 // the activity log. Polls the log while the view is open.
@@ -26,10 +26,11 @@ export function TelegramView() {
   const [editing, setEditing] = useState<TelegramBot | null>(null);
   const [target, setTarget] = useState<'agent' | 'terminal'>('agent');
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
+  const [destinations, setDestinations] = useState<Destination[]>([]);
   const [saving, setSaving] = useState(false);
 
   const load = async () => setLogs(await listTelegramLogs());
-  const loadBots = async () => { setBots(await listTelegramBots()); setTerminals(await terminalList()); };
+  const loadBots = async () => { setBots(await listTelegramBots()); setTerminals(await terminalList()); setDestinations(await listDestinations()); };
 
   const openEdit = (b: TelegramBot) => { setEditing(b); setTarget(b.terminalId ? 'terminal' : 'agent'); };
 
@@ -123,6 +124,14 @@ export function TelegramView() {
               <Checkbox checked={editing.enabled} onChange={(next) => setEditing({ ...editing, enabled: next })} label="enabled" />
               <Checkbox checked={!!editing.capture} onChange={(next) => setEditing({ ...editing, capture: next })} label="second brain — file free text as items" />
             </div>
+            <label className={`${FIELD_LABEL_CLS} mt-2`}>destination</label>
+            <Select
+              value={editing.destinationId ?? ''}
+              options={[{ value: '', label: 'none' }, ...destinations.map((d) => ({ value: d.id, label: d.name }))]}
+              onChange={(v) => setEditing({ ...editing, destinationId: v })}
+              placeholder="push captured items somewhere…"
+            />
+            <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">Captured items from this bot are sent here (an MCP server + tool). Set destinations up under Integrations.</p>
             <label className={`${FIELD_LABEL_CLS} mt-2`}>allowed users (Telegram ids)</label>
             <input
               value={(editing.allowedUsers ?? []).join(', ')}

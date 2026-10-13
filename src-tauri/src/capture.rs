@@ -259,7 +259,11 @@ pub(crate) fn command(app: &AppHandle, text: &str, source: &str) -> Option<Resul
       kind, title: &title, body: &body, url: &url, tags, collection: &collection,
       due_at, cadence, project_id: "", source,
     }) {
-      Ok(item) => Ok(confirm(&item)),
+      Ok(item) => {
+        // A capture bot with a destination sends the idea on (fire-and-forget).
+        crate::destinations::auto_push(app, &item, source);
+        Ok(confirm(&item))
+      }
       Err(e) => Err(e),
     });
   }
@@ -433,7 +437,9 @@ pub(crate) async fn remember(app: &AppHandle, text: &str, source: &str) -> Resul
   if intent.r#type.trim() == "chat" && intent.action.trim() != "read" {
     return Ok("Noted — nothing to file (use /n to keep it as a note).".into());
   }
-  let reply = apply(&conn, &intent, trimmed, source)?;
+  let (reply, created) = apply(&conn, &intent, trimmed, source)?;
+  // A capture bot with a destination sends the new item on (fire-and-forget).
+  if let Some(item) = &created { crate::destinations::auto_push(app, item, source); }
   // A low-confidence read still files (nothing is ever lost) but says so.
   Ok(if intent.confidence > 0.0 && intent.confidence < 0.4 { format!("{reply} · low confidence, check it in Items") } else { reply })
 }
@@ -442,7 +448,8 @@ fn intent_kind(intent: &Intent) -> &str {
   if intent_feature_known(&intent.feature) { intent.feature.trim() } else { "note" }
 }
 
-fn apply(conn: &Connection, intent: &Intent, raw: &str, source: &str) -> Result<String, String> {
+// Returns (reply, the item just created if this was a create).
+fn apply(conn: &Connection, intent: &Intent, raw: &str, source: &str) -> Result<(String, Option<Item>), String> {
   let kind = intent_kind(intent);
   let p = &intent.params;
   let body = if p.body.trim().is_empty() { raw.to_string() } else { p.body.clone() };
@@ -455,20 +462,20 @@ fn apply(conn: &Connection, intent: &Intent, raw: &str, source: &str) -> Result<
   match intent.action.trim() {
     // "I did X" / "done with X" — complete the closest match.
     "complete" => {
-      if let Some(item) = find(conn, &title) { complete(conn, &item.id) } else { Err(format!("Couldn't find anything matching “{title}”.")) }
+      if let Some(item) = find(conn, &title) { complete(conn, &item.id).map(|r| (r, None)) } else { Err(format!("Couldn't find anything matching “{title}”.")) }
     }
     "delete" => {
       if let Some(item) = find(conn, &title) {
         conn.execute("DELETE FROM items WHERE id=?1", params![item.id]).map_err(|e| e.to_string())?;
-        Ok(format!("Removed — {}", item.title))
+        Ok((format!("Removed — {}", item.title), None))
       } else { Err(format!("Couldn't find anything matching “{title}”.")) }
     }
-    "read" => Ok(summary(conn, if kind == "note" { None } else { Some(kind) })),
+    "read" => Ok((summary(conn, if kind == "note" { None } else { Some(kind) }), None)),
     "update" => {
       if let Some(item) = find(conn, &title) {
         conn.execute("UPDATE items SET body=?2, title=?3, due_at=COALESCE(?4, due_at), updated_at=?5 WHERE id=?1",
           params![item.id, body, title, p.due_at, now()]).map_err(|e| e.to_string())?;
-        Ok(format!("Updated — {title}"))
+        Ok((format!("Updated — {title}"), None))
       } else { Err(format!("Couldn't find anything matching “{title}”.")) }
     }
     _ => {
@@ -476,7 +483,7 @@ fn apply(conn: &Connection, intent: &Intent, raw: &str, source: &str) -> Result<
         kind, title: &title, body: &body, url: &url, tags, collection: &collection,
         due_at: p.due_at.clone(), cadence: &p.cadence, project_id: "", source,
       })?;
-      Ok(confirm(&item))
+      Ok((confirm(&item), Some(item)))
     }
   }
 }
