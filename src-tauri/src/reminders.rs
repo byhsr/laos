@@ -81,8 +81,19 @@ pub(crate) async fn reminder_loop(app: AppHandle) {
     let fired = match db(&app) { Ok(conn) => collect_due(&conn), Err(_) => Vec::new() };
 
     for f in fired {
+      // Notify the capturing bot. A failure must not silently lose the reminder:
+      // log it and leave the item due, rescheduled shortly, so it retries.
+      let mut failed = false;
       if !f.token.is_empty() && !f.chat_id.is_empty() {
-        let _ = crate::telegram::notify(&f.token, &f.chat_id, &line(&f.item)).await;
+        let send = tokio::time::timeout(
+          Duration::from_secs(20),
+          crate::telegram::notify(&f.token, &f.chat_id, &line(&f.item)),
+        ).await;
+        match send {
+          Ok(Ok(())) => {}
+          Ok(Err(e)) => { failed = true; crate::telegram::log_error(&app, &format!("reminder “{}” not delivered: {e}", line(&f.item))); }
+          Err(_) => { failed = true; crate::telegram::log_error(&app, &format!("reminder “{}” not delivered: timed out", line(&f.item))); }
+        }
       }
       // The app shows it too (App.tsx listens and toasts).
       let _ = app.emit("lumin-reminder", serde_json::json!({
@@ -92,6 +103,12 @@ pub(crate) async fn reminder_loop(app: AppHandle) {
 
       if let Ok(conn) = db(&app) {
         let ts = chrono::Utc::now().to_rfc3339();
+        if failed {
+          // Retry in five minutes rather than every tick.
+          let retry = chrono::Local::now() + chrono::Duration::minutes(5);
+          let _ = conn.execute("UPDATE items SET due_at=?2, updated_at=?3 WHERE id=?1", params![f.item.id, retry.to_rfc3339(), ts]);
+          continue;
+        }
         match next_due(&f.item.due_at, &f.item.cadence) {
           // Recurring: roll to the next occurrence rather than clearing it.
           Some(next) => { let _ = conn.execute("UPDATE items SET due_at=?2, fired_at=NULL, updated_at=?3 WHERE id=?1", params![f.item.id, next, ts]); }

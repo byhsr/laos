@@ -80,16 +80,17 @@ fn ensure_webhook_secret(conn: &Connection) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-struct TelegramBot { id: String, name: String, token: String, agent_id: String, terminal_id: String, allowed_users: String, enabled: bool, webhook_secret: String, webhook_registered: bool, capture: bool, destination_id: String }
+struct TelegramBot { id: String, name: String, token: String, agent_id: String, terminal_id: String, allowed_users: String, enabled: bool, webhook_secret: String, webhook_registered: bool, capture: bool, destination_id: String, poll_offset: i64 }
 
 fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
   let mut out = Vec::new();
-  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id FROM telegram_bots ORDER BY name") {
+  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id, poll_offset FROM telegram_bots ORDER BY name") {
     if let Ok(rows) = stmt.query_map([], |row| Ok(TelegramBot {
       id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
       enabled: row.get::<_, i64>(6)? != 0, webhook_secret: row.get(7)?, webhook_registered: row.get::<_, i64>(8)? != 0,
       capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
       destination_id: row.get::<_, String>(10).unwrap_or_default(),
+      poll_offset: row.get::<_, i64>(11).unwrap_or(0),
     })) {
       for r in rows { if let Ok(b) = r { out.push(b); } }
     }
@@ -98,11 +99,12 @@ fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
 }
 
 fn load_bot(conn: &Connection, id: &str) -> Option<TelegramBot> {
-  conn.query_row("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
+  conn.query_row("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id, poll_offset FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
     id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
     enabled: row.get::<_, i64>(6)? != 0, webhook_secret: row.get(7)?, webhook_registered: row.get::<_, i64>(8)? != 0,
     capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
     destination_id: row.get::<_, String>(10).unwrap_or_default(),
+    poll_offset: row.get::<_, i64>(11).unwrap_or(0),
   })).ok()
 }
 
@@ -334,6 +336,48 @@ fn telegram_error(body: &str) -> String {
     .unwrap_or_else(|| body.chars().take(200).collect())
 }
 
+// Telegram's rate limit is per chat and easy to hit when a reply is split into
+// several chunks, or when the relay pushes a burst. 429 and 5xx are retried with
+// the server's own `retry_after` (or a short backoff) instead of being dropped.
+fn retry_after(body: &str) -> Option<u64> {
+  serde_json::from_str::<serde_json::Value>(body).ok()?
+    .get("parameters")?.get("retry_after")?.as_u64()
+}
+
+// A small byte-slice search and a header reader, for framing HTTP requests.
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+  if needle.is_empty() { return Some(0); }
+  haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+fn content_length(headers: &str) -> Option<usize> {
+  headers.lines().find_map(|l| {
+    let (k, v) = l.split_once(':')?;
+    if k.trim().eq_ignore_ascii_case("content-length") { v.trim().parse().ok() } else { None }
+  })
+}
+
+async fn telegram_post(client: &reqwest::Client, url: &str, body: &serde_json::Value) -> Result<(), (reqwest::StatusCode, String)> {
+  let mut attempt = 0u32;
+  loop {
+    let resp = match client.post(url).json(body).send().await {
+      Ok(r) => r,
+      Err(e) => return Err((reqwest::StatusCode::from_u16(503).unwrap(), format!("Could not reach Telegram: {e}"))),
+    };
+    let status = resp.status();
+    if status.is_success() { return Ok(()); }
+    let text = resp.text().await.unwrap_or_default();
+    let retryable = status.as_u16() == 429 || status.is_server_error();
+    if retryable && attempt < 3 {
+      let wait = retry_after(&text).unwrap_or(1 + attempt as u64 * 2).min(30);
+      tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+      attempt += 1;
+      continue;
+    }
+    return Err((status, telegram_error(&text)));
+  }
+}
+
 // The model answers in Markdown, which Telegram's legacy `Markdown` mode barely
 // accepts — one unbalanced `*`, `_` or `[` and it rejects the whole message with
 // 400. Its HTML mode covers more ground and escapes cleanly, so convert to that
@@ -341,28 +385,29 @@ fn telegram_error(body: &str) -> String {
 // optional here; delivery is not.
 async fn telegram_send_chunk(url: &str, chat_id: i64, markdown: &str) -> Result<(), String> {
   let client = http::client();
-  let send = |body: serde_json::Value| client.post(url).json(&body).send();
 
   let formatted = serde_json::json!({
     "chat_id": chat_id,
     "text": crate::tg_markdown::to_telegram_html(markdown),
     "parse_mode": "HTML",
   });
-  let resp = send(formatted).await.map_err(|e| format!("Could not reach Telegram: {e}"))?;
-  if resp.status().is_success() { return Ok(()); }
-  let status = resp.status();
-  let detail = telegram_error(&resp.text().await.unwrap_or_default());
-
-  let plain = serde_json::json!({ "chat_id": chat_id, "text": markdown });
-  let retry = send(plain).await.map_err(|e| format!("Could not reach Telegram: {e}"))?;
-  if retry.status().is_success() { return Ok(()); }
-  let retry_status = retry.status();
-  let retry_detail = telegram_error(&retry.text().await.unwrap_or_default());
-  Err(format!("{retry_status} {retry_detail} (formatted send failed: {status} {detail})"))
+  match telegram_post(&client, url, &formatted).await {
+    Ok(()) => return Ok(()),
+    Err((status, detail)) => {
+      let plain = serde_json::json!({ "chat_id": chat_id, "text": markdown });
+      match telegram_post(&client, url, &plain).await {
+        Ok(()) => Ok(()),
+        Err((retry_status, retry_detail)) => Err(format!("{retry_status} {retry_detail} (formatted send failed: {status} {detail})")),
+      }
+    }
+  }
 }
 
 // Sends a reply, splitting anything over the message-size limit.
 async fn telegram_send_message(token: &str, chat_id: i64, text: &str) -> Result<(), String> {
+  // An empty message is a guaranteed 400 from Telegram — and the CLI-relay paths
+  // legitimately return one. Say nothing rather than failing loudly.
+  if text.trim().is_empty() { return Ok(()); }
   let url = format!("https://api.telegram.org/bot{token}/sendMessage");
   for chunk in split_for_telegram(text) {
     telegram_send_chunk(&url, chat_id, &chunk).await?;
@@ -396,10 +441,16 @@ fn record_owner(app: &AppHandle, bot_id: &str, chat_id: i64) {
 
 // Records a destination push failure in the Telegram log, where it's visible.
 pub(crate) fn log_destination(app: &AppHandle, bot_name: &str, detail: &str) {
+  log_error(app, &format!("destination {bot_name}: {detail}"));
+}
+
+// Records a background failure (a lost reminder, a failed push) in the Telegram
+// log, which the UI shows — better than a silently dropped message.
+pub(crate) fn log_error(app: &AppHandle, detail: &str) {
   if let Ok(conn) = db(app) {
     let _ = conn.execute(
-      "INSERT INTO telegram_logs (direction, chat_id, text, reply, status, detail, created_at) VALUES ('out', '', '', '', 'error', ?1, ?2)",
-      params![format!("destination {bot_name}: {detail}"), chrono::Utc::now().to_rfc3339()],
+      "INSERT INTO telegram_logs (direction, chat_id, text, reply, status, detail, created_at) VALUES ('sys', '', '', '', 'error', ?1, ?2)",
+      params![detail, chrono::Utc::now().to_rfc3339()],
     );
   }
 }
@@ -922,12 +973,28 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
     let Ok((mut socket, _)) = listener.accept().await else { continue };
     let app = app.clone();
     tokio::spawn(async move {
-      let mut buf = vec![0u8; 8192];
-      let n = match tokio::time::timeout(std::time::Duration::from_secs(5), socket.read(&mut buf)).await {
-        Ok(Ok(n)) => n,
-        _ => return,
-      };
-      let req = String::from_utf8_lossy(&buf[..n]).to_string();
+      // Read until the headers and the declared body are both in hand: a long user
+      // message can exceed a single read, and Telegram only retries what we don't
+      // ACK — so a half-read body must not fall through to the 200 below.
+      let mut buf: Vec<u8> = Vec::with_capacity(4096);
+      let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+      loop {
+        if buf.len() >= 128 * 1024 { break; }
+        let mut chunk = [0u8; 4096];
+        match tokio::time::timeout_at(deadline, socket.read(&mut chunk)).await {
+          Ok(Ok(0)) => break,
+          Ok(Ok(n)) => {
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(pos) = find_subslice(&buf, b"\r\n\r\n") {
+              let headers = String::from_utf8_lossy(&buf[..pos]).to_string();
+              let want = content_length(&headers).unwrap_or(0);
+              if buf.len() >= pos + 4 + want { break; }
+            }
+          }
+          _ => break,
+        }
+      }
+      let req = String::from_utf8_lossy(&buf).to_string();
       // Route by path: /webhook/telegram/<botId>, or /webhook/telegram (legacy).
       let path = req.split_whitespace().nth(1).unwrap_or("");
       if !path.starts_with("/webhook/telegram") { return; }
@@ -943,7 +1010,7 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
             let token = conn.as_ref().and_then(|c| telegram_token(c).ok().flatten());
             token.map(|t| (secret, t.clone(), TelegramBot {
               id: "bot-default".into(), name: "Telegram".into(), token: t, agent_id: "manager".into(), terminal_id: String::new(), allowed_users: "[]".into(),
-              enabled: true, webhook_secret: String::new(), webhook_registered: true, capture: false, destination_id: String::new(),
+              enabled: true, webhook_secret: String::new(), webhook_registered: true, capture: false, destination_id: String::new(), poll_offset: 0,
             }))
           }
         }
@@ -1018,6 +1085,8 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
               set_active_chat(Some((bot.id.clone(), chat_id)));
               let reply = route_bot_message(&app, &bot, chat_id, &text).await;
               set_active_chat(None);
+              // CLI/terminal turns relay separately and return nothing.
+              if reply.trim().is_empty() { return; }
               let send_result = telegram_send_message(&token, chat_id, &reply).await;
               if let Ok(c) = db(&app) {
                 match send_result {
@@ -1158,8 +1227,11 @@ pub(crate) async fn terminal_relay_loop(app: AppHandle) {
       // Remember what we saw even when paused, so re-enabling doesn't dump a backlog.
       if let Ok(mut m) = term_relay().lock() { if let Some(r) = m.get_mut(&sid) { r.last_sent = tail.clone(); } }
       if live && changed {
-        let _ = telegram_send_message(&token, chat_id, &tail).await;
-        if let Ok(c) = db(&app) { telegram_log(&c, "out", &chat_id.to_string(), "", &tail, "relay", ""); }
+        // Record the outcome: a dropped relay must not look like a delivered one.
+        match telegram_send_message(&token, chat_id, &tail).await {
+          Ok(()) => { if let Ok(c) = db(&app) { telegram_log(&c, "out", &chat_id.to_string(), "", &tail, "relay", ""); } }
+          Err(e) => { if let Ok(c) = db(&app) { telegram_log(&c, "out", &chat_id.to_string(), "", &tail, "error", &e); } }
+        }
       }
     }
   }
@@ -1167,7 +1239,9 @@ pub(crate) async fn terminal_relay_loop(app: AppHandle) {
 
 // One long-poll loop per bot. Returns when the bot is disabled or removed.
 async fn poll_bot(app: AppHandle, bot: TelegramBot) {
-  let mut offset: i64 = 0;
+  // Resume from the persisted offset: Telegram replays anything not yet confirmed,
+  // so starting at 0 after a restart would re-process (and re-reply to) old updates.
+  let mut offset: i64 = bot.poll_offset;
   loop {
     // Reload the bot each pass; stop once it's disabled or deleted.
     let current = match db(&app).ok().and_then(|c| load_bot(&c, &bot.id)) {
@@ -1197,6 +1271,8 @@ async fn poll_bot(app: AppHandle, bot: TelegramBot) {
     for update in updates {
       let update_id = update.get("update_id").and_then(|u| u.as_i64()).unwrap_or(0);
       offset = update_id + 1;
+      // Confirm progress immediately, so a crash mid-batch can't replay it.
+      if let Ok(c) = db(&app) { let _ = c.execute("UPDATE telegram_bots SET poll_offset=?1 WHERE id=?2", params![offset, current.id]); }
       // Button taps (inline keyboard).
       if let Some(cq) = update.get("callback_query") {
         let uid = cq.get("from").and_then(|f| f.get("id")).and_then(|i| i.as_i64());
@@ -1238,6 +1314,9 @@ async fn poll_bot(app: AppHandle, bot: TelegramBot) {
         set_active_chat(Some((task_bot.id.clone(), chat_id)));
         let reply = route_bot_message(&task_app, &task_bot, chat_id, &text).await;
         set_active_chat(None);
+        // A CLI/terminal turn relays its output separately and returns nothing —
+        // don't send (or log) an empty message.
+        if reply.trim().is_empty() { return; }
         let send_result = telegram_send_message(&task_bot.token, chat_id, &reply).await;
         if let Ok(c) = db(&task_app) {
           match send_result {

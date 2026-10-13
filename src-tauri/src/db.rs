@@ -64,6 +64,8 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   if !bot_cols.iter().any(|c| c == "owner_chat_id") { conn.execute("ALTER TABLE telegram_bots ADD COLUMN owner_chat_id TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   // Where a capture bot's items are pushed (an MCP destination, e.g. a Notion account).
   if !bot_cols.iter().any(|c| c == "destination_id") { conn.execute("ALTER TABLE telegram_bots ADD COLUMN destination_id TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  // The long-poll offset, persisted so a restart can't replay (and re-reply to) old updates.
+  if !bot_cols.iter().any(|c| c == "poll_offset") { conn.execute("ALTER TABLE telegram_bots ADD COLUMN poll_offset INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
   // Items grew a schedule (habits, reminders) and a project.
   let item_cols = cols("items")?;
   if !item_cols.iter().any(|c| c == "cadence") { conn.execute("ALTER TABLE items ADD COLUMN cadence TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
