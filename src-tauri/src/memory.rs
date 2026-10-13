@@ -232,7 +232,20 @@ pub fn create_chat_session(app: AppHandle, agent_id: String, title: String, proj
 }
 
 #[tauri::command]
-pub fn delete_chat_session(app: AppHandle, session_id: String) -> Result<(), String> {
+pub async fn delete_chat_session(app: AppHandle, session_id: String) -> Result<(), String> {
+  // Learn from it before it's gone: deleting a chat used to discard it with no
+  // distillation at all.
+  let (agent_id, model) = {
+    let conn = db(&app)?;
+    let agent_id: String = conn.query_row("SELECT agent_id FROM chat_sessions WHERE id=?1", params![session_id], |r| r.get(0)).unwrap_or_default();
+    let model: String = if agent_id.is_empty() { String::new() } else {
+      conn.query_row("SELECT model FROM agents WHERE id=?1", params![agent_id], |r| r.get(0)).unwrap_or_default()
+    };
+    (agent_id, model)
+  };
+  if !agent_id.is_empty() && !model.trim().is_empty() {
+    let _ = close_chat_session(&app, &session_id, &agent_id, &model).await;
+  }
   let conn = db(&app)?;
   conn.execute("DELETE FROM chat_messages WHERE session_id=?1", params![session_id]).map_err(|e| e.to_string())?;
   conn.execute("DELETE FROM chat_sessions WHERE id=?1", params![session_id]).map_err(|e| e.to_string())?;
@@ -331,15 +344,62 @@ fn extract_json(text: &str) -> Option<serde_json::Value> {
   serde_json::from_str(&text[start..=end]).ok()
 }
 
+// How many new messages a session may accumulate before it is distilled again.
+const DISTILL_EVERY: i64 = 8;
+
+/// Distills a growing session in the background, once every `DISTILL_EVERY` new
+/// messages. Learning shouldn't wait for the user to close the chat — this is what
+/// makes memory accumulate during normal use. Re-distillation is safe because
+/// `fox::write_distilled` skips memories it already holds.
+pub(crate) async fn distill_if_due(app: &AppHandle, session_id: &str, agent_id: &str, model: &str) {
+  let (transcript, count) = {
+    let Ok(conn) = db(app) else { return };
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM chat_messages WHERE session_id=?1", params![session_id], |r| r.get(0)).unwrap_or(0);
+    let distilled: i64 = conn.query_row("SELECT distilled_count FROM chat_sessions WHERE id=?1", params![session_id], |r| r.get(0)).unwrap_or(0);
+    if count - distilled < DISTILL_EVERY { return; }
+    let transcript = match session_transcript(&conn, session_id) { Some(t) => t, None => return };
+    (transcript, count)
+  };
+  distill_session(app, agent_id, model, &transcript).await;
+  if let Ok(conn) = db(app) {
+    let _ = conn.execute("UPDATE chat_sessions SET distilled_count=?2 WHERE id=?1", params![session_id, count]);
+  }
+}
+
+// The "role: content" lines of a session, oldest first.
+fn session_transcript(conn: &Connection, session_id: &str) -> Option<String> {
+  let mut stmt = conn.prepare("SELECT role, content FROM chat_messages WHERE session_id=?1 ORDER BY id").ok()?;
+  let rows = stmt.query_map(params![session_id], |row| Ok(format!("{}: {}", row.get::<_, String>(0)?, row.get::<_, String>(1)?))).ok()?;
+  let mut out = Vec::new();
+  for r in rows { if let Ok(line) = r { out.push(line); } }
+  if out.is_empty() { None } else { Some(out.join("\n")) }
+}
+
+/// The durable-memory block injected into an agent's system prompt: what it has
+/// learned (typed memories + self-model) for its scope, plus recent day context.
+/// Empty when there's nothing to recall, so a fresh agent's prompt is unchanged.
+pub(crate) fn memory_block(conn: &Connection, agent_id: &str, scope: &str) -> String {
+  let mut out = String::new();
+  let learned = crate::agent_memory::compile_context(conn, agent_id, scope, 700);
+  if !learned.trim().is_empty() {
+    out.push_str("\n\n## What you remember (long-term memory)\n");
+    out.push_str(&learned);
+  }
+  if let Ok(day) = build_day_context(conn, agent_id) {
+    if !day.trim().is_empty() { out.push_str(&day); }
+  }
+  out
+}
+
 #[tauri::command]
 pub async fn close_session(app: AppHandle, session_id: String, agent_id: String, model: String) -> Result<(), String> {
   let _ = close_chat_session(&app, &session_id, &agent_id, &model).await;
   Ok(())
 }
 
-// Last chat's condensed summary + today's and yesterday's day context. This is
-// the time-based context, injected into every turn's system prompt so an agent
-// starts each chat already aware of recent work.
+// Last chat's condensed summary + today's and yesterday's day context. Injected
+// into every turn's system prompt (via `memory_block`) so an agent starts each chat
+// already aware of recent work.
 pub(crate) fn build_day_context(conn: &Connection, agent_id: &str) -> Result<String, String> {
   let mut out = String::new();
   // Last chat's condensed summary.

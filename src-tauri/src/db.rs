@@ -39,6 +39,9 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   if !sess_cols.iter().any(|c| c == "summary") { conn.execute("ALTER TABLE chat_sessions ADD COLUMN summary TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   // A chat session may belong to a project (memory is scoped to it).
   if !sess_cols.iter().any(|c| c == "project_id") { conn.execute("ALTER TABLE chat_sessions ADD COLUMN project_id TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  // How many messages this session had at its last distillation, so a growing
+  // chat is re-learned periodically instead of only when it's closed.
+  if !sess_cols.iter().any(|c| c == "distilled_count") { conn.execute("ALTER TABLE chat_sessions ADD COLUMN distilled_count INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
   // Per-model reasoning control: 'auto' | 'off' | 'low' | 'medium' | 'high'.
   // 'auto' sends nothing to the provider, which is what older rows get.
   let model_cols = cols("model_configs")?;

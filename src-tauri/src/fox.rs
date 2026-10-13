@@ -3,10 +3,11 @@
 // JSON-RPC. This module is the host policy on top of it:
 //
 //   * capture  — every turn becomes experience (events), with no tool call;
-//   * distill  — a finished chat is distilled into durable typed memories and
-//                self-model entries (done in `memory.rs`).
+//   * distill  — a session is distilled into durable typed memories and
+//                self-model entries as it grows, and again when it closes
+//                (done in `memory.rs`).
 //
-// Recall is pull: nothing here is injected into the prompt.
+// Recall: distilled memory is injected into the prompt (`memory::memory_block`).
 
 use serde_json::Value;
 use tauri::AppHandle;
@@ -51,6 +52,11 @@ pub(crate) fn write_distilled(app: &AppHandle, agent_id: &str, distilled: &Value
   let scope = am::scope_key("agent", agent_id);
   let Ok(conn) = db(app) else { return 0 };
   let mut stored = 0;
+  // Distillation re-runs as a session grows, so skip anything this scope already
+  // knows (matched by title) rather than piling up near-duplicates.
+  let mut seen: std::collections::HashSet<String> = am::list_memories(&conn, &scope, 500).iter()
+    .filter_map(|m| m.get("title").and_then(|t| t.as_str()).map(|s| s.trim().to_lowercase()))
+    .collect();
 
   if let Some(entries) = distilled.get("self").and_then(|v| v.as_array()) {
     for e in entries {
@@ -66,6 +72,7 @@ pub(crate) fn write_distilled(app: &AppHandle, agent_id: &str, distilled: &Value
       let title = m.get("title").and_then(|x| x.as_str()).unwrap_or("").trim();
       let content = m.get("content").and_then(|x| x.as_str()).unwrap_or("").trim();
       if title.is_empty() || content.is_empty() { continue; }
+      if !seen.insert(title.to_lowercase()) { continue; }
       let kind = m.get("kind").and_then(|x| x.as_str()).unwrap_or("semantic");
       let tags = m.get("tags").cloned().unwrap_or_else(|| serde_json::json!([]));
       let confidence = m.get("confidence").and_then(|x| x.as_f64()).unwrap_or(0.8);

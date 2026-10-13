@@ -101,10 +101,17 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     });
   }
 
-  // Memory is pull-only: nothing durable is injected here. A new chat starts
-  // clean, and memory only enters the window when the agent asks for it (a
-  // recall/search memory tool, or the Manager's recall_memory). This is what
-  // keeps a fresh session truly fresh.
+  // Learn from the session as it grows, not only when it's closed, so memory keeps
+  // up with a long chat. Backgrounded: it's an extra model call.
+  if let Some(sid) = session_id.as_deref().filter(|s| !s.is_empty()) {
+    let app_bg = app.clone();
+    let agent_id = agent.id.clone();
+    let model = agent.model.clone();
+    let sid = sid.to_string();
+    tauri::async_runtime::spawn(async move {
+      crate::memory::distill_if_due(&app_bg, &sid, &agent_id, &model).await;
+    });
+  }
 
   // Tools: the Manager gets its app-control tools plus the MCP tools it was
   // opted into; a regular agent gets its own.
@@ -150,6 +157,15 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   // Who the assistant is and who it's talking to (persona/tone are identity here,
   // not decoration like an agent's avatar).
   let system = format!("{system}{}", crate::app_settings::identity_prompt(&conn));
+
+  // Durable memory is injected so the agent actually uses what it has learned:
+  // typed memories + self-model for this scope, plus recent day context. Empty
+  // when there's nothing yet, so a fresh agent's prompt is unchanged.
+  let memory_scope = match &project_scope {
+    Some(p) if !p.trim().is_empty() => crate::agent_memory::scope_key("project", p),
+    _ => crate::agent_memory::scope_key("agent", &agent.id),
+  };
+  let system = format!("{system}{}", crate::memory::memory_block(&conn, &agent.id, &memory_scope));
 
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
   let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({ "role": "system", "content": system })];

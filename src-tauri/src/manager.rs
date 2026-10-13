@@ -287,12 +287,13 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     }
   }
 
-  // Memory is pull-only (matching the streaming path): nothing about prior
-  // context is injected. recall_memory (and any memory tool the Manager holds)
-  // brings it in on demand.
+  // Durable memory is injected, so the Manager starts each turn already knowing
+  // what it has learned (recall_memory still works for a deeper pull).
   let pc_control = manager.permissions.iter().any(|p| p == "pc_control");
+  let scope = crate::agent_memory::scope_key("agent", &manager.id);
+  let memory = crate::memory::memory_block(&conn, &manager.id, &scope);
   let context = build_manager_system_prompt(&conn, &manager.name, &manager.tool_ids, pc_control)?;
-  let prompt = format!("{context}\n\nUser message: {message}");
+  let prompt = format!("{context}{memory}\n\nUser message: {message}");
 
   // The Manager's built-in tools plus only the MCP tools it was opted into.
   let tools: Vec<Box<dyn AgentTool>> = {
