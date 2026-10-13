@@ -1,11 +1,9 @@
-import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Modal } from './Modal';
 import { Button } from './Button';
-import { INPUT_CLS } from './Input';
 
-// The app-wide destructive-action gate: the confirm button stays disabled until
-// the entity's exact name is typed. Same gate for every destructible entity.
+// The app-wide destructive-action gate: one simple confirm popup. Every
+// destructible entity uses this same gate.
 export function DeleteConfirm({ name, title, description, confirmLabel = 'delete', onCancel, onConfirm }: {
   name: string;
   title?: string;
@@ -14,8 +12,6 @@ export function DeleteConfirm({ name, title, description, confirmLabel = 'delete
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const [typed, setTyped] = useState('');
-
   return (
     <Modal
       title={title ?? `delete "${name}"?`}
@@ -23,22 +19,15 @@ export function DeleteConfirm({ name, title, description, confirmLabel = 'delete
       width="min(92vw, 400px)"
       height="auto"
     >
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-4 flex items-center gap-2">
         <Trash2 size={14} className="shrink-0 text-danger" />
         <b className="font-mono text-xs text-foreground">
-          {description ?? 'This permanently removes it. Type the name to confirm.'}
+          {description ?? 'This permanently removes it — there is no undo.'}
         </b>
       </div>
-      <input
-        autoFocus
-        value={typed}
-        onChange={(e) => setTyped(e.target.value)}
-        placeholder={name}
-        className={`${INPUT_CLS} mb-4 mt-3`}
-      />
       <div className="flex justify-end gap-2">
         <Button onClick={onCancel}>cancel</Button>
-        <Button variant="danger" disabled={typed.trim() !== name} onClick={onConfirm}>{confirmLabel}</Button>
+        <Button variant="danger" autoFocus onClick={onConfirm}>{confirmLabel}</Button>
       </div>
     </Modal>
   );

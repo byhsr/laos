@@ -71,7 +71,7 @@ export function Sidebar({ agents, view, selectedAgentId, onOpen, onTogglePin, on
       {deleteTarget && (
         <DeleteConfirm
           name={deleteTarget.name}
-          description="This permanently removes the agent and its configuration. Type the agent's name to confirm."
+          description="This permanently removes the agent and its configuration."
           onCancel={closeDelete}
           onConfirm={() => { const id = deleteTarget.id; closeDelete(); void onDelete(id); }}
         />

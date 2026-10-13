@@ -553,7 +553,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       {confirmDelete && (
         <DeleteConfirm
           name={agent.name}
-          description="This permanently removes the agent and its configuration. Type the agent's name to confirm."
+          description="This permanently removes the agent and its configuration."
           onCancel={() => setConfirmDelete(false)}
           onConfirm={() => { setConfirmDelete(false); void onDelete(agent.id); }}
         />

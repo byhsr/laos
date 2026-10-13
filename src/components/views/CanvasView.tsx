@@ -1111,7 +1111,7 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
       {confirmTarget && (
         <DeleteConfirm
           name={confirmTarget.name}
-          description="This permanently removes the workflow and its connections. Type the workflow's name to confirm."
+          description="This permanently removes the workflow and its connections."
           onCancel={closeConfirm}
           onConfirm={() => { deleteWorkflow(confirmTarget.id); closeConfirm(); }}
         />

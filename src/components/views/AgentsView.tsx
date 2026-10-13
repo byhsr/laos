@@ -74,7 +74,7 @@ export function AgentsView({ agents, onOpen, onCreate, onDelete, onSettings, onT
       {confirmTarget && (
         <DeleteConfirm
           name={confirmTarget.name}
-          description="This permanently removes the agent and its configuration. Type the agent's name to confirm."
+          description="This permanently removes the agent and its configuration."
           onCancel={closeConfirm}
           onConfirm={() => { onDelete(confirmTarget.id); closeConfirm(); }}
         />

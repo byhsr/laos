@@ -28,6 +28,7 @@ export function ItemsView() {
   const [filter, setFilter] = useState<string>('all');
   const [kind, setKind] = useState<string>('note');
   const [text, setText] = useState('');
+  const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
 
   const showInsights = filter === 'insights';
@@ -82,12 +83,28 @@ export function ItemsView() {
     finally { setBusy(false); }
   };
 
+  // Search across title, body and tags — a captured list gets long fast.
+  const q = query.trim().toLowerCase();
+  const visible = q
+    ? items.filter((it) => [it.title, it.body, ...it.tags].join(' ').toLowerCase().includes(q))
+    : items;
+
   return (
     <div className="flex h-full flex-col">
       <div className="mb-4 flex shrink-0 flex-wrap items-center gap-1">
         {['all', ...ITEM_KINDS, 'insights'].map((k) => (
           <button key={k} className={tabCls(filter === k)} onClick={() => setFilter(k)}>{k}</button>
         ))}
+        {!showInsights && (
+          <div className="ml-auto w-[180px]">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="search…"
+              className={INPUT_CLS}
+            />
+          </div>
+        )}
       </div>
 
       {showInsights ? (
@@ -137,18 +154,20 @@ export function ItemsView() {
           </Card>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {items.length === 0 && (
+            {visible.length === 0 && (
               <div className="grid place-items-center rounded-xl border border-dashed border-border p-6 text-center text-muted">
                 <Inbox size={20} className="mb-2 opacity-50" />
                 <p className="m-0 text-[12px]">
-                  {filter === 'all'
-                    ? 'nothing saved yet — file items here, or text them to a bot set to capture free text.'
-                    : `no ${filter} items yet.`}
+                  {q
+                    ? `no items match “${query.trim()}”.`
+                    : filter === 'all'
+                      ? 'nothing saved yet — file items here, or text them to a bot set to capture free text.'
+                      : `no ${filter} items yet.`}
                 </p>
               </div>
             )}
             <div className="grid gap-1.5">
-              {items.map((it) => (
+              {visible.map((it) => (
                 <div key={it.id} className="group flex items-center gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2">
                   <button
                     className={`focus-ring grid h-4 w-4 shrink-0 cursor-pointer place-items-center rounded border font-mono text-[9px] ${it.status === 'done' ? 'border-foreground/40 bg-foreground/10 text-foreground' : 'border-border text-transparent hover:border-foreground/30'}`}
@@ -156,7 +175,14 @@ export function ItemsView() {
                     aria-label={it.status === 'done' ? 'mark active' : 'mark done'}
                   >✓</button>
                   <span className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[9px] tracking-wider text-muted uppercase">{it.kind}</span>
-                  <span className={`min-w-0 flex-1 truncate font-mono text-[11px] ${it.status === 'done' ? 'text-muted line-through' : 'text-foreground'}`}>{it.title || it.body}</span>
+                  <div className="min-w-0 flex-1">
+                    <span className={`block truncate font-mono text-[11px] ${it.status === 'done' ? 'text-muted line-through' : 'text-foreground'}`}>{it.title || it.body}</span>
+                    {/* The title is capped at 7 words; show the body's opening so a
+                        note is readable at a glance without opening it. */}
+                    {it.title.trim() && it.body.trim() && it.body.trim() !== it.title.trim() && (
+                      <span className="block truncate font-mono text-[10px] text-muted">{it.body}</span>
+                    )}
+                  </div>
                   {it.streak > 0 && <span className="shrink-0 font-mono text-[10px] text-muted">{it.streak}🔥</span>}
                   {it.due_at && <span className="shrink-0 font-mono text-[10px] text-muted">{fmtDue(it.due_at)}</span>}
                   {/* The title keeps the row; the rest appears on hover so a row
