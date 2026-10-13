@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Play, Plus, RotateCcw, Save, Trash2, Workflow as WorkflowIcon, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { Download, Play, Plus, RotateCcw, Save, Trash2, Upload, Workflow as WorkflowIcon, X, ZoomIn, ZoomOut } from 'lucide-react';
 import type { Agent, Integration, ModelConfig, Script, Tool, Workflow, WorkflowEdge, WorkflowNode, WorkflowNodeType, WorkflowRunResult } from '../../types';
 import { Select } from '../ui/Select';
 import { DeleteConfirm } from '../ui/DeleteConfirm';
@@ -326,6 +326,75 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
     setRunResult(null); setRunError(null); setSelectedNodeId(null); setSelectedEdgeId(null); setPan({ x: 0, y: 0 });
   };
 
+  // ---- Import / export ------------------------------------------------------
+  // Files are written and read through the webview (Blob + file input), the same
+  // permission-free pattern the Memory view uses. An exported document carries a
+  // kind + version so a stray JSON file is rejected rather than half-imported.
+  const importRef = useRef<HTMLInputElement>(null);
+
+  const download = (filename: string, doc: unknown) => {
+    const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workflow';
+
+  const exportOne = (w: Workflow) => {
+    download(`${slug(w.name)}.lupwf.json`, {
+      version: 1, kind: 'lup-workflow', exportedAt: new Date().toISOString(),
+      workflow: { name: w.name, nodes: w.nodes, edges: w.edges },
+    });
+    toast('workflow exported', 'success');
+  };
+
+  const exportAll = () => {
+    if (workflows.length === 0) { toast('nothing to export', 'error'); return; }
+    download(`lup-workflows-${new Date().toISOString().slice(0, 10)}.json`, {
+      version: 1, kind: 'lup-workflows', exportedAt: new Date().toISOString(),
+      workflows: workflows.map((w) => ({ name: w.name, nodes: w.nodes, edges: w.edges })),
+    });
+    toast(`${workflows.length} workflow${workflows.length === 1 ? '' : 's'} exported`, 'success');
+  };
+
+  // Validates one entry and mints a fresh id, so importing can never overwrite an
+  // existing workflow (save_workflow upserts by id).
+  const readWorkflow = (raw: unknown, index: number): Workflow | null => {
+    const w = raw as { name?: unknown; nodes?: unknown; edges?: unknown } | null;
+    if (!w || typeof w !== 'object' || !Array.isArray(w.nodes) || !Array.isArray(w.edges)) return null;
+    const name = typeof w.name === 'string' && w.name.trim() ? w.name : 'Imported workflow';
+    return { id: `wf-${Date.now()}-${index}`, name, nodes: w.nodes as WorkflowNode[], edges: w.edges as WorkflowEdge[], updatedAt: new Date().toISOString() };
+  };
+
+  const importFile = async (file: File) => {
+    try {
+      const doc = JSON.parse(await file.text()) as { kind?: string; workflows?: unknown; workflow?: unknown };
+      const raws: unknown[] = doc.kind === 'lup-workflows' && Array.isArray(doc.workflows) ? doc.workflows
+        : Array.isArray(doc.workflows) ? doc.workflows
+        : doc.workflow ? [doc.workflow]
+        : [doc];
+      const parsed = raws.map(readWorkflow).filter((w): w is Workflow => w !== null);
+      if (parsed.length === 0) { toast('no workflows found in that file', 'error'); return; }
+      for (const w of parsed) await onSaveWorkflow(w);
+      toast(`imported ${parsed.length} workflow${parsed.length === 1 ? '' : 's'}`, 'success');
+      if (parsed.length === 1) { setCurrent(parsed[0]); setRunResult(null); setRunError(null); onOpen?.(); }
+    } catch (e) { toast(e instanceof Error ? e.message : String(e), 'error'); }
+  };
+
+  const fileInput = (
+    <input
+      ref={importRef}
+      type="file"
+      accept="application/json,.json"
+      className="hidden"
+      onChange={(e) => { const f = e.target.files?.[0]; if (f) void importFile(f); e.target.value = ''; }}
+    />
+  );
+
   const closeBuilder = () => {
     setCurrent(null); setSelectedNodeId(null); setSelectedEdgeId(null); setRunResult(null); setRunError(null); setPan({ x: 0, y: 0 });
   };
@@ -644,6 +713,7 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
   if (current && building) {
     return (
       <div className="flex h-full min-h-0 flex-col gap-3">
+        {fileInput}
         {/* One row: the palette on the left, the workflow's own controls on the
             right. Leaving the builder is the chrome's back button. */}
         <header className="flex shrink-0 flex-wrap items-center gap-2">
@@ -666,6 +736,8 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
               onChange={(e) => update((w) => ({ ...w, name: e.target.value }))}
               className={`${INPUT_INLINE_CLS} w-48 font-semibold`}
             />
+            <Button icon={<Upload size={13} />} onClick={() => importRef.current?.click()}>import</Button>
+            <Button icon={<Download size={13} />} onClick={() => exportOne(current)}>export</Button>
             <Button icon={<Save size={13} />} onClick={save} disabled={saving}>{saving ? 'saving…' : 'save'}</Button>
             <Button variant="primary" icon={<Play size={13} />} onClick={run} disabled={running}>{running ? 'running…' : 'run'}</Button>
           </div>
@@ -975,6 +1047,7 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
   // ---------------- Workflow list screen ----------------
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {fileInput}
       {/* No view title — the header row carries only search and the action. */}
       <div className="mb-4 flex shrink-0 flex-wrap items-center justify-end gap-2">
         <input
@@ -983,6 +1056,8 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
           placeholder="search workflows…"
           className={`${INPUT_CLS} w-52`}
         />
+        <Button icon={<Upload size={13} />} onClick={() => importRef.current?.click()}>import</Button>
+        <Button icon={<Download size={13} />} onClick={exportAll}>export all</Button>
         <Button variant="primary" icon={<Plus size={13} />} onClick={() => { createNew(); onOpen?.(); }}>new workflow</Button>
       </div>
 
