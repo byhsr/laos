@@ -13,7 +13,7 @@ use crate::models::*;
 use crate::provider;
 use crate::tasks::list_tasks;
 use crate::tools::{
-  desktop_tools, script_tools, AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool,
+  desktop_tools, script_tools, unique_name, AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool,
   ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool, MAX_TOOL_ROUNDS,
 };
 use crate::tooltext::parse_text_tool_calls;
@@ -25,6 +25,9 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
   let has_host_fs = agent.permissions.iter().any(|p| p == "host_fs");
   let has_pc = agent.permissions.iter().any(|p| p == "pc_control");
   let mut stmt = conn.prepare("SELECT kind, enabled, config_json FROM tools WHERE id=?1").map_err(|e| e.to_string())?;
+  // Model-facing names already claimed, so two servers exposing the same tool
+  // (e.g. two Notion accounts) get distinct names instead of silently colliding.
+  let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
   for tool_id in &agent.tool_ids {
     let mut rows = stmt.query_map(params![tool_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
     let Some(Ok((kind, enabled, config_json))) = rows.next() else { continue }; // unknown or missing â†’ skip
@@ -62,10 +65,15 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
       // has already opted into the capability — the old `network` gate silently
       // dropped them, which is why MCPs appeared unusable in agents.
       "mcp" => {
-        if let Some(tool) = mcp_tool_from_config(conn, &config) { tools.push(tool); }
+        if let Some(mut tool) = mcp_tool_from_config(conn, &config) {
+          let name = unique_name(tool.name(), &used);
+          if name != tool.name() { tool.alias = Some(name); }
+          tools.push(Box::new(tool));
+        }
       }
       _ => {}
     }
+    if let Some(last) = tools.last() { used.insert(last.name()); }
   }
   // Grant integration actions to agents that explicitly have the integration AND
   // the integration is enabled+connected. Explicit per-agent grants only.
@@ -101,17 +109,18 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
 
 // Builds one MCP tool from a registry row's config. None when the row is missing
 // its server/tool name or the server has since been deleted.
-fn mcp_tool_from_config(conn: &Connection, config: &serde_json::Value) -> Option<Box<dyn AgentTool>> {
+fn mcp_tool_from_config(conn: &Connection, config: &serde_json::Value) -> Option<McpTool> {
   let server_id = config.get("serverId").and_then(|v| v.as_str()).unwrap_or("");
   let tool_name = config.get("toolName").and_then(|v| v.as_str()).unwrap_or("");
   if server_id.is_empty() || tool_name.is_empty() { return None; }
   let server = mcp::load_server(conn, server_id).ok()?;
-  Some(Box::new(McpTool {
+  Some(McpTool {
     server,
     tool_name: tool_name.to_string(),
     tool_description: config.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
     schema: config.get("schema").cloned().unwrap_or_else(|| serde_json::json!({ "type": "object", "properties": {} })),
-  }))
+    alias: None,
+  })
 }
 
 // The MCP tools an agent explicitly attached, resolved from its tool ids. The
@@ -120,11 +129,17 @@ fn mcp_tool_from_config(conn: &Connection, config: &serde_json::Value) -> Option
 // schemas and was the main token cost.
 pub(crate) fn mcp_tools_for(conn: &Connection, tool_ids: &[String]) -> Vec<Box<dyn AgentTool>> {
   let mut out: Vec<Box<dyn AgentTool>> = Vec::new();
+  let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
   let Ok(mut stmt) = conn.prepare("SELECT config_json FROM tools WHERE id=?1 AND kind='mcp' AND enabled=1") else { return out };
   for id in tool_ids {
     if let Ok(config_json) = stmt.query_row(params![id], |row| row.get::<_, String>(0)) {
       if let Ok(value) = serde_json::from_str::<serde_json::Value>(&config_json) {
-        if let Some(tool) = mcp_tool_from_config(conn, &value) { out.push(tool); }
+        if let Some(mut tool) = mcp_tool_from_config(conn, &value) {
+          let name = unique_name(tool.name(), &used);
+          if name != tool.name() { tool.alias = Some(name.clone()); }
+          used.insert(name);
+          out.push(Box::new(tool));
+        }
       }
     }
   }

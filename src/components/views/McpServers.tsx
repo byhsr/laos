@@ -116,6 +116,9 @@ export function McpServers() {
         <span className={GROUP_LABEL_CLS}>mcp servers</span>
         <Button variant="primary" icon={<Plus size={13} />} onClick={() => setDraft(emptyDraft())}>add server</Button>
       </div>
+      <p className="mt-0 mb-2.5 text-[11px] leading-[1.6] text-muted">
+        add one server per account — e.g. <span className="font-mono">Notion — personal</span> and <span className="font-mono">Notion — work</span>. Duplicate names are fine: each server keeps its own tools and its own <span className="font-mono">env</span>.
+      </p>
 
       {servers.length === 0 ? (
         <div className="grid place-items-center rounded-xl border border-dashed border-border p-6 text-center text-muted">

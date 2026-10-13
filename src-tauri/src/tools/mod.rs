@@ -13,7 +13,7 @@ pub(crate) use api::{ApiParam, ApiTool};
 pub(crate) use desktop::desktop_tools;
 pub(crate) use filesystem::{run_shell_in, ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool};
 pub(crate) use integration::IntegrationTool;
-pub(crate) use mcp::McpTool;
+pub(crate) use mcp::{unique_name, McpTool};
 pub(crate) use script::script_tools;
 pub(crate) use web::HttpTool;
 

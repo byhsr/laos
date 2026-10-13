@@ -12,6 +12,9 @@ pub(crate) struct McpTool {
   pub(crate) tool_name: String,
   pub(crate) tool_description: String,
   pub(crate) schema: serde_json::Value,
+  // Set only when another attached server exposes the same model-facing name
+  // (e.g. two servers both named "Notion"); the suffix keeps both addressable.
+  pub(crate) alias: Option<String>,
 }
 
 // Providers only accept [a-zA-Z0-9_-] function names, but MCP servers advertise
@@ -25,11 +28,28 @@ fn sanitize(s: &str) -> String {
   out
 }
 
+// The name this tool would take if nothing else claimed it.
+pub(crate) fn default_name(server_name: &str, tool_name: &str) -> String {
+  format!("{}_{}", sanitize(server_name), sanitize(tool_name)).chars().take(64).collect()
+}
+
+// Disambiguates a model-facing name against the ones already taken by appending
+// `_2`, `_3`, … (kept inside the 64-char provider limit).
+pub(crate) fn unique_name(base: String, used: &std::collections::HashSet<String>) -> String {
+  if !used.contains(&base) { return base; }
+  let stem: String = base.chars().take(60).collect();
+  for n in 2..1000 {
+    let candidate = format!("{stem}_{n}");
+    if !used.contains(&candidate) { return candidate; }
+  }
+  base
+}
+
 #[async_trait]
 impl AgentTool for McpTool {
   fn name(&self) -> String {
-    let name = format!("{}_{}", sanitize(&self.server.name), sanitize(&self.tool_name));
-    name.chars().take(64).collect()
+    if let Some(alias) = &self.alias { return alias.clone(); }
+    default_name(&self.server.name, &self.tool_name)
   }
 
   fn description(&self) -> String {
