@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Check, Plus, Sparkles, Trash2, X } from 'lucide-react';
+import { Check, Inbox, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button, IconButton } from '../ui/Button';
 import { INPUT_CLS } from '../ui/Input';
+import { Select } from '../ui/Select';
 import { tabCls } from '../ui/tabs';
 import { toast } from '../../hooks/useToast';
 import {
@@ -95,7 +96,12 @@ export function ItemsView() {
             <Button icon={<Sparkles size={12} />} onClick={() => void reflect()} disabled={busy}>{busy ? 'thinking…' : 'reflect now'}</Button>
             <span className="font-mono text-[10px] text-muted">what the assistant noticed — accept or dismiss</span>
           </div>
-          {insights.length === 0 && <p className="m-0 font-mono text-[11px] text-muted">no new insights. They appear as you file things.</p>}
+          {insights.length === 0 && (
+            <div className="grid place-items-center rounded-xl border border-dashed border-border p-6 text-center text-muted">
+              <Sparkles size={20} className="mb-2 opacity-50" />
+              <p className="m-0 text-[12px]">no new insights — they appear as you file things.</p>
+            </div>
+          )}
           <div className="grid gap-1.5">
             {insights.map((ins) => (
               <div key={ins.id} className="flex items-start gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2">
@@ -115,9 +121,7 @@ export function ItemsView() {
           <Card className="mb-3 shrink-0">
             <div className="flex flex-wrap items-end gap-2">
               <div className="min-w-[120px]">
-                <select value={kind} onChange={(e) => setKind(e.target.value)} className={INPUT_CLS}>
-                  {ITEM_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
-                </select>
+                <Select value={kind} options={ITEM_KINDS.map((k) => ({ value: k, label: k }))} onChange={setKind} />
               </div>
               <div className="min-w-[220px] flex-1">
                 <input
@@ -134,13 +138,18 @@ export function ItemsView() {
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             {items.length === 0 && (
-              <p className="m-0 font-mono text-[11px] text-muted">
-                nothing saved yet — file items here, or text them to a bot (set it to capture free text).
-              </p>
+              <div className="grid place-items-center rounded-xl border border-dashed border-border p-6 text-center text-muted">
+                <Inbox size={20} className="mb-2 opacity-50" />
+                <p className="m-0 text-[12px]">
+                  {filter === 'all'
+                    ? 'nothing saved yet — file items here, or text them to a bot set to capture free text.'
+                    : `no ${filter} items yet.`}
+                </p>
+              </div>
             )}
             <div className="grid gap-1.5">
               {items.map((it) => (
-                <div key={it.id} className="flex items-center gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-1.5">
+                <div key={it.id} className="group flex items-center gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2">
                   <button
                     className={`focus-ring grid h-4 w-4 shrink-0 cursor-pointer place-items-center rounded border font-mono text-[9px] ${it.status === 'done' ? 'border-foreground/40 bg-foreground/10 text-foreground' : 'border-border text-transparent hover:border-foreground/30'}`}
                     onClick={() => void toggle(it)}
@@ -150,23 +159,26 @@ export function ItemsView() {
                   <span className={`min-w-0 flex-1 truncate font-mono text-[11px] ${it.status === 'done' ? 'text-muted line-through' : 'text-foreground'}`}>{it.title || it.body}</span>
                   {it.streak > 0 && <span className="shrink-0 font-mono text-[10px] text-muted">{it.streak}🔥</span>}
                   {it.due_at && <span className="shrink-0 font-mono text-[10px] text-muted">{fmtDue(it.due_at)}</span>}
-                  {it.tags.map((t) => <span key={t} className="shrink-0 font-mono text-[10px] text-muted">#{t}</span>)}
-                  {it.url && <a href={it.url} target="_blank" rel="noreferrer" className="shrink-0 font-mono text-[10px] text-muted hover:text-foreground">link</a>}
-                  {it.kind === 'reminder' && it.due_at && (
-                    <button className="shrink-0 cursor-pointer font-mono text-[10px] text-muted hover:text-foreground" onClick={() => void reminderSnooze(it.id).then(load)}>snooze</button>
-                  )}
-                  {destinations.length > 0 && (
-                    <select
-                      value=""
-                      onChange={(e) => void sendTo(it, e.target.value)}
-                      title="send to…"
-                      className="shrink-0 cursor-pointer bg-transparent font-mono text-[10px] text-muted hover:text-foreground focus:outline-none"
-                    >
-                      <option value="">send to ▸</option>
-                      {destinations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                    </select>
-                  )}
-                  <IconButton label="delete" onClick={() => void itemDelete(it.id).then(load)}><Trash2 size={11} /></IconButton>
+                  {/* The title keeps the row; the rest appears on hover so a row
+                      with tags and a destination can't crush it. */}
+                  <div className="flex shrink-0 items-center gap-2 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                    {it.tags.slice(0, 3).map((t) => <span key={t} className="font-mono text-[10px] text-muted">#{t}</span>)}
+                    {it.url && <a href={it.url} target="_blank" rel="noreferrer" className="font-mono text-[10px] text-muted hover:text-foreground">link</a>}
+                    {it.kind === 'reminder' && it.due_at && (
+                      <button className="cursor-pointer font-mono text-[10px] text-muted hover:text-foreground" onClick={() => void reminderSnooze(it.id).then(load)}>snooze</button>
+                    )}
+                    {destinations.length > 0 && (
+                      <div className="w-[104px]">
+                        <Select
+                          value=""
+                          options={destinations.map((d) => ({ value: d.id, label: d.name || d.tool }))}
+                          onChange={(v) => void sendTo(it, v)}
+                          placeholder="send to ▸"
+                        />
+                      </div>
+                    )}
+                    <IconButton label="delete" onClick={() => void itemDelete(it.id).then(load)}><Trash2 size={11} /></IconButton>
+                  </div>
                 </div>
               ))}
             </div>

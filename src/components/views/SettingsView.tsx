@@ -6,6 +6,7 @@ import { UpdatePrompt } from '../ui/UpdatePrompt';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS } from '../ui/Input';
+import { Select } from '../ui/Select';
 import { tabCls } from '../ui/tabs';
 import { toast } from '../../hooks/useToast';
 import { appVersion, checkForUpdate, getAppSettings, getIdentity, setIdentity, setRunInBackground, setLaunchAtLogin, setAutonomy, type Identity, type UpdateInfo } from '../../runtime';
@@ -144,12 +145,18 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
               </label>
               <label className="flex items-center gap-3">
                 <span className={`${GROUP_LABEL_CLS} w-[92px] shrink-0`}>tone</span>
-                <select value={who.tone} onChange={(e) => setWho({ ...who, tone: e.target.value })} className={`${INPUT_CLS} w-[140px]`}>
-                  <option value="">default</option>
-                  <option value="short">short</option>
-                  <option value="detailed">detailed</option>
-                  <option value="witty">witty</option>
-                </select>
+                <div className="w-[140px]">
+                  <Select
+                    value={who.tone}
+                    options={[
+                      { value: '', label: 'default' },
+                      { value: 'short', label: 'short' },
+                      { value: 'detailed', label: 'detailed' },
+                      { value: 'witty', label: 'witty' },
+                    ]}
+                    onChange={(v) => setWho({ ...who, tone: v })}
+                  />
+                </div>
               </label>
               <label className="flex items-center gap-3">
                 <span className={`${GROUP_LABEL_CLS} w-[92px] shrink-0`}>timezone</span>

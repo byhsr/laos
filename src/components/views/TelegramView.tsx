@@ -120,16 +120,15 @@ export function TelegramView() {
                 placeholder="select a session…"
               />
             )}
-            <div className="-mx-2 mt-1.5">
+            <div className="mt-1.5 grid gap-2.5">
               <Checkbox checked={editing.enabled} onChange={(next) => setEditing({ ...editing, enabled: next })} label="enabled" />
               <Checkbox checked={!!editing.capture} onChange={(next) => setEditing({ ...editing, capture: next })} label="second brain — file free text as items" />
             </div>
             <label className={`${FIELD_LABEL_CLS} mt-2`}>destination</label>
             <Select
               value={editing.destinationId ?? ''}
-              options={[{ value: '', label: 'none' }, ...destinations.map((d) => ({ value: d.id, label: d.name }))]}
+              options={[{ value: '', label: 'none' }, ...destinations.map((d) => ({ value: d.id, label: d.name || d.tool }))]}
               onChange={(v) => setEditing({ ...editing, destinationId: v })}
-              placeholder="push captured items somewhere…"
             />
             <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">Captured items from this bot are sent here (an MCP server + tool). Set destinations up under Integrations.</p>
             <label className={`${FIELD_LABEL_CLS} mt-2`}>allowed users (Telegram ids)</label>

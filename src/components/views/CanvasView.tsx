@@ -736,8 +736,8 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
               onChange={(e) => update((w) => ({ ...w, name: e.target.value }))}
               className={`${INPUT_INLINE_CLS} w-48 font-semibold`}
             />
-            <Button icon={<Upload size={13} />} onClick={() => importRef.current?.click()}>import</Button>
-            <Button icon={<Download size={13} />} onClick={() => exportOne(current)}>export</Button>
+            <IconButton label="import workflows from a file" onClick={() => importRef.current?.click()}><Upload size={13} /></IconButton>
+            <IconButton label="export this workflow" onClick={() => exportOne(current)}><Download size={13} /></IconButton>
             <Button icon={<Save size={13} />} onClick={save} disabled={saving}>{saving ? 'saving…' : 'save'}</Button>
             <Button variant="primary" icon={<Play size={13} />} onClick={run} disabled={running}>{running ? 'running…' : 'run'}</Button>
           </div>
@@ -1056,8 +1056,8 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
           placeholder="search workflows…"
           className={`${INPUT_CLS} w-52`}
         />
-        <Button icon={<Upload size={13} />} onClick={() => importRef.current?.click()}>import</Button>
-        <Button icon={<Download size={13} />} onClick={exportAll}>export all</Button>
+        <IconButton label="import workflows from a file" onClick={() => importRef.current?.click()}><Upload size={13} /></IconButton>
+        <IconButton label="export every workflow" onClick={exportAll}><Download size={13} /></IconButton>
         <Button variant="primary" icon={<Plus size={13} />} onClick={() => { createNew(); onOpen?.(); }}>new workflow</Button>
       </div>
 

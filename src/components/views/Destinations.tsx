@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Send, Trash2 } from 'lucide-react';
+import { Plus, RefreshCw, Send, Settings2, Trash2 } from 'lucide-react';
 import {
   DEFAULT_ARG_TEMPLATE, deleteDestination, destinationTools, listDestinations, listMcpServers,
   saveDestination, testDestination, type Destination, type McpServer,
@@ -75,8 +75,8 @@ export function Destinations() {
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  <IconButton label="test" onClick={() => void test(d)}><Send size={12} /></IconButton>
-                  <IconButton label="configure" onClick={() => setDraft(d)}><Plus size={12} /></IconButton>
+                  <IconButton label="test" onClick={() => void test(d)}><RefreshCw size={12} /></IconButton>
+                  <IconButton label="configure" onClick={() => setDraft(d)}><Settings2 size={12} /></IconButton>
                   <IconButton label="delete" onClick={() => void deleteDestination(d.id).then(load)}><Trash2 size={12} /></IconButton>
                 </div>
               </div>
@@ -87,7 +87,7 @@ export function Destinations() {
 
       {draft && (
         <Modal
-          title="destination"
+          title={draft.id ? `${draft.name || draft.tool} — destination` : 'new destination'}
           onClose={() => setDraft(null)}
           headerAction={<Button variant="primary" disabled={saving} onClick={() => void save()}>{saving ? 'saving…' : 'save'}</Button>}
         >
