@@ -582,3 +582,31 @@ export async function getIdentity(): Promise<Identity> {
 export async function setIdentity(identity: Identity): Promise<void> {
   await invoke('set_identity', { identity });
 }
+
+// Embedded mini browser: a real webview the React panel paints over its viewport.
+// These drive it; `onBrowserEvent` reports its state so the drawer can slide open
+// whenever an agent uses browser control.
+export type BrowserState = { visible: boolean; url: string; title: string; loading: boolean };
+export async function browserOpen(url?: string): Promise<void> {
+  try { await invoke('browser_open', { url: url ?? null }); } catch { /* browser preview: no Tauri backend */ }
+}
+export async function browserNavigate(url: string): Promise<void> {
+  await invoke('browser_navigate', { url });
+}
+export async function browserBack(): Promise<void> { await invoke('browser_back'); }
+export async function browserForward(): Promise<void> { await invoke('browser_forward'); }
+export async function browserReload(): Promise<void> { await invoke('browser_reload'); }
+export async function browserClose(): Promise<void> { try { await invoke('browser_close'); } catch { /* no backend */ } }
+export async function browserSetBounds(x: number, y: number, width: number, height: number): Promise<void> {
+  try { await invoke('browser_set_bounds', { x, y, width, height }); } catch { /* no backend */ }
+}
+export async function browserState(): Promise<{ open: boolean; visible: boolean; url: string }> {
+  try { return await invoke('browser_state'); } catch { return { open: false, visible: false, url: '' }; }
+}
+export function onBrowserEvent(cb: (s: BrowserState) => void): () => void {
+  let unlisten: (() => void) | null = null;
+  listen<BrowserState>('lup-browser', (e) => cb(e.payload))
+    .then((un) => { unlisten = un; })
+    .catch(() => {});
+  return () => { unlisten?.(); };
+}

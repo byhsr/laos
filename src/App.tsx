@@ -36,8 +36,10 @@ import { ScriptFormDrawer } from './components/views/ScriptsView';
 import { ProjectFormDrawer } from './components/views/ProjectsView';
 import { Toaster } from './components/ui/Toaster';
 import { UpdatePrompt } from './components/ui/UpdatePrompt';
+import { BrowserPanel } from './components/BrowserPanel';
+import { useBrowserStore } from './hooks/useBrowser';
 import { toast } from './hooks/useToast';
-import { checkForUpdate, onReminder, type UpdateInfo } from './runtime';
+import { checkForUpdate, onBrowserEvent, onReminder, type UpdateInfo } from './runtime';
 
 // Every view lives in a pane that scrolls internally — the shell itself never
 // scrolls, so there is never a double scrollbar or a page that jumps.
@@ -109,6 +111,15 @@ export default function App() {
   // Reminders fire from the backend's 30s scheduler; surface them in-app too.
   useEffect(() => onReminder((r) => toast(`⏰ ${r.kind}: ${r.title}`, 'success')), []);
 
+  // The mini browser reports its state from the backend; a browser action from an
+  // agent slides the drawer open (see useBrowserStore.applyState).
+  const browserPanelOpen = useBrowserStore((s) => s.panelOpen);
+  useEffect(() => onBrowserEvent((s) => useBrowserStore.getState().applyState(s)), []);
+  const toggleBrowser = () => {
+    const s = useBrowserStore.getState();
+    if (s.panelOpen) s.closePanel(); else s.openPanel();
+  };
+
   // Navigation is a history, so the chrome's back/forward buttons are real.
   // The stack holds views only — the selected agent persists on its own, so
   // stepping away from an agent window and back lands on the same agent.
@@ -124,20 +135,21 @@ export default function App() {
   const [workflowToOpen, setWorkflowToOpen] = useState<string | null>(null);
   const building = view === 'builder';
 
-  // The canvas is the widest thing in the app, so the chat list tucks away on the
-  // way in and comes back exactly as it was on the way out.
-  const collapsedBeforeBuilder = useRef<boolean | null>(null);
+  // The canvas and the in-app browser are both wide, so the chat list tucks away
+  // whenever either is open and comes back exactly as it was on the way out.
+  const autoCollapseSidebar = building || browserPanelOpen;
+  const collapsedBeforeAuto = useRef<boolean | null>(null);
   useEffect(() => {
-    if (building) {
-      if (collapsedBeforeBuilder.current === null) collapsedBeforeBuilder.current = sidebarCollapsed;
+    if (autoCollapseSidebar) {
+      if (collapsedBeforeAuto.current === null) collapsedBeforeAuto.current = sidebarCollapsed;
       setSidebarCollapsed(true);
-    } else if (collapsedBeforeBuilder.current !== null) {
-      setSidebarCollapsed(collapsedBeforeBuilder.current);
-      collapsedBeforeBuilder.current = null;
+    } else if (collapsedBeforeAuto.current !== null) {
+      setSidebarCollapsed(collapsedBeforeAuto.current);
+      collapsedBeforeAuto.current = null;
     }
-    // Only the entry/exit matters — a manual toggle while building stands.
+    // Only the entry/exit matters — a manual toggle while it's open stands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [building]);
+  }, [autoCollapseSidebar]);
 
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
   const leadAgent = useMemo(() => agents.find((a) => a.isManager) ?? null, [agents]);
@@ -188,7 +200,7 @@ export default function App() {
   };
 
   return (
-    <div className="app-drag flex h-screen flex-col overflow-hidden">
+    <div className="app-drag relative flex h-screen flex-col overflow-hidden">
       <Topbar
         collapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
@@ -199,9 +211,17 @@ export default function App() {
         onOpenGraph={() => setView('graph')}
         graphActive={view === 'graph'}
         onNewAgent={addAgent}
+        onToggleBrowser={toggleBrowser}
+        browserActive={browserPanelOpen}
       />
 
       <div className="flex min-h-0 flex-1">
+        {/* The mini browser is a real column in the layout, so the chat stays
+            visible beside it (it never overlays). Its webview is hidden while a
+            modal/drawer is up so it can't paint over it. */}
+        {browserPanelOpen && (
+          <BrowserPanel hidden={!!drawerForm || showOnboarding || !!update} />
+        )}
         {/* Left section: the action rail conjoined with the chat list — one
             panel, one clean border. */}
         <div className="app-no-drag my-3 ml-3 flex min-h-0 shrink-0 overflow-hidden rounded-xl border border-border bg-surface">

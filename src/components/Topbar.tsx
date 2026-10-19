@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight, Globe, Maximize, Minimize2, Minus, PanelLeft, Plus, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Compass, Globe, Maximize, Minimize2, Minus, PanelLeft, Plus, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { navLabel, useNavLabels } from '../hooks/useNavLabels';
 import { IconButton } from './ui/Button';
@@ -8,10 +8,11 @@ import { IconButton } from './ui/Button';
 // the panel toggle, the history buttons, the graph / new-agent shortcuts and the
 // window controls. No floating clusters — a single strip, and the row itself
 // drags the window.
-export function Topbar({ collapsed, onToggleSidebar, canBack, canForward, onBack, onForward, onOpenGraph, graphActive, onNewAgent }: {
+export function Topbar({ collapsed, onToggleSidebar, canBack, canForward, onBack, onForward, onOpenGraph, graphActive, onNewAgent, onToggleBrowser, browserActive }: {
   collapsed: boolean; onToggleSidebar: () => void;
   canBack: boolean; canForward: boolean; onBack: () => void; onForward: () => void;
   onOpenGraph: () => void; graphActive: boolean; onNewAgent: () => void;
+  onToggleBrowser: () => void; browserActive: boolean;
 }) {
   const [maximized, setMaximized] = useState(false);
   const labels = useNavLabels((s) => s.labels);
@@ -49,6 +50,9 @@ export function Topbar({ collapsed, onToggleSidebar, canBack, canForward, onBack
       <span className="mx-0.5 h-3.5 w-px shrink-0 bg-border" />
       <IconButton className={navBtn({ active: graphActive })} label={navLabel(labels, 'graph')} onClick={onOpenGraph}>
         <Globe className="h-3 w-3" />
+      </IconButton>
+      <IconButton className={navBtn({ active: browserActive })} label="in-app browser" onClick={onToggleBrowser}>
+        <Compass className="h-3 w-3" />
       </IconButton>
       <IconButton className={navBtn()} label="new agent" onClick={onNewAgent}>
         <Plus className="h-3 w-3" />

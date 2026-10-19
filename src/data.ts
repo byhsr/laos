@@ -5,6 +5,7 @@ export const models: ModelConfig[] = [
   { id:'openrouter:anthropic/claude-3.5-haiku', provider:'openrouter', label:'Claude 3.5 Haiku', model:'anthropic/claude-3.5-haiku', enabled:false, reasoning:'auto' },
 ];
 export const initialTools: Tool[] = [
+  { id:'browser', name:'Browser', kind:'browser', integrationId:'builtin', description:'Open a mini browser panel and let the agent navigate, click, type and read pages.', enabled:true, config:{} },
   { id:'http-get', name:'HTTP GET', kind:'http_get', integrationId:'http', description:'Make a permission-scoped GET request and return the response body.', enabled:true, config:{} },
   { id:'read-file', name:'Read File', kind:'read_file', integrationId:'builtin', description:'Read a file from the agent\'s isolated files directory.', enabled:true, config:{} },
   { id:'write-file', name:'Write File', kind:'write_file', integrationId:'builtin', description:'Write text content to a file in the agent\'s isolated files directory.', enabled:true, config:{} },
