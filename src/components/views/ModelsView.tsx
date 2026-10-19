@@ -44,7 +44,7 @@ export function ModelsView({ models, onAdd, onEdit, onDelete }: {
             <div className="min-w-0">
               <b className="block truncate font-mono text-[11px] text-foreground">{m.label}</b>
               <span className="block truncate font-mono text-[10px] text-muted">
-                {m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.apiKey ? ' · key set' : ''}{m.reasoning !== 'auto' ? ` · reasoning: ${m.reasoning}` : ''}
+                {m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.hasKey ? ' · key set' : ''}{m.reasoning !== 'auto' ? ` · reasoning: ${m.reasoning}` : ''}
               </span>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -68,6 +68,7 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
 }) {
   const [form, setForm] = useState<ModelConfig>(editing);
   const [saving, setSaving] = useState(false);
+  const [clearKey, setClearKey] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
 
   const save = async () => {
@@ -75,7 +76,11 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
     const id = form.id || `${form.provider}:${form.model}`;
     setSaving(true); setError(undefined);
     try {
-      await onSave({ ...form, id, host: form.host?.trim() || undefined, apiKey: form.apiKey?.trim() || undefined });
+      await onSave({
+        ...form, id, host: form.host?.trim() || undefined,
+        apiKey: form.apiKey?.trim() || undefined,
+        clearKey: clearKey || undefined,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save model config.');
     } finally {
@@ -134,8 +139,22 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
       {form.provider !== 'ollama' && (
         <>
           <label className={`${FIELD_LABEL_CLS} mt-4`}>api key</label>
-          <input type="password" value={form.apiKey ?? ''} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder={KEY_PLACEHOLDER[form.provider] ?? ''} className={INPUT_CLS} />
-          <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">Runs using this model will read the key automatically.</p>
+          <input
+            type="password"
+            value={form.apiKey ?? ''}
+            onChange={(e) => { setClearKey(false); setForm({ ...form, apiKey: e.target.value }); }}
+            placeholder={editing.hasKey && !clearKey ? '•••••••• saved — type to replace' : (KEY_PLACEHOLDER[form.provider] ?? '')}
+            className={INPUT_CLS}
+          />
+          <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+            {clearKey ? (
+              <>Key will be removed on save. <button type="button" className="cursor-pointer underline" onClick={() => setClearKey(false)}>undo</button></>
+            ) : editing.hasKey ? (
+              <>Kept in your system credential store, never in the app database. <button type="button" className="cursor-pointer underline" onClick={() => setClearKey(true)}>remove key</button></>
+            ) : (
+              'Saved to your system credential store; runs read it automatically.'
+            )}
+          </p>
         </>
       )}
 

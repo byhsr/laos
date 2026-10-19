@@ -7,6 +7,7 @@ import { Select } from '../ui/Select';
 import { Checkbox } from '../ui/Checkbox';
 import { Card } from '../ui/Card';
 import { FIELD_LABEL_CLS, INPUT_CLS } from '../ui/Input';
+import { VAULT_MASK, isSecretName } from '../../vault';
 
 export const TOOL_KINDS: { kind: string; integration: string; desc: string }[] = [
   { kind: 'api', integration: 'http', desc: 'Call any REST API with configured params' },
@@ -146,13 +147,19 @@ export function ToolFormDrawer({ editing, isNew, integrations, onClose, onSave }
 
           <label className={label}>headers</label>
           <div className="grid gap-1.5">
-            {(form.config.headers ?? []).map((h, i) => (
-              <div key={i} className="flex flex-wrap items-center gap-1.5">
-                <input value={h.name} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], name: e.target.value }; setHeaders(hs); }} placeholder="Header" className={`${INPUT_CLS} min-w-[120px] flex-1`} />
-                <input value={h.value} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], value: e.target.value }; setHeaders(hs); }} placeholder="Value (e.g. Bearer {apiKey})" className={`${INPUT_CLS} min-w-[160px] flex-[2]`} />
-                <IconButton label="remove header" onClick={() => setHeaders((form.config.headers ?? []).filter((_, j) => j !== i))}><Trash2 size={12} /></IconButton>
-              </div>
-            ))}
+            {(form.config.headers ?? []).map((h, i) => {
+              // A header whose name looks like a credential is write-only: the
+              // backend stores it in the OS credential store and only ever hands
+              // back the "set" marker, so it renders as a password field.
+              const secret = isSecretName(h.name);
+              return (
+                <div key={i} className="flex flex-wrap items-center gap-1.5">
+                  <input value={h.name} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], name: e.target.value }; setHeaders(hs); }} placeholder="Header" className={`${INPUT_CLS} min-w-[120px] flex-1`} />
+                  <input type={secret ? 'password' : 'text'} value={h.value} onChange={(e) => { const hs = [...(form.config.headers ?? [])]; hs[i] = { ...hs[i], value: e.target.value }; setHeaders(hs); }} placeholder={h.value === VAULT_MASK ? 'saved — type to replace' : 'Value (e.g. Bearer {apiKey})'} className={`${INPUT_CLS} min-w-[160px] flex-[2]`} />
+                  <IconButton label="remove header" onClick={() => setHeaders((form.config.headers ?? []).filter((_, j) => j !== i))}><Trash2 size={12} /></IconButton>
+                </div>
+              );
+            })}
             <Button className={addBtn} icon={<Plus size={12} />} onClick={() => setHeaders([...(form.config.headers ?? []), { name: '', value: '' }])}>add header</Button>
           </div>
 

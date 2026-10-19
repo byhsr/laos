@@ -13,6 +13,27 @@ shared pool.
 - **Serialization:** Rust records use `serde(rename_all = "camelCase")`; the frontend types
   in `src/types.ts` match.
 
+## Vault
+
+**No secret is stored in SQLite.** API keys, tool headers, MCP env, integration credentials and
+Telegram tokens live in the OS credential store — Windows Credential Manager, macOS Keychain, or
+Secret Service on Linux — behind `vault.rs` (service `local-agent-os`, account `model/<id>`,
+`tool/<toolId>/<header>`, `mcp/<serverId>/<KEY>`, `integration/<id>/<field>`,
+`telegram/<botId>/{token,webhook}`).
+
+The column or JSON field that used to hold the secret now holds the sentinel `__vault__`, and:
+
+- **Reads** resolve it. `integration_secret`, `provider::model_settings`, `mcp::env_pairs`,
+  `telegram::load_bot` and the `api` tool's header builder are the only places that see a real value.
+- **Writes** move a newly submitted value straight into the store and keep the sentinel. A value
+  the UI echoes back as the mask (`••••••••`) is left untouched, so a form round-trip can't clobber
+  a key.
+- **The renderer never receives a secret.** Model configs return `hasKey` instead of `apiKey`;
+  masked fields are write-only.
+- **Migration** runs once at startup (`initialize_storage` → `vault::migrate`): any plaintext left
+  by an older build moves into the store, and a row whose secret can't be written is left exactly
+  as it was.
+
 ## Tables
 
 All `CREATE TABLE` statements live in `db.rs`. Column lists below are exact.
@@ -62,6 +83,10 @@ description, created_at, updated_at, metadata). Scopes are keys (`agent:<id>` / 
 
 `id` (PK, e.g. `groq:llama-3.3-70b-versatile`), `provider`, `label`, `model`, `host`,
 `api_key`, `enabled`, `reasoning`.
+
+`api_key` holds the vault sentinel, never the key — the value lives under `model/<id>` (see
+[Vault](#vault)). `list_model_configs` returns `hasKey` rather than the key; `save_model_config`
+takes a write-only `apiKey` plus `clearKey`.
 
 `host` overrides the endpoint root for `ollama:` models (default `http://127.0.0.1:11434`).
 `reasoning` is one of `auto` / `off` / `low` / `medium` / `high` and controls the provider's

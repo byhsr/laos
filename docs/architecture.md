@@ -125,8 +125,10 @@ chat.rs     ── top-level command
   loop. See the duplication table in [harness.md](./harness.md).
 - **Deterministic work stays out of the LLM.** Slash commands, checker rules, and gates are
   resolved in code.
-- **Secrets never leave the backend.** `stored_api_key` / `integration_secret` read them;
-  the UI only ever receives masked values. See [integrations.md](./integrations.md).
+- **Secrets never leave the backend, or the OS credential store.** `vault.rs` is the only place
+  that reads or writes them; `integration_secret` / `provider::model_settings` resolve the
+  sentinel, and the UI only ever receives masked values. See [data-model.md](./data-model.md#vault)
+  and [integrations.md](./integrations.md).
 - **Writes are recorded.** Agent runs and streaming chats insert into `runs`; tools and
   workflows read/write through the owning module's SQL. See [data-model.md](./data-model.md).
 

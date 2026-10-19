@@ -23,7 +23,12 @@ export const useModelsStore = create<ModelsState>((set) => ({
 
   saveModel: async (m) => {
     await saveModelApi(m);
-    set((s) => ({ models: s.models.some((p) => p.id === m.id) ? s.models.map((p) => (p.id === m.id ? m : p)) : [...s.models, m] }));
+    // The key is write-only: the renderer keeps only whether one is set.
+    const stored: ModelConfig = { ...m };
+    delete stored.apiKey;
+    delete stored.clearKey;
+    stored.hasKey = m.clearKey ? false : (m.apiKey?.trim() ? true : !!m.hasKey);
+    set((s) => ({ models: s.models.some((p) => p.id === m.id) ? s.models.map((p) => (p.id === m.id ? stored : p)) : [...s.models, stored] }));
   },
 
   deleteModel: async (id) => {

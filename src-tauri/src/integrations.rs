@@ -53,6 +53,9 @@ pub(crate) fn integration_secret(conn: &Connection, id: &str) -> Result<serde_js
   // Sanitize: string-only fields must never be numbers (e.g. a bad clientId: 0).
   let mut out = cfg;
   if let Some(obj) = out.as_object_mut() {
+    // Secrets are stored as a sentinel; resolve them for the caller (a tool or a
+    // connection test). The UI never calls this — it reads through mask_config.
+    crate::vault::resolve_object(&format!("integration/{id}"), obj);
     for k in ["clientId", "clientSecret", "token", "apiKey", "accessToken", "refreshToken"] {
       if let Some(v) = obj.get_mut(k) {
         if !v.is_string() { *v = serde_json::Value::Null; }
@@ -105,9 +108,15 @@ pub fn list_integrations(app: AppHandle) -> Result<Vec<IntegrationRecord>, Strin
 pub fn save_integration_config(app: AppHandle, id: String, config: serde_json::Value) -> Result<(), String> {
   let conn = db(&app)?;
   let def = integration_definitions().into_iter().find(|d| d.id == id).ok_or("Unknown integration")?;
-  // Merge with any existing secret config so the frontend's masked values don't clobber real tokens.
-  let existing = integration_secret(&conn, &id)?;
-  let merged = merge_config(&existing, &config)?;
+  // Merge with the *stored* config (sentinel and all) so the frontend's masked
+  // values don't clobber real tokens, and only a genuinely new secret is written.
+  let existing = conn
+    .query_row("SELECT config_json FROM integration_configs WHERE id=?1", params![id], |r| r.get::<_, String>(0))
+    .ok()
+    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    .unwrap_or_else(|| serde_json::json!({}));
+  let mut merged = merge_config(&existing, &config)?;
+  if let Some(obj) = merged.as_object_mut() { crate::vault::protect_object(&format!("integration/{id}"), obj)?; }
   conn.execute(
     "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)
      ON CONFLICT(id) DO UPDATE SET name=excluded.name, provider=excluded.provider, config_json=excluded.config_json, enabled=excluded.enabled, connected=excluded.connected, updated_at=excluded.updated_at",

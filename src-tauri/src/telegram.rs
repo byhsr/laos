@@ -29,12 +29,33 @@ fn cfg_str(cfg: &serde_json::Value, key: &str) -> Option<String> {
   cfg.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string())
 }
 
+// Same, but resolving the vault sentinel: a config secret is stored as a
+// reference, so reading it back needs the credential store.
+fn cfg_secret(cfg: &serde_json::Value, key: &str) -> Option<String> {
+  let v = cfg.get(key)?.as_str().filter(|s| !s.is_empty())?;
+  if crate::vault::is_ref(v) { crate::vault::get(&format!("integration/telegram/{key}")) } else { Some(v.to_string()) }
+}
+
+// A bot column holds either a legacy plaintext value or the vault sentinel.
+fn resolve_bot_secret(id: &str, which: &str, raw: &str) -> String {
+  if crate::vault::is_ref(raw) { crate::vault::get(&format!("telegram/{id}/{which}")).unwrap_or_default() } else { raw.to_string() }
+}
+
+// Stores a secret and returns what belongs in the column: the sentinel, or the
+// value itself if the credential store could not be reached.
+fn seal(account: String, secret: &str) -> String {
+  if secret.is_empty() { return String::new(); }
+  if crate::vault::put(&account, secret).is_ok() { crate::vault::REF.to_string() } else { secret.to_string() }
+}
+
 // Merges `mutate` into the telegram config and writes it back, never clobbering
 // the stored bot token. `connected` tracks whether a tunnel/webhook is live.
 fn write_telegram_config(conn: &Connection, connected: bool, mutate: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>)) -> Result<(), String> {
   let mut merged = telegram_config(conn);
   if !merged.is_object() { merged = serde_json::json!({}); }
   mutate(merged.as_object_mut().unwrap());
+  // A newly set secret goes to the credential store; the row keeps the sentinel.
+  if let Some(obj) = merged.as_object_mut() { crate::vault::protect_object("integration/telegram", obj)?; }
   conn.execute(
     "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES ('telegram','Telegram','telegram',?1,1,?2,?3)
      ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json, connected=excluded.connected",
@@ -45,11 +66,11 @@ fn write_telegram_config(conn: &Connection, connected: bool, mutate: impl FnOnce
 
 // Reads the Telegram bot token from the telegram integration config, if enabled.
 fn telegram_token(conn: &Connection) -> Result<Option<String>, String> {
-  Ok(cfg_str(&telegram_config(conn), "token"))
+  Ok(cfg_secret(&telegram_config(conn), "token"))
 }
 
 fn webhook_secret(conn: &Connection) -> Option<String> {
-  cfg_str(&telegram_config(conn), "webhookSecret")
+  cfg_secret(&telegram_config(conn), "webhookSecret")
 }
 
 // Telegram constrains secret_token to 1-256 chars of A-Za-z0-9_-
@@ -85,13 +106,18 @@ struct TelegramBot { id: String, name: String, token: String, agent_id: String, 
 fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
   let mut out = Vec::new();
   if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id, poll_offset FROM telegram_bots ORDER BY name") {
-    if let Ok(rows) = stmt.query_map([], |row| Ok(TelegramBot {
-      id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
-      enabled: row.get::<_, i64>(6)? != 0, webhook_secret: row.get(7)?, webhook_registered: row.get::<_, i64>(8)? != 0,
-      capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
-      destination_id: row.get::<_, String>(10).unwrap_or_default(),
-      poll_offset: row.get::<_, i64>(11).unwrap_or(0),
-    })) {
+    if let Ok(rows) = stmt.query_map([], |row| {
+      let id: String = row.get(0)?;
+      let token: String = row.get(2)?;
+      let webhook_secret: String = row.get(7)?;
+      Ok(TelegramBot {
+        id: id.clone(), name: row.get(1)?, token: resolve_bot_secret(&id, "token", &token), agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
+        enabled: row.get::<_, i64>(6)? != 0, webhook_secret: resolve_bot_secret(&id, "webhook", &webhook_secret), webhook_registered: row.get::<_, i64>(8)? != 0,
+        capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
+        destination_id: row.get::<_, String>(10).unwrap_or_default(),
+        poll_offset: row.get::<_, i64>(11).unwrap_or(0),
+      })
+    }) {
       for r in rows { if let Ok(b) = r { out.push(b); } }
     }
   }
@@ -99,13 +125,17 @@ fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
 }
 
 fn load_bot(conn: &Connection, id: &str) -> Option<TelegramBot> {
-  conn.query_row("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id, poll_offset FROM telegram_bots WHERE id=?1", params![id], |row| Ok(TelegramBot {
-    id: row.get(0)?, name: row.get(1)?, token: row.get(2)?, agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
-    enabled: row.get::<_, i64>(6)? != 0, webhook_secret: row.get(7)?, webhook_registered: row.get::<_, i64>(8)? != 0,
-    capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
-    destination_id: row.get::<_, String>(10).unwrap_or_default(),
-    poll_offset: row.get::<_, i64>(11).unwrap_or(0),
-  })).ok()
+  conn.query_row("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id, poll_offset FROM telegram_bots WHERE id=?1", params![id], |row| {
+    let token: String = row.get(2)?;
+    let webhook_secret: String = row.get(7)?;
+    Ok(TelegramBot {
+      id: row.get(0)?, name: row.get(1)?, token: resolve_bot_secret(id, "token", &token), agent_id: row.get(3)?, terminal_id: row.get(4)?, allowed_users: row.get(5)?,
+      enabled: row.get::<_, i64>(6)? != 0, webhook_secret: resolve_bot_secret(id, "webhook", &webhook_secret), webhook_registered: row.get::<_, i64>(8)? != 0,
+      capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
+      destination_id: row.get::<_, String>(10).unwrap_or_default(),
+      poll_offset: row.get::<_, i64>(11).unwrap_or(0),
+    })
+  }).ok()
 }
 
 // A bot is private when it lists allowed Telegram user ids; empty = open.
@@ -136,10 +166,11 @@ fn authorize_and_bind(app: &AppHandle, bot: &TelegramBot, user_id: Option<i64>) 
 fn migrate_legacy_bot(conn: &Connection) {
   let count: i64 = conn.query_row("SELECT COUNT(*) FROM telegram_bots", [], |r| r.get(0)).unwrap_or(0);
   if count > 0 { return; }
-  if let Some(token) = cfg_str(&telegram_config(conn), "token") {
+  if let Some(token) = cfg_secret(&telegram_config(conn), "token") {
+    let stored = seal("telegram/bot-default/token".to_string(), &token);
     let _ = conn.execute(
       "INSERT INTO telegram_bots (id, name, token, agent_id, enabled, updated_at) VALUES ('bot-default','Telegram',?1,'manager',1,?2) ON CONFLICT(id) DO NOTHING",
-      params![token, now()],
+      params![stored, now()],
     );
   }
 }
@@ -174,9 +205,11 @@ pub fn save_telegram_bot(app: AppHandle, bot: serde_json::Value) -> Result<Strin
   let enabled = bot.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
   // Preserve the stored token when the UI echoes the mask or sends nothing.
   let incoming = bot.get("token").and_then(|v| v.as_str()).unwrap_or("");
-  let token = if incoming.is_empty() || incoming == "••••••••" {
+  let token = if incoming.is_empty() || incoming == crate::vault::MASK {
     load_bot(&conn, &id).map(|b| b.token).unwrap_or_default()
   } else { incoming.to_string() };
+  // The token itself goes to the credential store; the row keeps the sentinel.
+  let stored_token = seal(format!("telegram/{id}/token"), &token);
   let allowed_users = allowed_users.unwrap_or_else(|| load_bot(&conn, &id).map(|b| b.allowed_users).unwrap_or_else(|| "[]".into()));
   let capture = bot.get("capture").and_then(|v| v.as_bool()).unwrap_or(false);
   // Where this bot's captured items are pushed ('' = nowhere).
@@ -184,7 +217,7 @@ pub fn save_telegram_bot(app: AppHandle, bot: serde_json::Value) -> Result<Strin
   conn.execute(
     "INSERT INTO telegram_bots (id, name, token, agent_id, terminal_id, allowed_users, enabled, capture, destination_id, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
      ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, terminal_id=excluded.terminal_id, allowed_users=excluded.allowed_users, enabled=excluded.enabled, capture=excluded.capture, destination_id=excluded.destination_id, updated_at=excluded.updated_at",
-    params![id, name, token, agent_id, terminal_id, allowed_users, if enabled { 1 } else { 0 }, if capture { 1 } else { 0 }, destination_id, now()],
+    params![id, name, stored_token, agent_id, terminal_id, allowed_users, if enabled { 1 } else { 0 }, if capture { 1 } else { 0 }, destination_id, now()],
   ).map_err(|e| e.to_string())?;
   Ok(id)
 }
@@ -784,7 +817,8 @@ pub async fn telegram_set_bot_webhook(app: AppHandle, bot_id: String, public_url
   }
   {
     let conn = db(&app)?;
-    conn.execute("UPDATE telegram_bots SET webhook_secret=?1, webhook_registered=1, updated_at=?2 WHERE id=?3", params![secret, now(), bot_id]).map_err(|e| e.to_string())?;
+    let stored = seal(format!("telegram/{bot_id}/webhook"), &secret);
+    conn.execute("UPDATE telegram_bots SET webhook_secret=?1, webhook_registered=1, updated_at=?2 WHERE id=?3", params![stored, now(), bot_id]).map_err(|e| e.to_string())?;
   }
   Ok(format!("Webhook registered at {webhook_url}"))
 }

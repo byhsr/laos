@@ -147,7 +147,14 @@ fn model_settings(conn: &Connection, model_id: &str) -> Result<(Option<String>, 
     })
     .map_err(|e| e.to_string())?;
   match rows.next() {
-    Some(Ok((host, key, reasoning))) => Ok((host, key.filter(|k| !k.trim().is_empty()), Reasoning::parse(&reasoning))),
+    // The key column holds the vault sentinel rather than the key itself.
+    Some(Ok((host, key, reasoning))) => {
+      let key = match key.filter(|k| !k.trim().is_empty()) {
+        Some(v) if crate::vault::is_ref(&v) => crate::vault::get(&format!("model/{model_id}")),
+        other => other,
+      };
+      Ok((host, key, Reasoning::parse(&reasoning)))
+    }
     Some(Err(e)) => Err(e.to_string()),
     // A model missing from the table (for example a seed the user never saved)
     // still resolves, so the caller reports the real problem — a missing key.

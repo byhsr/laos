@@ -29,6 +29,19 @@ portable-pty = "0.9.0"
 # VT parser: renders the screen from the raw PTY byte stream (for the Telegram relay).
 vt100 = "0.15"
 
+# OS credential store — the vault every secret lives in (see src/vault.rs).
+[target."cfg(windows)".dependencies.keyring]
+version = "3"
+features = ["windows-native"]
+
+[target."cfg(target_os = \"macos\")".dependencies.keyring]
+version = "3"
+features = ["apple-native"]
+
+[target."cfg(target_os = \"linux\")".dependencies.keyring]
+version = "3"
+features = ["sync-secret-service"]
+
 [target."cfg(windows)".dependencies]
 arboard = "3.6.1"
 base64 = "0.23.1"

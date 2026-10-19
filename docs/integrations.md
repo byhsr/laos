@@ -1,8 +1,9 @@
 # Integrations
 
 Integrations are the configurable external providers (Notion, Airtable, Google Sheets/Docs,
-Telegram). They store credentials in the DB, connect via a token or OAuth, and expose
-**actions** that become agent tools.
+Telegram). They keep their credentials in the OS credential store (see
+[data-model.md](./data-model.md#vault)), connect via a token or OAuth, and expose **actions** that
+become agent tools.
 
 Related: [tool-calls.md](./tool-calls.md) (how actions are offered), [webhooks.md](./webhooks.md)
 (Telegram runtime), [data-model.md](./data-model.md) (`integration_configs`).
@@ -26,8 +27,8 @@ Defined in `integrations::integration_definitions()`. Each entry is
 `https://api.exa.ai/search` (`type: auto`, highlights on); `parallel_search` posts to
 `https://api.parallel.ai/v1/search` (`objective` + `search_queries`, `mode: basic`). Both return
 the vendor's JSON as tool output, clipped like every other action. They're the honest way for an
-agent to search the web — the alternative is a generic `api` tool, but its key would sit
-unmasked in `tools.config_json`.
+agent to search the web — the alternative is a generic `api` tool with a `x-api-key` header, which
+`vault.rs` keeps in the credential store like any other secret.
 
 Action implementations live in `src-tauri/src/tools/integration.rs` — a single `match` on the
 action name. The tool's `description()` and `params_schema()` are also switched there.
@@ -55,11 +56,11 @@ tools read is picked from, in order: `token`, `apiKey`, `accessToken`
 | `list_integrations` | Read rows for the UI, applying `mask_config` to each stored config. |
 | `mask_config(cfg)` | Replaces any key containing `token` / `key` / `secret` with `••••••••`. |
 | `merge_config(existing, incoming)` | Preserves stored secrets when the UI echoes the mask or sends `null`; rejects numeric values for string fields. |
-| `integration_secret(conn, id)` | Full (unmasked) config for backend use; nulls non-string secret fields. |
-| `stored_api_key(conn, model_id)` | Separate concern: model provider API keys (`model_configs.api_key`), not integrations. |
+| `integration_secret(conn, id)` | Full config for backend use, with `vault::resolve_object` turning each sentinel back into the real secret; nulls non-string secret fields. |
+| `vault` | The OS credential store everything secret actually lives in — see [data-model.md](./data-model.md#vault). |
 
-Secrets never round-trip to the UI: the frontend only ever sees masked values, and saving a
-masked value keeps the real secret unchanged.
+Secrets never round-trip to the UI: the frontend only ever sees masked values, saving a masked
+value keeps the stored sentinel, and a newly typed value goes straight to the credential store.
 
 ## OAuth
 

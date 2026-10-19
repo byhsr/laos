@@ -143,9 +143,10 @@ compatible as a user message with a `text` + `image_url` content array. Before e
 doesn't re-send each screenshot each round. Requires a vision-capable model; the non-streaming
 paths carry text only.
 
-API keys are resolved inside `provider::resolve`, from the model's `api_key` column — never
-sent from the UI for stored models. The browser preview may pass one explicitly to
-`execute_agent`; it wins over the stored key.
+API keys are resolved inside `provider::resolve`, from the model's `api_key` column — which holds
+the vault sentinel, so the real value comes from the OS credential store under `model/<id>`. Never
+sent from the UI for stored models. The browser preview may pass one explicitly to `execute_agent`;
+it wins over the stored key.
 
 ## Reasoning control
 

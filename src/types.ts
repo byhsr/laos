@@ -6,7 +6,7 @@ export type Agent = { id: string; name: string; objective: string; model: string
 export type RunEvent = { time: string; type: 'thought' | 'tool' | 'result'; title: string; detail?: string };
 export type Run = { id: string; agentId: string; startedAt: string; endedAt?: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; model: string; input: string; events: RunEvent[]; output?: string; promptTokens?: number; completionTokens?: number };
 export type Edge = { id: string; from: string; to: string };
-export type ModelConfig = { id: string; provider: Provider; label: string; model: string; host?: string; apiKey?: string; enabled: boolean; reasoning: Reasoning };
+export type ModelConfig = { id: string; provider: Provider; label: string; model: string; host?: string; apiKey?: string; hasKey?: boolean; clearKey?: boolean; enabled: boolean; reasoning: Reasoning };
 export type IntegrationAction = { name: string; description: string };
 export type Integration = { id: string; name: string; provider: string; enabled: boolean; connected: boolean; config: Record<string, unknown>; actions: IntegrationAction[] };
 export type ToolParam = { name: string; type: string; description: string; required: boolean };
@@ -43,6 +43,10 @@ export type Task = { id: string; requester: string; assignedAgent: string; statu
 // 'builder' is the workflow canvas, kept distinct from the 'workflows' list so
 // opening a workflow is a real navigation step the chrome can go back from.
 export type View = 'home' | 'graph' | 'agents' | 'workflows' | 'builder' | 'manager' | 'tasks' | 'runs' | 'telegram' | 'terminal' | 'items' | 'agent' | 'workshop' | 'settings' | 'memory';
+
+// What the topbar "+" creates. Left-click runs the default; right-click offers
+// the whole list and lets you pick which one is the default.
+export type CreateKind = 'agent' | 'workflow' | 'skill' | 'script' | 'project' | 'tool' | 'model';
 
 export type DrawerForm =
   | { kind: 'tool'; editing: Tool; isNew: boolean }

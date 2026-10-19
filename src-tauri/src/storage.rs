@@ -78,6 +78,9 @@ pub async fn initialize_storage(app: AppHandle) -> Result<(), String> {
     retire_memory_mcp(&conn);
     retire_playwright_browser(&conn);
     ensure_browser_tool(&conn)?;
+    // Before anything can read a secret: move any plaintext left over from an
+    // older build into the OS credential store.
+    crate::vault::migrate(&conn)?;
   }
   Ok(())
 }
@@ -151,21 +154,40 @@ pub fn delete_knowledge_doc(app: AppHandle, id: String) -> Result<(), String> {
 pub fn list_model_configs(app: AppHandle) -> Result<Vec<ModelConfigRecord>, String> {
   let conn = db(&app)?;
   let mut stmt = conn.prepare("SELECT id, provider, label, model, host, api_key, enabled, reasoning FROM model_configs ORDER BY id").map_err(|e| e.to_string())?;
-  let rows = stmt.query_map([], |row| Ok(ModelConfigRecord {
-    id: row.get(0)?, provider: row.get(1)?, label: row.get(2)?, model: row.get(3)?, host: row.get(4)?, api_key: row.get(5)?, enabled: row.get::<_, i64>(6)? != 0, reasoning: row.get(7)?,
-  })).map_err(|e| e.to_string())?;
+  let rows = stmt.query_map([], |row| {
+    // The key itself never leaves the backend — only whether one is stored.
+    let stored: Option<String> = row.get(5)?;
+    Ok(ModelConfigRecord {
+      id: row.get(0)?, provider: row.get(1)?, label: row.get(2)?, model: row.get(3)?, host: row.get(4)?,
+      has_key: stored.map(|s| !s.trim().is_empty()).unwrap_or(false),
+      enabled: row.get::<_, i64>(6)? != 0, reasoning: row.get(7)?,
+    })
+  }).map_err(|e| e.to_string())?;
   let mut out = Vec::new();
   for row in rows { out.push(row.map_err(|e| e.to_string())?); }
   Ok(out)
 }
 
 #[tauri::command]
-pub fn save_model_config(app: AppHandle, config: ModelConfigRecord) -> Result<(), String> {
+pub fn save_model_config(app: AppHandle, config: ModelConfigInput) -> Result<(), String> {
   let conn = db(&app)?;
+  let account = format!("model/{}", config.id);
+  // The key is write-only: a submitted value replaces it, `clearKey` removes it,
+  // and neither leaves whatever is already stored untouched.
+  let submitted = config.api_key.as_deref().map(str::trim).filter(|k| !k.is_empty());
+  let api_key = if config.clear_key {
+    crate::vault::delete(&account)?;
+    None
+  } else if let Some(key) = submitted {
+    crate::vault::put(&account, key)?;
+    Some(crate::vault::REF.to_string())
+  } else {
+    conn.query_row("SELECT api_key FROM model_configs WHERE id=?1", params![config.id], |r| r.get::<_, Option<String>>(0)).ok().flatten()
+  };
   conn.execute(
     "INSERT INTO model_configs (id, provider, label, model, host, api_key, enabled, reasoning) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
      ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, label=excluded.label, model=excluded.model, host=excluded.host, api_key=excluded.api_key, enabled=excluded.enabled, reasoning=excluded.reasoning",
-    params![config.id, config.provider, config.label, config.model, config.host, config.api_key, if config.enabled { 1 } else { 0 }, config.reasoning],
+    params![config.id, config.provider, config.label, config.model, config.host, api_key, if config.enabled { 1 } else { 0 }, config.reasoning],
   ).map_err(|e| e.to_string())?;
   Ok(())
 }
@@ -174,7 +196,26 @@ pub fn save_model_config(app: AppHandle, config: ModelConfigRecord) -> Result<()
 pub fn delete_model_config(app: AppHandle, id: String) -> Result<(), String> {
   let conn = db(&app)?;
   conn.execute("DELETE FROM model_configs WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+  let _ = crate::vault::delete(&format!("model/{id}"));
   Ok(())
+}
+
+// Header values whose name marks them secret live in the credential store, so a
+// tool's saved config only ever carries the `REF` sentinel. The UI sees the
+// "set" marker instead; the real value is resolved when the request is built.
+fn mask_tool_config(config: &serde_json::Value) -> serde_json::Value {
+  let mut cfg = config.clone();
+  if let Some(headers) = cfg.get_mut("headers").and_then(|h| h.as_array_mut()) {
+    for h in headers.iter_mut() {
+      let Some(obj) = h.as_object_mut() else { continue };
+      let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+      if !crate::vault::is_secret_name(&name) { continue; }
+      if obj.get("value").and_then(|v| v.as_str()).map(|v| !v.is_empty()).unwrap_or(false) {
+        obj.insert("value".into(), serde_json::json!(crate::vault::MASK));
+      }
+    }
+  }
+  cfg
 }
 
 #[tauri::command]
@@ -183,10 +224,11 @@ pub fn list_tools(app: AppHandle) -> Result<Vec<ToolRecord>, String> {
   let mut stmt = conn.prepare("SELECT id, name, kind, integration_id, description, enabled, config_json FROM tools ORDER BY name").map_err(|e| e.to_string())?;
   let rows = stmt.query_map([], |row| {
     let config_json: String = row.get(6)?;
+    let config = serde_json::from_str(&config_json).unwrap_or_else(|_| serde_json::json!({}));
     Ok(ToolRecord {
       id: row.get(0)?, name: row.get(1)?, kind: row.get(2)?, integration_id: row.get(3)?,
       description: row.get(4)?, enabled: row.get::<_, i64>(5)? != 0,
-      config: serde_json::from_str(&config_json).unwrap_or_else(|_| serde_json::json!({})),
+      config: mask_tool_config(&config),
     })
   }).map_err(|e| e.to_string())?;
   let mut out = Vec::new();
@@ -197,7 +239,24 @@ pub fn list_tools(app: AppHandle) -> Result<Vec<ToolRecord>, String> {
 #[tauri::command]
 pub fn save_tool(app: AppHandle, tool: ToolRecord) -> Result<(), String> {
   let conn = db(&app)?;
-  let config_json = serde_json::to_string(&tool.config).unwrap_or_else(|_| "{}".into());
+  let mut config = tool.config.clone();
+  if let Some(headers) = config.get_mut("headers").and_then(|h| h.as_array_mut()) {
+    for h in headers.iter_mut() {
+      let Some(obj) = h.as_object_mut() else { continue };
+      let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+      if !crate::vault::is_secret_name(&name) { continue; }
+      let value = obj.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let account = format!("tool/{}/{}", tool.id, name);
+      if value == crate::vault::MASK {
+        // Untouched: keep the reference only if a secret is actually stored.
+        obj.insert("value".into(), serde_json::json!(if crate::vault::get(&account).is_some() { crate::vault::REF } else { "" }));
+      } else if !value.is_empty() {
+        crate::vault::put(&account, &value)?;
+        obj.insert("value".into(), serde_json::json!(crate::vault::REF));
+      }
+    }
+  }
+  let config_json = serde_json::to_string(&config).unwrap_or_else(|_| "{}".into());
   conn.execute(
     "INSERT INTO tools (id, name, kind, integration_id, description, enabled, config_json) VALUES (?1,?2,?3,?4,?5,?6,?7)
      ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind, integration_id=excluded.integration_id, description=excluded.description, enabled=excluded.enabled, config_json=excluded.config_json",

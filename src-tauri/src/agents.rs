@@ -46,7 +46,14 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
           })
         }).collect::<Vec<_>>()).unwrap_or_default();
         let headers = config.get("headers").and_then(|h| h.as_array()).map(|arr| arr.iter().filter_map(|h| {
-          Some((h.get("name")?.as_str()?.to_string(), h.get("value")?.as_str()?.to_string()))
+          let name = h.get("name")?.as_str()?.to_string();
+          let value = h.get("value")?.as_str()?.to_string();
+          // A secret header stores only the sentinel; resolve it here, and drop
+          // the header entirely if the credential store no longer holds it.
+          let value = if crate::vault::is_ref(&value) {
+            crate::vault::get(&format!("tool/{tool_id}/{name}"))?
+          } else { value };
+          Some((name, value))
         }).collect::<Vec<_>>()).unwrap_or_default();
         let name = if str_cfg("name").is_empty() { format!("api_{}", tool_id) } else { str_cfg("name") };
         tools.push(Box::new(ApiTool {

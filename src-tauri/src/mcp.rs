@@ -37,8 +37,14 @@ fn str_vec(v: &serde_json::Value) -> Vec<String> {
   v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default()
 }
 
-fn env_pairs(v: &serde_json::Value) -> Vec<(String, String)> {
-  v.as_object().map(|o| o.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()).unwrap_or_default()
+fn env_pairs(id: &str, v: &serde_json::Value) -> Vec<(String, String)> {
+  v.as_object().map(|o| o.iter().filter_map(|(k, v)| {
+    let s = v.as_str()?;
+    // A stored secret holds only the sentinel; resolve it from the credential
+    // store, and drop the variable if it is no longer there.
+    let resolved = if crate::vault::is_ref(s) { crate::vault::get(&format!("mcp/{id}/{k}")) } else { Some(s.to_string()) };
+    resolved.map(|s| (k.clone(), s))
+  }).collect()).unwrap_or_default()
 }
 
 fn parse_args(s: &str) -> serde_json::Value {
@@ -91,7 +97,7 @@ pub(crate) fn load_server(conn: &Connection, id: &str) -> Result<McpServer, Stri
     Ok(McpServer {
       id: row.get(0)?, name: row.get(1)?, command: row.get(2)?,
       args: str_vec(&parse_args(&args)),
-      env: env_pairs(&parse_env(&env)),
+      env: env_pairs(&id, &parse_env(&env)),
     })
   }).map_err(|e| e.to_string())?;
   match rows.next().transpose().map_err(|e| e.to_string())? {
@@ -401,13 +407,16 @@ pub fn list_mcp_servers(app: AppHandle) -> Result<Vec<McpServerRecord>, String> 
 pub fn save_mcp_server(app: AppHandle, server: McpServerRecord) -> Result<String, String> {
   let conn = db(&app)?;
   if server.command.trim().is_empty() { return Err("An MCP server needs a command to run.".into()); }
+  let id = if server.id.trim().is_empty() { format!("mcp-{}", chrono::Utc::now().timestamp_millis()) } else { server.id.clone() };
   let existing = conn
-    .query_row("SELECT env FROM mcp_servers WHERE id=?1", params![server.id], |r| r.get::<_, String>(0))
+    .query_row("SELECT env FROM mcp_servers WHERE id=?1", params![id], |r| r.get::<_, String>(0))
     .ok()
     .map(|s| parse_env(&s))
     .unwrap_or_else(|| serde_json::json!({}));
-  let merged = merge_env(&existing, &server.env);
-  let id = if server.id.trim().is_empty() { format!("mcp-{}", chrono::Utc::now().timestamp_millis()) } else { server.id };
+  let mut merged = merge_env(&existing, &server.env);
+  // A newly typed credential goes straight into the OS credential store; the row
+  // keeps only the sentinel, exactly like any other secret.
+  if let Some(obj) = merged.as_object_mut() { crate::vault::protect_object(&format!("mcp/{id}"), obj)?; }
   let name = if server.name.trim().is_empty() { id.clone() } else { server.name };
   conn.execute(
     "INSERT INTO mcp_servers (id, name, command, args, env, enabled, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)

@@ -27,6 +27,7 @@ mod tg_markdown;
 mod tools;
 mod tooltext;
 mod updater;
+mod vault;
 mod workflows;
 
 use tauri::menu::{Menu, MenuItem};
