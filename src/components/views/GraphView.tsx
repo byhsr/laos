@@ -1,10 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Boxes, Maximize2, Network, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react';
+import { Boxes, Maximize2, Network, Orbit, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react';
 import type { Agent, Integration, Project, Skill, Tool, Workflow } from '../../types';
 import { IconButton } from '../ui/Button';
 import { ICON, Inspector, LABEL, NODE_COLOR, type GEdge, type Kind } from './graph/shared';
-import { buildGraph, layout, type MemoryNamespace } from './graph/layout';
-import { amListNamespaces } from '../../runtime';
+import { buildGraph, layout, type MemoryScope } from './graph/layout';
+import { amListScopes } from '../../runtime';
 
 // three.js is a big dependency, so the scene is its own chunk that only loads
 // when someone actually opens the 3D view.
@@ -30,23 +30,26 @@ export function GraphView({ agents, skills, tools, integrations, workflows, proj
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; y: number; px: number; py: number; moved: boolean } | null>(null);
   const [mode, setMode] = useState<'3d' | '2d'>('3d');
-  const [namespaces, setNamespaces] = useState<MemoryNamespace[]>([]);
+  const [scopes, setScopes] = useState<MemoryScope[]>([]);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [hover, setHover] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  // The scene holds still by default — a drifting view makes reading a node's
+  // connections, and clicking it, much harder.
+  const [spin, setSpin] = useState(false);
 
-  // Memory scopes are their own store, so they are fetched alongside the rest.
-  const loadNamespaces = useCallback(() => {
-    void amListNamespaces()
-      .then((n) => setNamespaces((n as MemoryNamespace[]) ?? []))
-      .catch(() => setNamespaces([]));
+  // Memory lives in its own store, so it is fetched alongside the rest.
+  const loadScopes = useCallback(() => {
+    void amListScopes()
+      .then((s) => setScopes((s as MemoryScope[]) ?? []))
+      .catch(() => setScopes([]));
   }, []);
-  useEffect(() => { loadNamespaces(); }, [loadNamespaces]);
+  useEffect(() => { loadScopes(); }, [loadScopes]);
 
   const graph = useMemo(
-    () => buildGraph({ agents, skills, tools, integrations, workflows, projects, namespaces }),
-    [agents, skills, tools, integrations, workflows, projects, namespaces],
+    () => buildGraph({ agents, skills, tools, integrations, workflows, projects, scopes }),
+    [agents, skills, tools, integrations, workflows, projects, scopes],
   );
 
   // The settled positions, recomputed only when the graph itself changes.
@@ -193,6 +196,7 @@ export function GraphView({ agents, skills, tools, integrations, workflows, proj
                   focus={focus}
                   connected={connected}
                   selected={selected}
+                  spin={spin}
                   onHover={setHover}
                   onSelect={pick}
                 />
@@ -262,7 +266,16 @@ export function GraphView({ agents, skills, tools, integrations, workflows, proj
             <div className={`${overlay} top-3 left-3 gap-0.5 p-1`} onPointerDown={(e) => e.stopPropagation()}>
               <IconButton label="3d graph" className={`h-6 w-6 ${mode === '3d' ? 'bg-background text-foreground' : ''}`} onClick={() => setMode('3d')}><Boxes size={13} /></IconButton>
               <IconButton label="2d graph" className={`h-6 w-6 ${mode === '2d' ? 'bg-background text-foreground' : ''}`} onClick={() => setMode('2d')}><Network size={13} /></IconButton>
-              <IconButton label="refresh memory" className="h-6 w-6" onClick={loadNamespaces}><RefreshCw size={13} /></IconButton>
+              <IconButton label="refresh memory" className="h-6 w-6" onClick={loadScopes}><RefreshCw size={13} /></IconButton>
+              {mode === '3d' && (
+                <IconButton
+                  label={spin ? 'stop rotating' : 'rotate slowly'}
+                  className={`h-6 w-6 ${spin ? 'bg-background text-foreground' : ''}`}
+                  onClick={() => setSpin((s) => !s)}
+                >
+                  <Orbit size={13} />
+                </IconButton>
+              )}
             </div>
 
             {mode === '2d' && (

@@ -8,7 +8,7 @@ import { GROUP_LABEL_CLS } from '../../ui/Input';
 // Every kind of thing the graph can show, and the palette both renderers use.
 export type Kind = 'skill' | 'tool' | 'integration' | 'agent' | 'manager' | 'workflow' | 'project' | 'memory';
 
-export type GNode = { id: string; kind: Kind; label: string; sub: string };
+export type GNode = { id: string; kind: Kind; label: string; sub: string; weight?: number };
 export type GEdge = { id: string; from: string; to: string; kind: 'uses' | 'flow' | 'derives' };
 
 export type LinkField = 'toolIds' | 'skillIds' | 'integrations';

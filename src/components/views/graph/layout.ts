@@ -1,8 +1,9 @@
 import type { Agent, Integration, Project, Skill, Tool, Workflow } from '../../../types';
 import type { GEdge, GNode } from './shared';
 
-// The shape `am_list_namespaces` returns (see the Memory view).
-export type MemoryNamespace = {
+// One memory scope that holds something. `am_list_scopes` returns this shape (see
+// the Memory view); the graph reads it rather than the namespace registry.
+export type MemoryScope = {
   namespace: { key: string; type: string; id: string | null; name: string; description?: string | null };
   counts: { events: number; memories: number; selfModelEntries: number };
   lastActivityAt?: number | null;
@@ -10,13 +11,13 @@ export type MemoryNamespace = {
 
 export type GraphInput = {
   agents: Agent[]; skills: Skill[]; tools: Tool[]; integrations: Integration[];
-  workflows: Workflow[]; projects: Project[]; namespaces: MemoryNamespace[];
+  workflows: Workflow[]; projects: Project[]; scopes: MemoryScope[];
 };
 
 // Everything in the workspace as one graph: what exists, and what is wired to
 // what. Agents are the hub — capabilities hang off them, workflows consume them,
 // and memory scopes attach to whatever owns them.
-export function buildGraph({ agents, skills, tools, integrations, workflows, projects, namespaces }: GraphInput): { nodes: GNode[]; edges: GEdge[] } {
+export function buildGraph({ agents, skills, tools, integrations, workflows, projects, scopes }: GraphInput): { nodes: GNode[]; edges: GEdge[] } {
   const nodes: GNode[] = [];
   skills.forEach((s) => nodes.push({ id: `skill:${s.id}`, kind: 'skill', label: s.name, sub: 'instructions' }));
   tools.forEach((t) => nodes.push({ id: `tool:${t.id}`, kind: 'tool', label: t.name, sub: t.kind.replace('_', ' ') }));
@@ -27,16 +28,21 @@ export function buildGraph({ agents, skills, tools, integrations, workflows, pro
   }));
   workflows.forEach((w) => nodes.push({ id: `wf:${w.id}`, kind: 'workflow', label: w.name, sub: `${w.nodes.length} nodes` }));
   projects.forEach((p) => nodes.push({ id: `project:${p.id}`, kind: 'project', label: p.name, sub: p.description || 'project' }));
-  // Accumulated memory, one node per tracked scope, sized by what's in it.
-  namespaces.forEach((n) => nodes.push({
-    id: `mem:${n.namespace.key}`, kind: 'memory',
-    label: n.namespace.name || n.namespace.key,
-    sub: `${n.counts.memories} memories · ${n.counts.events} events`,
-  }));
+  // Accumulated memory, one glob per scope, sized by how much it holds.
+  scopes.forEach((s) => {
+    const c = s.counts;
+    nodes.push({
+      id: `mem:${s.namespace.key}`, kind: 'memory',
+      label: s.namespace.name || s.namespace.key,
+      sub: `${c.memories} memories · ${c.events} events`,
+      weight: c.memories + c.events + c.selfModelEntries,
+    });
+  });
 
   const known = new Set(nodes.map((n) => n.id));
   const edges: GEdge[] = [];
   const link = (from: string, to: string, kind: GEdge['kind']) => {
+    if (from === to) return;
     if (known.has(from) && known.has(to)) edges.push({ id: `${kind}:${from}->${to}`, from, to, kind });
   };
 
@@ -49,10 +55,14 @@ export function buildGraph({ agents, skills, tools, integrations, workflows, pro
   tools.forEach((t) => { if (t.integrationId) link(`tool:${t.id}`, `int:${t.integrationId}`, 'derives'); });
   workflows.forEach((w) => w.nodes.forEach((n) => { if (n.agentId) link(`agent:${n.agentId}`, `wf:${w.id}`, 'flow'); }));
   // A memory scope attaches to its owner; a global scope floats free at the centre.
-  namespaces.forEach((n) => {
-    const key = n.namespace.key;
+  const hasGlobal = scopes.some((s) => s.namespace.key === 'global');
+  scopes.forEach((s) => {
+    const key = s.namespace.key;
     if (key.startsWith('agent:')) link(`agent:${key.slice('agent:'.length)}`, `mem:${key}`, 'derives');
     else if (key.startsWith('project:')) link(`project:${key.slice('project:'.length)}`, `mem:${key}`, 'derives');
+    // Every scope is read together with global (memory inherits through it), so
+    // the tie is drawn even though nothing owns global directly.
+    if (hasGlobal && key !== 'global') link(`mem:${key}`, 'mem:global', 'derives');
   });
 
   return { nodes, edges };

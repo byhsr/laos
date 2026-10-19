@@ -194,6 +194,7 @@ fn main() {
       agent_memory::am_get_self_model,
       agent_memory::am_stats,
       agent_memory::am_list_namespaces,
+      agent_memory::am_list_scopes,
       agent_memory::am_add_memory,
       agent_memory::am_update_memory,
       agent_memory::am_forget_memory,

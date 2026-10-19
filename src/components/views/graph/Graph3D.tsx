@@ -35,7 +35,8 @@ function Node({ node, position, radius, color, labelColor, dim, selected, onHove
 }) {
   const texture = useMemo(() => labelTexture(node.label, labelColor), [node.label, labelColor]);
   useEffect(() => () => texture.dispose(), [texture]);
-  const opacity = dim ? 0.18 : 1;
+  // Memory globs read as a softer mass than a hard capability node.
+  const opacity = dim ? 0.18 : node.kind === 'memory' ? 0.78 : 1;
 
   return (
     <group position={position}>
@@ -62,9 +63,9 @@ function Node({ node, position, radius, color, labelColor, dim, selected, onHove
   );
 }
 
-export default function Graph3D({ nodes, edges, positions, focus, connected, selected, onHover, onSelect }: {
+export default function Graph3D({ nodes, edges, positions, focus, connected, selected, spin, onHover, onSelect }: {
   nodes: GNode[]; edges: GEdge[]; positions: Map<string, Vec>;
-  focus: string | null; connected: Set<string>; selected: string | null;
+  focus: string | null; connected: Set<string>; selected: string | null; spin: boolean;
   onHover: (id: string | null) => void; onSelect: (id: string) => void;
 }) {
   // The scene is WebGL, so the theme has to be read as real colours rather than
@@ -127,7 +128,10 @@ export default function Graph3D({ nodes, edges, positions, focus, connected, sel
       {nodes.map((n) => {
         const p = positions.get(n.id);
         if (!p) return null;
-        const r = 0.42 + Math.min(degree.get(n.id) ?? 0, 8) * 0.045;
+        // Memory is sized by what it holds; everything else by how connected it is.
+        const r = n.kind === 'memory'
+          ? 0.5 + Math.min(Math.sqrt(n.weight ?? 1), 6) * 0.18
+          : 0.42 + Math.min(degree.get(n.id) ?? 0, 8) * 0.045;
         return (
           <Node
             key={n.id}
@@ -144,7 +148,8 @@ export default function Graph3D({ nodes, edges, positions, focus, connected, sel
         );
       })}
 
-      <OrbitControls makeDefault enableDamping dampingFactor={0.08} autoRotate autoRotateSpeed={0.35} minDistance={4} maxDistance={distance * 3} />
+      {/* Off by default: a moving scene makes picking out a node much harder. */}
+      <OrbitControls makeDefault enableDamping dampingFactor={0.08} autoRotate={spin} autoRotateSpeed={0.35} minDistance={4} maxDistance={distance * 3} />
     </Canvas>
   );
 }

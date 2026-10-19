@@ -305,6 +305,54 @@ pub(crate) fn list_namespaces(conn: &Connection) -> Vec<Value> {
   out
 }
 
+// Every scope that actually holds memory — not just the registered namespaces.
+// An agent's own scope is never registered (`am_namespaces` tracks projects), so
+// reading that table alone would hide most memory from the graph.
+pub(crate) fn list_scopes(conn: &Connection) -> Vec<Value> {
+  let mut keys: Vec<String> = Vec::new();
+  if let Ok(mut stmt) = conn.prepare(
+    "SELECT DISTINCT scope FROM am_memories WHERE scope != ''
+     UNION SELECT DISTINCT scope FROM am_events WHERE scope != ''
+     UNION SELECT DISTINCT scope FROM am_self_model WHERE scope != ''",
+  ) {
+    if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+      for r in rows { if let Ok(k) = r { keys.push(k); } }
+    }
+  }
+  if let Ok(mut stmt) = conn.prepare("SELECT key FROM am_namespaces") {
+    if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+      for r in rows { if let Ok(k) = r { if !keys.contains(&k) { keys.push(k); } } }
+    }
+  }
+
+  let mut out = Vec::new();
+  for key in keys {
+    let (stype, sid) = scope_parts(&key);
+    let (events, memories, self_entries, last) = namespace_counts(conn, &key);
+    // A scope with nothing in it is not memory yet — the graph shows what has
+    // actually accumulated, not every scope that could exist.
+    if events + memories + self_entries == 0 { continue; }
+
+    // Prefer the registered namespace name, then the agent/project it belongs to.
+    let name: Option<String> = conn.query_row("SELECT name FROM am_namespaces WHERE key=?1", params![key], |r| r.get(0)).ok()
+      .or_else(|| match stype.as_str() {
+        "agent" => conn.query_row("SELECT name FROM agents WHERE id=?1", params![sid], |r| r.get(0)).ok(),
+        "project" => conn.query_row("SELECT name FROM projects WHERE id=?1", params![sid], |r| r.get(0)).ok(),
+        _ => None,
+      });
+
+    let display = name.unwrap_or_else(|| key.clone());
+    out.push(json!({
+      "namespace": { "key": key, "type": stype, "id": sid, "name": display, "description": Value::Null },
+      "counts": { "events": events, "memories": memories, "selfModelEntries": self_entries },
+      "lastActivityAt": if last == 0 { Value::Null } else { json!(last) },
+    }));
+  }
+  // Most recently used first, so the graph's memory reads in order of activity.
+  out.sort_by_key(|v| -v.get("lastActivityAt").and_then(|x| x.as_i64()).unwrap_or(0));
+  out
+}
+
 // ---------------------------------------------------------------------------
 // Commands (the Memory view reads these directly — no MCP)
 // ---------------------------------------------------------------------------
@@ -336,6 +384,10 @@ pub fn am_stats(app: AppHandle) -> Result<Value, String> { let conn = db(&app)?;
 
 #[tauri::command]
 pub fn am_list_namespaces(app: AppHandle) -> Result<Vec<Value>, String> { let conn = db(&app)?; Ok(list_namespaces(&conn)) }
+
+// The graph reads this one: scopes that hold something, agent scopes included.
+#[tauri::command]
+pub fn am_list_scopes(app: AppHandle) -> Result<Vec<Value>, String> { let conn = db(&app)?; Ok(list_scopes(&conn)) }
 
 #[tauri::command]
 pub fn am_add_memory(app: AppHandle, agent_id: String, scope: String, kind: String, title: String, content: String, tags: Option<Value>, confidence: Option<f64>, importance: Option<f64>) -> Result<String, String> {

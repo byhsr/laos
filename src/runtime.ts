@@ -223,6 +223,11 @@ export async function amStats(): Promise<unknown> {
 export async function amListNamespaces(): Promise<unknown> {
   try { return await invoke('am_list_namespaces'); } catch { return []; }
 }
+// Scopes that actually hold memory (agent scopes included) — the graph reads this
+// rather than the namespace registry, which only tracks projects.
+export async function amListScopes(): Promise<unknown> {
+  try { return await invoke('am_list_scopes'); } catch { return []; }
+}
 export async function amAddMemory(m: { agentId: string; scope: string; kind: string; title: string; content: string; tags?: unknown; importance?: number; confidence?: number }): Promise<string> {
   return await invoke<string>('am_add_memory', { agentId: m.agentId, scope: m.scope, kind: m.kind, title: m.title, content: m.content, tags: m.tags ?? null, confidence: m.confidence ?? null, importance: m.importance ?? null });
 }
