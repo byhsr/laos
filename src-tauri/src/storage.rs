@@ -4,7 +4,7 @@
 use rusqlite::{params, Connection};
 use tauri::AppHandle;
 
-use crate::db::{db, now};
+use crate::db::db;
 use crate::models::*;
 
 // Ensures the Manager system agent exists; creates it if missing.
@@ -37,49 +37,37 @@ fn retire_memory_mcp(conn: &Connection) {
 }
 
 // ---------------------------------------------------------------------------
-// Built-in browser connector (Playwright MCP)
+// Built-in browser connector (native embedded mini-browser)
 // ---------------------------------------------------------------------------
 
-// Browser control ships built in: a Playwright MCP server is seeded on startup so
-// browser tools are available with no manual setup. It is a normal `mcp_servers`
-// row, editable in Workshop → Integrations → MCP servers. Requires Node/npx.
-const BROWSER_SERVER_ID: &str = "browser";
+// Browser control ships built in as a native tool (`kind='browser'`), backed by
+// the embedded mini-browser webview (see crate::browser). It replaced the old
+// `@playwright/mcp` server, which needed Node/npx, couldn't show the page and
+// dropped screenshots.
+const BROWSER_ID: &str = "browser";
 
-// Inserts the browser MCP server row unless a Playwright-backed server already
-// exists (an upgraded install may have added one by hand), so we never create a
-// duplicate.
-fn ensure_browser_server(_app: &AppHandle, conn: &Connection) -> Result<(), String> {
-  let existing: i64 = conn
-    .query_row("SELECT COUNT(*) FROM mcp_servers WHERE lower(args) LIKE '%playwright%'", [], |r| r.get(0))
-    .unwrap_or(0);
-  if existing > 0 { return Ok(()); }
-  let args = serde_json::json!(["-y", "@playwright/mcp@latest"]).to_string();
-  conn.execute(
-    "INSERT INTO mcp_servers (id, name, command, args, env, enabled, updated_at) VALUES (?1,'Browser','npx',?2,'{}',1,?3)
-     ON CONFLICT(id) DO NOTHING",
-    params![BROWSER_SERVER_ID, args, now()],
-  ).map_err(|e| e.to_string())?;
-  Ok(())
+// Removes the retired Playwright MCP server and any tools imported from it, so an
+// upgraded install doesn't keep a broken, headless browser path around.
+fn retire_playwright_browser(conn: &Connection) {
+  let _ = conn.execute(
+    "DELETE FROM tools WHERE kind='mcp' AND integration_id IN (SELECT id FROM mcp_servers WHERE id=?1 OR lower(args) LIKE '%playwright%')",
+    params![BROWSER_ID],
+  );
+  let _ = conn.execute(
+    "DELETE FROM mcp_servers WHERE id=?1 OR lower(args) LIKE '%playwright%'",
+    params![BROWSER_ID],
+  );
 }
 
-// Imports the browser tools once so they appear in the tool picker with no manual
-// sync. Targets the browser server that exists — the seeded `browser` row, or an
-// existing Playwright-backed row (an upgraded install may have added one by hand).
-// Best-effort: the first import downloads Playwright via npx, so an offline launch
-// just leaves it un-imported and the next launch retries.
-fn import_browser_tools_once(app: &AppHandle) {
-  let conn = match db(app) { Ok(c) => c, Err(_) => return };
-  let server_id: String = match conn.query_row(
-    "SELECT id FROM mcp_servers WHERE id=?1 OR lower(args) LIKE '%playwright%'
-     ORDER BY CASE WHEN id=?1 THEN 0 ELSE 1 END LIMIT 1",
-    params![BROWSER_SERVER_ID], |r| r.get(0),
-  ) { Ok(id) => id, Err(_) => return };
-  let count: i64 = conn
-    .query_row("SELECT COUNT(*) FROM tools WHERE kind='mcp' AND integration_id=?1", params![server_id], |r| r.get(0))
-    .unwrap_or(0);
-  if count > 0 { return; }
-  drop(conn);
-  let _ = crate::mcp::import_mcp_tools(app.clone(), server_id);
+// Seeds the single native browser tool row so it appears in the picker and can be
+// attached to an agent (or granted to the Manager).
+fn ensure_browser_tool(conn: &Connection) -> Result<(), String> {
+  conn.execute(
+    "INSERT INTO tools (id, name, kind, integration_id, description, enabled, config_json) VALUES (?1,'Browser','browser','builtin',?2,1,'{}')
+     ON CONFLICT(id) DO NOTHING",
+    params![BROWSER_ID, "Open a mini browser panel and let the agent navigate, click, type and read pages."],
+  ).map_err(|e| e.to_string())?;
+  Ok(())
 }
 
 #[tauri::command]
@@ -88,14 +76,9 @@ pub async fn initialize_storage(app: AppHandle) -> Result<(), String> {
     let conn = db(&app)?;
     ensure_manager(&conn)?;
     retire_memory_mcp(&conn);
-    ensure_browser_server(&app, &conn)?;
+    retire_playwright_browser(&conn);
+    ensure_browser_tool(&conn)?;
   }
-  // Importing MCP tools spawns the browser server (npx, which may download on
-  // first run), so run it off the main thread — a cold start must never block the
-  // UI or flash a console.
-  tauri::async_runtime::spawn_blocking(move || {
-    import_browser_tools_once(&app);
-  }).await.map_err(|e| e.to_string())?;
   Ok(())
 }
 

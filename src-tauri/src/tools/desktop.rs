@@ -373,7 +373,7 @@ mod win {
   #[async_trait]
   impl AgentTool for LaunchApp {
     fn name(&self) -> String { "launch_app".into() }
-    fn description(&self) -> String { "Launch a program (e.g. notepad, explorer, chrome) with optional arguments. Params: program (string), args (array of strings, optional).".into() }
+    fn description(&self) -> String { "Launch a program (e.g. notepad, explorer, chrome) with optional arguments. Params: program (string), args (array of strings, optional). This opens a program on the user's REAL desktop. To browse the web, use the browser_* tools (the in-app mini browser) instead — do not launch a browser app for that.".into() }
     fn params_schema(&self) -> serde_json::Value {
       serde_json::json!({ "type": "object", "properties": { "program": { "type": "string" }, "args": { "type": "array", "items": { "type": "string" } } }, "required": ["program"] })
     }
@@ -392,7 +392,7 @@ mod win {
   #[async_trait]
   impl AgentTool for OpenPath {
     fn name(&self) -> String { "open_path".into() }
-    fn description(&self) -> String { "Open a file, folder, or URL with its default application. Params: path (string).".into() }
+    fn description(&self) -> String { "Open a file, folder, or URL with its default application. Params: path (string). Opens on the user's REAL desktop. To open a web page for browsing, use browser_open (the in-app mini browser) instead — it does not disturb the user's screen.".into() }
     fn params_schema(&self) -> serde_json::Value {
       serde_json::json!({ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] })
     }

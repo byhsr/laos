@@ -2,6 +2,7 @@
 // implements, plus shared helpers and the concrete tool implementations.
 
 pub(crate) mod api;
+pub(crate) mod browser;
 pub(crate) mod desktop;
 pub(crate) mod filesystem;
 pub(crate) mod integration;
@@ -10,6 +11,7 @@ pub(crate) mod script;
 pub(crate) mod web;
 
 pub(crate) use api::{ApiParam, ApiTool};
+pub(crate) use browser::browser_tools;
 pub(crate) use desktop::desktop_tools;
 pub(crate) use filesystem::{run_shell_in, ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool};
 pub(crate) use integration::IntegrationTool;

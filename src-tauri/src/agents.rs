@@ -13,7 +13,7 @@ use crate::models::*;
 use crate::provider;
 use crate::tasks::list_tasks;
 use crate::tools::{
-  desktop_tools, script_tools, unique_name, AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool,
+  browser_tools, desktop_tools, script_tools, unique_name, AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool,
   ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool, MAX_TOOL_ROUNDS,
 };
 use crate::tooltext::parse_text_tool_calls;
@@ -61,6 +61,9 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
       }
       "read_file" if has_files => tools.push(Box::new(ReadFileTool { home: home.to_path_buf() })),
       "write_file" if has_files => tools.push(Box::new(WriteFileTool { home: home.to_path_buf() })),
+      // Browser control: attaching the `browser` tool opts the agent in, exactly
+      // like the `mcp` arm below.
+      "browser" => tools.extend(browser_tools()),
       // MCP tools spawn the configured server's command. A user who attached one
       // has already opted into the capability — the old `network` gate silently
       // dropped them, which is why MCPs appeared unusable in agents.

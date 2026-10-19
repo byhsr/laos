@@ -164,6 +164,8 @@ pub(crate) async fn run_manager_tool(app: &AppHandle, tools: &[Box<dyn AgentTool
 // capabilities are always in sync with the code and never need hand-writing.
 pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_tool_ids: &[String], pc_control: bool) -> Result<String, String> {
   let context = build_workspace_context(conn)?;
+  // Whether the Manager was opted into browser control (attached the `browser` tool).
+  let has_browser = mcp_tool_ids.iter().any(|t| t == "browser");
   let mut tool_list = String::new();
   for t in manager_tools() {
     tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
@@ -176,6 +178,12 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
   // PC control tools, only when the Manager holds the pc_control permission.
   if pc_control {
     for t in crate::tools::desktop_tools() {
+      tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
+    }
+  }
+  // Browser control (the in-app mini browser), only when the Manager attached it.
+  if has_browser {
+    for t in crate::tools::browser_tools() {
       tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
     }
   }
@@ -206,6 +214,13 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
   } else {
     ""
   };
+  // Browser guidance, only when the Manager has browser control: the in-app panel
+  // is the web browser, never the user's desktop.
+  let browser_note = if has_browser {
+    "Browser control (browser_open / browser_navigate / browser_read / browser_click / browser_type) opens pages in the app's own in-app mini-browser panel — it never opens anything on the user's desktop. Use these to browse the web; never use open_path or launch_app to open a web browser.\n"
+  } else {
+    ""
+  };
   // Memory is pull-only: nothing about prior context is injected here. The
   // Manager brings it in on demand via recall_memory (or any memory tool it
   // holds), so a new chat starts clean.
@@ -221,7 +236,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
      - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent â€” file access is just a permission value in the create_agent call.\n\
      - Never store secrets (API keys/tokens) without the user's explicit approval in the confirmation popup.\n\
      - Delegate domain work to agents rather than doing it inline.\n\n\
-     Workspace context:\n{context}\n\n{skills}{memory_note}{pc_note}{identity}\
+     Workspace context:\n{context}\n\n{skills}{memory_note}{pc_note}{browser_note}{identity}\
      Return a concise, helpful reply to the user."
   , identity = crate::app_settings::identity_prompt(conn)))
 }
@@ -709,7 +724,10 @@ pub(crate) fn requires_confirmation(tool: &str) -> bool {
     | "run_command" | "run_script"
     // PC control: the coarse/system actions confirm; low-level input and
     // read-only actions do not (a vision loop needs many of them).
-    | "launch_app" | "close_window" | "lock_screen" | "write_clipboard" | "open_path")
+    | "launch_app" | "close_window" | "lock_screen" | "write_clipboard" | "open_path"
+    // Browser control: acting on a page confirms (only when autonomy is off);
+    // reading and pure navigation history do not.
+    | "browser_click" | "browser_type")
 }
 
 #[tauri::command]

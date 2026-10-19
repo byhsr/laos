@@ -3,6 +3,7 @@ mod agents;
 mod agent_memory;
 mod anthropic;
 mod app_settings;
+mod browser;
 mod capture;
 mod chat;
 mod db;
@@ -90,6 +91,9 @@ fn main() {
       tauri::async_runtime::spawn(insights::insight_loop(handle.clone()));
       // Start the local webhook receiver (used when a tunnel is active).
       tauri::async_runtime::spawn(telegram::telegram_webhook_server(handle, 14789));
+      // The embedded mini-browser owns its webview; hold the handle so browser
+      // tools/commands can reach it.
+      browser::init(app.handle().clone());
       Ok(())
     })
     .on_window_event(|window, event| {
@@ -146,6 +150,17 @@ fn main() {
       mcp::test_mcp_server,
       mcp::import_mcp_tools,
       mcp::call_mcp_tool,
+      // Embedded mini browser (visible browser control)
+      browser::browser_open,
+      browser::browser_navigate,
+      browser::browser_back,
+      browser::browser_forward,
+      browser::browser_reload,
+      browser::browser_close,
+      browser::browser_destroy,
+      browser::browser_set_bounds,
+      browser::browser_state,
+      browser::browser_eval_result,
       // Agent + workflow execution
       agents::execute_agent,
       workflows::execute_workflow,
@@ -252,6 +267,7 @@ fn main() {
       // on exit instead of leaving them orphaned.
       if let tauri::RunEvent::Exit = event {
         mcp::shutdown_all();
+        browser::shutdown();
       }
     });
 }

@@ -117,9 +117,11 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   // opted into; a regular agent gets its own.
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
   let pc_control = agent.permissions.iter().any(|p| p == "pc_control");
+  let has_browser = agent.tool_ids.iter().any(|t| t == "browser");
   let tools: Vec<Box<dyn AgentTool>> = if is_manager {
     let mut manager = manager_tools();
     if pc_control { manager.extend(crate::tools::desktop_tools()); }
+    if has_browser { manager.extend(crate::tools::browser_tools()); }
     manager.extend(crate::tools::script_tools(&conn));
     manager.extend(mcp_tools_for(&conn, &agent.tool_ids));
     manager
@@ -148,10 +150,17 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     } else {
       ""
     };
+    // Browser guidance, only when the agent actually has browser control: the
+    // in-app panel is the web browser, not the user's desktop.
+    let browser_note = if has_browser {
+      "\nTo browse the web, use the browser_* tools: they open pages in the app's own in-app mini-browser panel and never touch the user's desktop. Do NOT use open_path or launch_app to open a web browser."
+    } else {
+      ""
+    };
     // Attached skills (instructions + reference + scripts) go into the live chat
     // prompt too, not just one-shot runs.
     let skills = skills_prompt(&conn, &agent.skill_ids);
-    format!("You are {}. Objective: {}\n{skills}\n{memory_note}{pc_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
+    format!("You are {}. Objective: {}\n{skills}\n{memory_note}{pc_note}{browser_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
 
   // Who the assistant is and who it's talking to (persona/tone are identity here,
