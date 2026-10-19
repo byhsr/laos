@@ -131,33 +131,23 @@ On Windows a command shim like `npx` is a `.cmd` file, which `Command::new` cann
 directly — `spawn_session()` wraps the command in `cmd /C` there (the same approach as
 `run_command`).
 
-## Browser control (Playwright)
+## Browser control (native mini browser)
 
-Browser control ships **built in**: startup seeds a Playwright MCP server (`storage.rs::ensure_browser_server`,
-id `browser`) and imports its tools once, so there is no manual setup. When a Playwright-backed
-server already exists (an upgraded install may have added one by hand), it is reused instead of
-duplicated, and its tools are imported too. It is a
-normal `mcp_servers` row (editable in Workshop), and its tools appear in every agent's picker —
-attach them to an agent, or to the Manager in its config, to enable browser control.
+Browser control is **no longer an MCP server**. It is a native toolset
+(`tools/browser.rs`) backed by an embedded webview (`browser.rs`) that paints a
+real page into the left slide-out panel, so browser control is visible and
+interactive. The tools — `browser_open`, `browser_navigate`, `browser_back`,
+`browser_forward`, `browser_reload`, `browser_read`, `browser_click`,
+`browser_type` — are granted to an agent that attaches the `browser` tool (seeded
+by `storage.rs::ensure_browser_tool`), or to the Manager once it has it attached.
+Startup retires the old `@playwright/mcp` server and its imported tools, so Node
+/ npx is no longer required and browser control can't cold-start-timeout.
 
-Persistent sessions are what make a real browser usable: the server launches one Chrome/Edge and
-every `navigate` → `click` → `type` → `extract` call drives the **same page** across the whole
-conversation. The seeded server is equivalent to adding this by hand:
+The webview shares a persistent profile, so logins survive restarts: sign in by
+hand in the panel and the agent keeps working in that same session.
 
-| Field | Value |
-| --- | --- |
-| command | `npx` |
-| args | `-y @playwright/mcp@latest` |
-| env | (none) |
-
-Attach the imported tools to an agent and it gets tools like
-`browser_navigate`, `browser_click`, `browser_type`, `browser_snapshot`, and
-`browser_take_screenshot`, driven over the Chrome DevTools Protocol against a real browser.
-Requires Node/npx on the machine (the first import downloads Playwright). `chrome-devtools-mcp`
-(`-y chrome-devtools-mcp@latest`) is an alternative that speaks CDP directly.
-
-> Before persistence this could not work — a fresh process per call launched a new browser every
-> time and lost the page. Now the browser stays open for the session.
+> Playwright MCP can still be added by hand in Workshop if its heavier automation
+> is ever needed — the built-in path simply no longer depends on it.
 
 ## Permission & trust
 

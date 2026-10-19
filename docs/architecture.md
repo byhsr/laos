@@ -30,7 +30,7 @@ crosses `src/runtime.ts`. The backend has no knowledge of React; it returns plai
 | `provider.rs` | Model provider dispatch: resolves a `"<provider>:<model>"` id (`ollama`, `groq`, `openrouter`, `openai`, `google`, `xai`, `anthropic`) to endpoint/credentials, and maps the per-model reasoning setting and Ollama tuning onto request bodies. Used by every model-calling path. |
 | `anthropic.rs` | Anthropic Messages API adapter: converts OpenAI-shaped request bodies to `/v1/messages` and normalizes responses (and streaming deltas) back, so call sites stay OpenAI-shaped. |
 | `models.rs` | Shared `serde` record/DTO types only (no logic). |
-| `storage.rs` | CRUD commands for knowledge docs, models, tools, skills, agents, workflows; Manager bootstrap; seeds the built-in browser MCP server (memory is native); `manager_default_model`. |
+| `storage.rs` | CRUD commands for knowledge docs, models, tools, skills, agents, workflows; Manager bootstrap; seeds the native browser tool (retires the old Playwright server; memory is native); `manager_default_model`. |
 | `agent_memory.rs` | Native agent memory store (events, typed memories, self-model, namespaces) — was the fox `agent-memory` MCP server. Also the `am_*` commands the Memory view reads. |
 | `http.rs` | The shared provider HTTP layer: clients, timeouts, retry/backoff, request defaults. |
 | `agents.rs` | One-shot agent execution (`execute_agent`), toolset assembly (`build_tools`), tool schemas, skills prompt, workspace context. |
@@ -38,7 +38,8 @@ crosses `src/runtime.ts`. The backend has no knowledge of React; it returns plai
 | `manager.rs` | The "Laos" system agent: system prompt builder, non-streaming turn loop, `dispatch_manager_tool`, approvals. |
 | `memory.rs` | Conversations, rolling window, chat sessions, summarization (background); long-term facts/summary are pull-only (`build_context_bundle` for on-demand recall). |
 | `mcp.rs` | MCP connector: JSON-RPC over stdio to a local MCP server; tool discovery, import, and calls. |
-| `tools/` | `AgentTool` trait + implementations (`api.rs`, `desktop.rs` (native PC control, Windows), `filesystem.rs`, `integration.rs`, `mcp.rs`, `web.rs`). |
+| `browser.rs` | Embedded mini browser: a child webview painted into the left panel, plus the `browser_*` commands and JS-eval round-trip the browser tools use. |
+| `tools/` | `AgentTool` trait + implementations (`api.rs`, `browser.rs` (embedded mini browser), `desktop.rs` (native PC control, Windows), `filesystem.rs`, `integration.rs`, `mcp.rs`, `web.rs`). |
 | `updater.rs` | In-app updater: checks the signed release manifest, installs an update, restarts. |
 | `workflows.rs` | Deterministic rule engine + LLM judge; linear workflow execution. |
 | `tasks.rs` | Task lifecycle (`pending → running → completed/failed/cancelled`) and the runs feed. |
