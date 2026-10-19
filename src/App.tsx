@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Agent, DrawerForm, View } from './types';
+import type { Agent, CreateKind, DrawerForm, View } from './types';
 import { emptyModel, emptyProject, emptyScript, emptySkill, emptyTool } from './types';
 import { useAgentsStore } from './hooks/useAgents';
 import { useRunsStore } from './hooks/useRuns';
@@ -202,6 +202,21 @@ export default function App() {
     toast(`agent "${agent.name}" created`, 'success');
   };
 
+  // One entry point for the "+" button: left-click runs the persisted default,
+  // the right-click menu runs any of them. Each branch reuses the exact path the
+  // entity's own view already uses.
+  const createEntity = (kind: CreateKind) => {
+    switch (kind) {
+      case 'agent': void addAgent(); break;
+      case 'workflow': setWorkflowToOpen('new'); setView('builder'); break;
+      case 'skill': setDrawerForm({ kind: 'skill', editing: emptySkill(), isNew: true }); break;
+      case 'script': setDrawerForm({ kind: 'script', editing: emptyScript(), isNew: true }); break;
+      case 'project': setDrawerForm({ kind: 'project', editing: emptyProject(), isNew: true }); break;
+      case 'tool': setDrawerForm({ kind: 'tool', editing: emptyTool(), isNew: true }); break;
+      case 'model': setDrawerForm({ kind: 'model', editing: emptyModel(), isNew: true }); break;
+    }
+  };
+
   return (
     <div className="app-drag relative flex h-screen flex-col overflow-hidden">
       <Topbar
@@ -213,7 +228,7 @@ export default function App() {
         onForward={goForward}
         onOpenGraph={() => setView('graph')}
         graphActive={view === 'graph'}
-        onNewAgent={addAgent}
+        onCreate={createEntity}
         onToggleBrowser={toggleBrowser}
         browserActive={browserPanelOpen}
       />
@@ -254,7 +269,7 @@ export default function App() {
           <div className={pane(view === 'home')}><HomeView agents={agents} tools={tools} workflows={workflows} runs={runs} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('builder'); setWorkflowToOpen(id); }} /></div>
           <div className={pane(view === 'graph')}>
             <GraphView
-              agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows}
+              agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows} projects={projects}
               onOpenAgent={openAgent}
               onOpenWorkflow={(id) => { setView('builder'); setWorkflowToOpen(id); }}
               onSaveAgent={persistAgent}
@@ -308,6 +323,7 @@ export default function App() {
               onAddModel={() => setDrawerForm({ kind: 'model', editing: emptyModel(), isNew: true })}
               onEditModel={(m) => setDrawerForm({ kind: 'model', editing: m, isNew: false })}
               onDeleteModel={deleteModel}
+              onNavigate={setView}
             />
           </div>
           {selectedAgent && (

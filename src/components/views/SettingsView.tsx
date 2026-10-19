@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw, RotateCcw, Sparkles } from 'lucide-react';
-import type { ModelConfig } from '../../types';
+import type { ModelConfig, View } from '../../types';
 import { ModelsView } from './ModelsView';
 import { UpdatePrompt } from '../ui/UpdatePrompt';
 import { Card } from '../ui/Card';
@@ -11,7 +11,9 @@ import { tabCls } from '../ui/tabs';
 import { toast } from '../../hooks/useToast';
 import { appVersion, checkForUpdate, getAppSettings, getIdentity, setIdentity, setRunInBackground, setLaunchAtLogin, setAutonomy, type Identity, type UpdateInfo } from '../../runtime';
 import { Checkbox } from '../ui/Checkbox';
-import { NAV_SECTIONS, useNavLabels } from '../../hooks/useNavLabels';
+import { NAV_SECTIONS, navLabel, useNavLabels } from '../../hooks/useNavLabels';
+import { useSidebarTabs } from '../../hooks/useSidebarTabs';
+import { RAIL_KEYS } from '../Rail';
 import { THEMES, activeTheme, applyTheme, type ThemeKey } from '../../theme';
 
 type SettingsTab = 'general' | 'models';
@@ -21,9 +23,13 @@ const TABS: { key: SettingsTab; label: string }[] = [
   { key: 'models', label: 'models' },
 ];
 
-export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditModel, onDeleteModel }: {
+// Only the sections that actually live in the rail can be hidden from it.
+const RAIL_SECTIONS = NAV_SECTIONS.filter((s) => RAIL_KEYS.includes(s.key));
+
+export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditModel, onDeleteModel, onNavigate }: {
   models: ModelConfig[]; onRerunOnboarding: () => void;
   onAddModel: () => void; onEditModel: (m: ModelConfig) => void; onDeleteModel: (id: string) => Promise<void>;
+  onNavigate: (v: View) => void;
 }) {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [version, setVersion] = useState('');
@@ -38,6 +44,9 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
   const navLabels = useNavLabels((s) => s.labels);
   const setNavLabel = useNavLabels((s) => s.setLabel);
   const resetNavLabels = useNavLabels((s) => s.reset);
+  const hiddenTabs = useSidebarTabs((s) => s.hidden);
+  const toggleTab = useSidebarTabs((s) => s.toggle);
+  const showAllTabs = useSidebarTabs((s) => s.showAll);
 
   useEffect(() => { appVersion().then(setVersion); }, []);
   useEffect(() => { getAppSettings().then((s) => { setBg(s.runInBackground); setLogin(s.launchAtLogin); setAutonomyOn(s.autonomy); }); }, []);
@@ -215,6 +224,34 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
               <Button icon={<RotateCcw size={12} />} onClick={resetNavLabels}>reset names</Button>
               <Button icon={<Sparkles size={12} />} onClick={onRerunOnboarding}>re-run onboarding</Button>
             </div>
+          </Card>
+
+          <Card className="hover:bg-surface">
+            <h3 className="m-0 font-mono text-xs lowercase text-foreground">sidebar</h3>
+            <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">
+              Which sections sit in the rail. Pick one above to jump straight there; the section you're on always stays visible.
+            </p>
+            <div className="mb-3 max-w-[240px]">
+              <Select
+                value=""
+                placeholder="jump to a section…"
+                options={RAIL_SECTIONS.map((s) => ({ value: s.key, label: navLabel(navLabels, s.key) }))}
+                onChange={(v) => onNavigate(v as View)}
+              />
+            </div>
+            <div className="grid gap-2">
+              {RAIL_SECTIONS.map((s) => (
+                <Checkbox
+                  key={s.key}
+                  checked={!hiddenTabs.includes(s.key)}
+                  onChange={() => toggleTab(s.key)}
+                  label={`${navLabel(navLabels, s.key)} — show in sidebar`}
+                />
+              ))}
+            </div>
+            {hiddenTabs.length > 0 && (
+              <div className="mt-4"><Button onClick={showAllTabs}>show all</Button></div>
+            )}
           </Card>
         </div>
       </div>
