@@ -600,6 +600,11 @@ export async function browserClose(): Promise<void> { try { await invoke('browse
 export async function browserSetBounds(x: number, y: number, width: number, height: number): Promise<void> {
   try { await invoke('browser_set_bounds', { x, y, width, height }); } catch { /* no backend */ }
 }
+// Keeps pages in the in-app browser in step with the app theme: this drives the
+// window colour scheme, which the webview maps to prefers-color-scheme.
+export async function browserSetTheme(theme: 'light' | 'dark'): Promise<void> {
+  try { await invoke('browser_set_theme', { theme }); } catch { /* no backend */ }
+}
 export async function browserState(): Promise<{ open: boolean; visible: boolean; url: string }> {
   try { return await invoke('browser_state'); } catch { return { open: false, visible: false, url: '' }; }
 }

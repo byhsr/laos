@@ -159,6 +159,7 @@ fn main() {
       browser::browser_close,
       browser::browser_destroy,
       browser::browser_set_bounds,
+      browser::browser_set_theme,
       browser::browser_state,
       browser::browser_eval_result,
       // Agent + workflow execution

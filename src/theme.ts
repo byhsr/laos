@@ -3,6 +3,8 @@
 // Swatch values live here rather than in a component: a theme preview has to
 // show colours that are not the active ones, so this module is the one place
 // hex belongs. Components only ever consume tokens.
+import { browserSetTheme } from './runtime';
+
 export type ThemeKey = 'dark' | 'light' | 'cyber';
 
 export const THEMES: { key: ThemeKey; background: string; surface: string; border: string }[] = [
@@ -16,4 +18,10 @@ export const activeTheme = (): ThemeKey =>
 
 export const applyTheme = (key: ThemeKey) => {
   document.documentElement.setAttribute('data-theme', key);
+  // The in-app browser follows the app theme too, so pages render light in a
+  // light UI (and dark otherwise). Best-effort — a preview has no backend.
+  void browserSetTheme(key === 'light' ? 'light' : 'dark');
 };
+
+// Called once on boot so the browser matches the restored theme.
+export const syncBrowserTheme = () => applyTheme(activeTheme());

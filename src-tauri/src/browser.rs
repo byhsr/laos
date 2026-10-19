@@ -353,6 +353,16 @@ pub fn browser_state() -> Result<serde_json::Value, String> {
   with_state(|s| serde_json::json!({ "open": s.webview.is_some(), "visible": s.visible, "url": s.url }))
 }
 
+// Keeps the in-app browser's pages in step with the app theme: the window's
+// colour scheme is what WebView2 maps to `prefers-color-scheme`, so a light app
+// renders light pages.
+#[tauri::command]
+pub fn browser_set_theme(app: AppHandle, theme: String) -> Result<(), String> {
+  let t = if theme == "light" { tauri::Theme::Light } else { tauri::Theme::Dark };
+  if let Some(w) = app.get_window("main") { let _ = w.set_theme(Some(t)); }
+  Ok(())
+}
+
 // Resolves the oneshot a pending `eval_body` is awaiting. Called from the page.
 #[tauri::command]
 pub fn browser_eval_result(req_id: String, result: String) -> Result<(), String> {

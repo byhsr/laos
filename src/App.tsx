@@ -39,6 +39,7 @@ import { UpdatePrompt } from './components/ui/UpdatePrompt';
 import { BrowserPanel } from './components/BrowserPanel';
 import { useBrowserStore } from './hooks/useBrowser';
 import { toast } from './hooks/useToast';
+import { syncBrowserTheme } from './theme';
 import { checkForUpdate, onBrowserEvent, onReminder, type UpdateInfo } from './runtime';
 
 // Every view lives in a pane that scrolls internally — the shell itself never
@@ -94,6 +95,8 @@ export default function App() {
     // Reload tools after the storage bootstrap so MCP tools imported on first run
     // (browser/memory) are present in the picker.
     void loadWorkspace().then(() => loadTools());
+    // Point the in-app browser at the restored theme's colour scheme.
+    syncBrowserTheme();
   }, [loadAgents, loadModels, loadTools, loadSkills, loadScripts, loadProjects, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns]);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
