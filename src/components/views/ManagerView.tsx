@@ -17,6 +17,7 @@ import { MultiDropdown } from '../ui/MultiDropdown';
 import { StatusTag } from '../ui/Status';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, PROSE_CLS } from '../ui/Input';
 import { ChatComposer } from '../chat/ChatComposer';
+import { ScribbleLayer } from '../chat/ScribbleLayer';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { MessageBubble } from '../chat/MessageBubble';
 import { toast } from '../../hooks/useToast';
@@ -175,7 +176,8 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
       </header>
 
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
+        <ScribbleLayer storeKey={managerId} scrollRef={scrollRef} />
+        <div ref={scrollRef} className="relative z-10 min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
           <div className="mx-auto w-full max-w-[720px]">
             {messages.map((m, i) => (
               <MessageBubble

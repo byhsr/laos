@@ -12,6 +12,7 @@ import { SidePanel } from './ui/SidePanel';
 import { StatusGlyph, StatusTag, statusClass } from './ui/Status';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, PROSE_CLS } from './ui/Input';
 import { ChatComposer } from './chat/ChatComposer';
+import { ScribbleLayer } from './chat/ScribbleLayer';
 import { MessageBubble } from './chat/MessageBubble';
 import { toast } from '../hooks/useToast';
 import { listChatSessions, getChatSession, createChatSession, deleteChatSession, closeSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, type StreamStep } from '../runtime';
@@ -292,8 +293,9 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
         </div>
       ) : (
         <div className="relative flex min-h-0 flex-1 flex-col">
+          <ScribbleLayer storeKey={agent.id} scrollRef={scrollRef} />
           {/* Chat history — full height, no box; the composer overlays on top of it */}
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
+          <div ref={scrollRef} className="relative z-10 min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
             <div className="mx-auto w-full max-w-[720px]">
               {messages.map((m, i) => (
                 <MessageBubble

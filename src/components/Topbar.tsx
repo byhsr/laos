@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
-import { AppWindow, ArrowLeft, ArrowRight, Bot, Boxes, Compass, FolderKanban, Globe, Maximize, Minimize2, Minus, PanelLeft, Plus, Sparkles, Workflow as WorkflowIcon, Wrench, X } from 'lucide-react';
+import { AppWindow, ArrowLeft, ArrowRight, Bot, Boxes, Compass, FolderKanban, Globe, Maximize, Minimize2, Minus, PanelLeft, Pencil, Pin, Plus, Sparkles, Trash2, Workflow as WorkflowIcon, Wrench, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { navLabel, useNavLabels } from '../hooks/useNavLabels';
 import { CREATE_KINDS, createLabel, useCreateDefault } from '../hooks/useCreateDefault';
+import { useScribble } from '../hooks/useScribble';
+import { useThemeKey } from '../hooks/useTheme';
 import { ContextMenuAt, type MenuItem } from './ui/ContextMenu';
 import { IconButton } from './ui/Button';
+import { PenPicker } from './ui/PenPicker';
 import type { CreateKind } from '../types';
 
 // One icon per create action, shared by the "+" menu and its default rows.
@@ -33,6 +36,14 @@ export function Topbar({ collapsed, onToggleSidebar, canBack, canForward, onBack
   const labels = useNavLabels((s) => s.labels);
   const createDefault = useCreateDefault((s) => s.kind);
   const setCreateDefault = useCreateDefault((s) => s.setKind);
+  // Scribble controls only exist in the paper theme; they drive the shared
+  // scribble store that every chat's layer reads.
+  const paper = useThemeKey() === 'paper';
+  const drawActive = useScribble((s) => s.active);
+  const drawPinned = useScribble((s) => s.pinned);
+  const toggleDraw = useScribble((s) => s.toggleActive);
+  const togglePin = useScribble((s) => s.togglePinned);
+  const clearDraw = useScribble((s) => s.clear);
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -93,6 +104,29 @@ export function Topbar({ collapsed, onToggleSidebar, canBack, canForward, onBack
       </IconButton>
 
       <div className="ml-auto flex items-center gap-0.5">
+        {paper && (
+          <>
+            <IconButton
+              className={navBtn({ active: drawActive })}
+              label={drawActive ? 'stop drawing' : 'draw in the margin'}
+              onClick={toggleDraw}
+            >
+              <Pencil className="h-3 w-3" style={{ color: 'var(--accent-soft)' }} />
+            </IconButton>
+            <PenPicker className={navBtn()} />
+            <IconButton
+              className={navBtn({ active: drawPinned })}
+              label={drawPinned ? 'unpin scribbles' : 'pin scribbles'}
+              onClick={togglePin}
+            >
+              <Pin className="h-3 w-3" style={{ color: 'var(--accent-soft)' }} />
+            </IconButton>
+            <IconButton className={navBtn()} label="clear scribbles" onClick={clearDraw}>
+              <Trash2 className="h-3 w-3" />
+            </IconButton>
+            <span className="mx-0.5 h-3.5 w-px shrink-0 bg-border" />
+          </>
+        )}
         <IconButton className={winBtn} label="minimize" onClick={minimize}><Minus className="h-3 w-3" strokeWidth={2.5} /></IconButton>
         <IconButton className={winBtn} label={maximized ? 'restore' : 'maximize'} onClick={toggleMax}>
           {maximized ? <Minimize2 className="h-3 w-3" /> : <Maximize className="h-3 w-3" />}
