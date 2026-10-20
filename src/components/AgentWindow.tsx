@@ -8,6 +8,7 @@ import { REASONING_STOPS } from '../reasoning';
 import { MultiDropdown } from './ui/MultiDropdown';
 import { AgentAvatar, PersonaPicker } from './ui/AgentAvatar';
 import { Button } from './ui/Button';
+import { Section } from './ui/Section';
 import { SidePanel } from './ui/SidePanel';
 import { StatusGlyph, StatusTag, statusClass } from './ui/Status';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, PROSE_CLS } from './ui/Input';
@@ -17,6 +18,8 @@ import { MessageBubble } from './chat/MessageBubble';
 import { toast } from '../hooks/useToast';
 import { listChatSessions, getChatSession, createChatSession, deleteChatSession, closeSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, type StreamStep } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
+import { useAgentChatBackdrop, useAgentBackdrop } from '../hooks/useAgentBackdrop';
+import { readBackgroundImage } from '../hooks/useGlass';
 import { useManagerStore, type ChatEntry } from '../hooks/useManager';
 import { useProjectsStore } from '../hooks/useProjects';
 import { useConfirmStore } from '../hooks/useConfirm';
@@ -41,25 +44,6 @@ const PERMISSIONS = [
 type Panel = 'runs' | 'info' | 'config' | 'history';
 
 const PANEL_TITLES: Record<Panel, string> = { runs: 'runs', info: 'info', config: 'settings', history: 'history' };
-
-// Collapsible config section — collapsed by default, so the panel reads as
-// prompt → name → model and everything else is one summarised line until asked
-// for. Nothing is hidden, just quiet.
-function Section({ title, summary, defaultOpen = false, children }: {
-  title: string; summary?: string; defaultOpen?: boolean; children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="border-t border-border pt-4">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="focus-ring flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent text-left">
-        <span className="shrink-0 font-mono text-[10px] tracking-wider text-muted uppercase">{title}</span>
-        <span className="min-w-0 flex-1 truncate text-right font-mono text-[10px] text-muted">{summary}</span>
-        <ChevronRight size={13} className={`shrink-0 text-muted transition-transform duration-150 ${open ? 'rotate-90' : ''}`} />
-      </button>
-      {open && <div className="mt-3.5">{children}</div>}
-    </div>
-  );
-}
 
 // Safe date formatting — DB timestamps can be empty/malformed, and new Date('')
 // throws, which would blank the whole screen.
@@ -121,6 +105,9 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   ];
   const scrollRef = useRef<HTMLDivElement>(null);
   const avatarRef = useRef<HTMLInputElement>(null);
+  const backdropRef = useRef<HTMLInputElement>(null);
+  const chatBackdrop = useAgentChatBackdrop(agent.id);
+  const setChatBackdrop = useAgentBackdrop((s) => s.setBackdrop);
   // The id of the in-flight turn, plus a flag so a cancel stops the delta
   // batcher from painting over the message we just removed or marked. The token
   // guards a turn's late callbacks from touching a newer turn's state.
@@ -138,6 +125,16 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     reader.onload = () => setDraft((d) => ({ ...d, avatar: String(reader.result ?? '') }));
     reader.onerror = () => toast('could not read that image', 'error');
     reader.readAsDataURL(file);
+  };
+
+  // Chat backdrop: downscaled, then kept in localStorage keyed by agent id.
+  const onPickBackdrop = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast('that is not an image', 'error'); return; }
+    try { setChatBackdrop(agent.id, await readBackgroundImage(file)); }
+    catch { toast('could not read that image', 'error'); }
   };
 
   const setMessages = (fn: (prev: ChatEntry[]) => ChatEntry[]) => {
@@ -293,6 +290,14 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
         </div>
       ) : (
         <div className="relative flex min-h-0 flex-1 flex-col">
+          {/* Per-agent chat backdrop. It sits behind the scroller and is veiled
+              with the content-plane colour so messages stay legible on any image. */}
+          {chatBackdrop && (
+            <>
+              <div aria-hidden className="pointer-events-none absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url("${chatBackdrop}")` }} />
+              <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[0.72]" style={{ background: 'var(--color-background)' }} />
+            </>
+          )}
           <ScribbleLayer storeKey={agent.id} scrollRef={scrollRef} />
           {/* Chat history — full height, no box; the composer overlays on top of it */}
           <div ref={scrollRef} className="relative z-10 min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
@@ -479,7 +484,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                 />
               </div>
 
-              <Section title="appearance" summary={draft.avatar ? 'custom image' : 'persona'}>
+              <Section title="appearance" summary={chatBackdrop ? 'image + chat backdrop' : draft.avatar ? 'custom image' : 'persona'}>
                 <div className="flex items-center gap-3">
                   <AgentAvatar agent={{ ...draft, persona: draft.persona ?? 'ai-orb' }} size={40} playing />
                   <div className="min-w-0 flex-1">
@@ -492,6 +497,21 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                   {draft.avatar && <Button onClick={() => setDraft({ ...draft, avatar: '' })}>remove</Button>}
                 </div>
                 <p className="mt-2 mb-0 font-mono text-[10px] leading-relaxed text-muted">PNG, JPEG, GIF or WebP up to 2 MB — replaces the persona.</p>
+
+                <div className="mt-4 border-t border-border pt-3">
+                  <label className={FIELD_LABEL_CLS}>chat background</label>
+                  <div className="flex items-center gap-2">
+                    <span
+                      aria-hidden
+                      className="h-9 w-16 shrink-0 rounded border border-border bg-background bg-cover bg-center"
+                      style={chatBackdrop ? { backgroundImage: `url("${chatBackdrop}")` } : undefined}
+                    />
+                    <input ref={backdropRef} type="file" accept="image/*" className="hidden" onChange={onPickBackdrop} />
+                    <Button onClick={() => backdropRef.current?.click()}>upload image</Button>
+                    {chatBackdrop && <Button onClick={() => setChatBackdrop(agent.id, '')}>remove</Button>}
+                  </div>
+                  <p className="mt-2 mb-0 font-mono text-[10px] leading-relaxed text-muted">A picture behind this agent's chat, softened so messages stay readable.</p>
+                </div>
               </Section>
 
               <Section
