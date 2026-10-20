@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { RefreshCw, RotateCcw, Sparkles } from 'lucide-react';
 import type { ModelConfig, View } from '../../types';
 import { ModelsView } from './ModelsView';
@@ -15,6 +15,11 @@ import { NAV_SECTIONS, navLabel, useNavLabels } from '../../hooks/useNavLabels';
 import { useSidebarTabs } from '../../hooks/useSidebarTabs';
 import { RAIL_KEYS } from '../Rail';
 import { THEMES, activeTheme, applyTheme, type ThemeKey } from '../../theme';
+import { useGlass, GLASS_BLUR_STOPS, GLASS_TINT_STOPS, readBackgroundImage } from '../../hooks/useGlass';
+import { useThemeColors, COLOR_TOKENS, type ColorToken } from '../../hooks/useThemeColors';
+import { Slider } from '../ui/Slider';
+import { ColorField } from '../ui/ColorField';
+import { Section } from '../ui/Section';
 
 type SettingsTab = 'general' | 'models';
 
@@ -40,6 +45,19 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
   const [login, setLogin] = useState(false);
   const [autonomy, setAutonomyOn] = useState(true);
   const [who, setWho] = useState<Identity>({ userName: '', botName: '', persona: '', tone: '', timezone: '', verbosity: 0 });
+  const glassImage = useGlass((s) => s.image);
+  const glassBlur = useGlass((s) => s.blur);
+  const glassTint = useGlass((s) => s.tint);
+  const setGlassImage = useGlass((s) => s.setImage);
+  const setGlassBlur = useGlass((s) => s.setBlur);
+  const setGlassTint = useGlass((s) => s.setTint);
+  const glassFileRef = useRef<HTMLInputElement>(null);
+  const colorOverrides = useThemeColors((s) => s.overrides);
+  const setThemeColor = useThemeColors((s) => s.setColor);
+  const resetThemeColors = useThemeColors((s) => s.resetTheme);
+  const themeColours = colorOverrides[theme] ?? {};
+  const colourCount = Object.keys(themeColours).length;
+  const colourSummary = colourCount ? `${colourCount} overridden` : 'theme defaults';
 
   const navLabels = useNavLabels((s) => s.labels);
   const setNavLabel = useNavLabels((s) => s.setLabel);
@@ -84,6 +102,20 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
   const pickTheme = (key: ThemeKey) => {
     applyTheme(key);
     setTheme(key);
+  };
+
+  // The colour painted right now for a token — the theme default, or the
+  // override if one is set (the swatch only falls back to this when unset).
+  const resolvedColour = (token: ColorToken) =>
+    getComputedStyle(document.documentElement).getPropertyValue(`--color-${token}`).trim() || 'transparent';
+
+  const pickGlassImage = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast('that is not an image', 'error'); return; }
+    try { setGlassImage(await readBackgroundImage(file)); }
+    catch { toast('could not read that image', 'error'); }
   };
 
   const checkUpdates = async () => {
@@ -131,6 +163,73 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
                   <b className="font-mono text-[10px] text-muted">{t.key}</b>
                 </button>
               ))}
+            </div>
+          </Card>
+
+          <Card className="hover:bg-surface">
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="m-0 font-mono text-xs lowercase text-foreground">colours</h3>
+              {Object.keys(themeColours).length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => resetThemeColors(theme)}
+                  className="shrink-0 cursor-pointer font-mono text-[10px] text-muted transition-colors hover:text-foreground"
+                >
+                  reset all
+                </button>
+              )}
+            </div>
+            <p className="mt-1 mb-1 text-[12px] leading-[1.65] text-muted">
+              Recolour the <b className="font-mono text-[11px] text-foreground">{theme}</b> theme. Each theme keeps its own overrides, so paper and glass can differ — in glass a colour retints the frost rather than replacing it.
+            </p>
+            <Section title="custom" summary={colourSummary}>
+              <div className="grid gap-1.5">
+                {COLOR_TOKENS.map((t) => (
+                  <ColorField
+                    key={t.key}
+                    label={t.label}
+                    resolved={resolvedColour(t.key)}
+                    value={themeColours[t.key] ?? ''}
+                    onChange={(v) => setThemeColor(theme, t.key, v)}
+                    onReset={() => setThemeColor(theme, t.key, '')}
+                  />
+                ))}
+              </div>
+            </Section>
+          </Card>
+
+          <Card className="hover:bg-surface">
+            <h3 className="m-0 font-mono text-xs lowercase text-foreground">glass</h3>
+            <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">
+              How the glass theme looks — a backdrop image behind the frost, and how heavy the frost reads. Other themes ignore this.
+            </p>
+            <div className="grid gap-3">
+              <div>
+                <span className={FIELD_LABEL_CLS}>backdrop image</span>
+                <div className="flex items-center gap-2">
+                  <span
+                    aria-hidden
+                    className="h-10 w-16 shrink-0 rounded border border-border bg-background bg-cover bg-center"
+                    style={glassImage ? { backgroundImage: `url("${glassImage}")` } : undefined}
+                  />
+                  <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted">
+                    {glassImage ? (glassImage.startsWith('data:') ? 'uploaded image' : glassImage) : 'the built-in backdrop'}
+                  </span>
+                  <input ref={glassFileRef} type="file" accept="image/*" className="hidden" onChange={pickGlassImage} />
+                  <Button onClick={() => glassFileRef.current?.click()}>choose</Button>
+                  {glassImage && <Button onClick={() => setGlassImage('')}>clear</Button>}
+                </div>
+              </div>
+
+              <div>
+                <span className={FIELD_LABEL_CLS}>frost</span>
+                <Slider value={String(glassBlur)} stops={GLASS_BLUR_STOPS} ariaLabel="frost" onChange={(v) => setGlassBlur(Number(v))} />
+              </div>
+
+              <div>
+                <span className={FIELD_LABEL_CLS}>tint</span>
+                <Slider value={String(glassTint)} stops={GLASS_TINT_STOPS} ariaLabel="tint" onChange={(v) => setGlassTint(Number(v))} />
+              </div>
             </div>
           </Card>
 

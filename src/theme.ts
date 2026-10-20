@@ -25,15 +25,37 @@ export const THEMES: { key: ThemeKey; background: string; surface: string; borde
   { key: 'paper', background: '#dcebf7', surface: '#ffffff', border: '#c7ddf0' },
 ];
 
+// Themes whose planes are light — the in-app browser reads this to pick its own
+// colour scheme.
+export const isLightTheme = (key: ThemeKey): boolean => key === 'light' || key === 'paper';
+
+const THEME_KEY = 'laos.theme';
+
 export const activeTheme = (): ThemeKey =>
   (document.documentElement.getAttribute('data-theme') as ThemeKey) ?? 'dark';
 
+// The theme the user last picked, from localStorage. Guards against a stale or
+// hand-edited value by only accepting keys that exist in the registry.
+const storedTheme = (): ThemeKey | null => {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    return THEMES.some((t) => t.key === v) ? (v as ThemeKey) : null;
+  } catch { return null; }
+};
+
 export const applyTheme = (key: ThemeKey) => {
   document.documentElement.setAttribute('data-theme', key);
+  try { localStorage.setItem(THEME_KEY, key); } catch { /* ignore */ }
   // The in-app browser follows the app theme too, so pages render light in a
-  // light UI (and dark otherwise). Best-effort — a preview has no backend.
-  void browserSetTheme(key === 'light' ? 'light' : 'dark');
+  // light UI (and dark otherwise). Paper is a light theme, and pointing it at
+  // 'dark' left the browser painting a black page. Best-effort — a preview has
+  // no backend.
+  void browserSetTheme(isLightTheme(key) ? 'light' : 'dark');
 };
+
+// Applied before first paint on boot, so a light/glass/paper theme never
+// flashes the default dark one on startup.
+export const initTheme = () => applyTheme(storedTheme() ?? activeTheme());
 
 // Called once on boot so the browser matches the restored theme.
 export const syncBrowserTheme = () => applyTheme(activeTheme());

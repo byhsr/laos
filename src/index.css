@@ -103,43 +103,81 @@ html:root[data-theme="navy"] {
 /* ---------------------------------------------------------------------------
    Glass — the whole app is ONE frosted panel floating over a defocused
    backdrop. Chrome is a translucent dark tint; cards and inputs sit a shade
-   darker again. There is a single blur value everywhere, and surfaces carry no
-   gradients or fades of their own.
+   darker again. Surfaces carry no gradients or fades of their own.
+
+   The look is tunable from Settings → glass. The --glass-* knobs below are the
+   fallbacks; the useGlass store writes tuned values onto :root (a user backdrop
+   image, and how heavy the frost and tint read) and every rule here consumes
+   them, so there is still a single blur value everywhere.
 --------------------------------------------------------------------------- */
 html:root[data-theme="glass"] {
-  --color-background: rgb(0 0 0 / 0.3);
-  --color-surface: rgb(0 0 0 / 0.25);
-  --color-border: rgb(255 255 255 / 0.1);
+  /* The glass planes are translucent tints over the backdrop, written as rgb()
+     over a colour channel triplet. Settings → colours retints those channels,
+     so an override recolours the glass without ever replacing the alpha — the
+     frost itself stays owned here and is never handed to the picker. */
+  --glass-background-rgb: 20 20 20;
+  --glass-surface-rgb: 0 0 0;
+  --glass-border-rgb: 255 255 255;
+
+  --color-background: rgb(var(--glass-background-rgb) / 0.3);
+  --color-surface: rgb(var(--glass-surface-rgb) / 0.25);
+  --color-border: rgb(var(--glass-border-rgb) / 0.1);
   --color-foreground: #ececed;
   --color-muted: #9a9aa2;
   --color-accent: #ffffff;
   --color-accent-foreground: #111111;
   --radius-lg: 12px;
   --radius-xl: 14px;
+
+  /* Tunables — set by Settings → glass (falls back to these before any tuning). */
+  --glass-blur: 32px;
+  --glass-saturate: 150%;
+  --glass-tint: 0.5;
+  --glass-image: none;
+  --glass-veil: none;
 }
 
 /* The backdrop the panel is lit by — a soft, muted, heavily defocused photo.
-   Low contrast on purpose so the panel above stays legible. */
+   Low contrast on purpose so the panel above stays legible. A user-chosen
+   backdrop (--glass-image) sits on top under a faint veil for legibility. */
 html:root[data-theme="glass"] {
-  background-color: #23262b;
-  background-image:
+  --glass-backdrop:
     radial-gradient(1100px 900px at 12% -10%, #6b6f63 0%, transparent 58%),
     radial-gradient(1000px 900px at 88% 4%, #4a5566 0%, transparent 60%),
     radial-gradient(1200px 1000px at 62% 118%, #3a3f46 0%, transparent 62%),
     radial-gradient(900px 800px at 20% 110%, #5a4f4a 0%, transparent 58%),
     linear-gradient(160deg, #2b2f36 0%, #1a1d22 100%);
+  background-color: #23262b;
+  background-image: var(--glass-veil), var(--glass-image), var(--glass-backdrop);
+  background-position: center;
+  background-size: cover;
   background-repeat: no-repeat;
   background-attachment: fixed;
 }
 
-/* The one panel — full-bleed, so the backdrop reads only through the glass. */
+/* The one panel — full-bleed, so the backdrop reads only through the glass.
+   The frost lives on a ::before layer rather than on the shell itself. The shell
+   *contains* every scroller and the workflow canvas, and a backdrop-filter on an
+   element that owns all the interactive content makes Chromium snapshot the
+   backdrop and stop repainting it — the UI reads as frozen: the wheel does
+   nothing visible and canvas nodes won't drag. Sitting the frost on a layer
+   behind the content blurs the same backdrop with none of that coupling; the
+   shell's translucent tint then reads on top of it, exactly as before. */
 html:root[data-theme="glass"] .app-shell {
-  background-color: rgb(20 20 20 / 0.5);
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
-  backdrop-filter: blur(24px) saturate(140%);
+  background-color: rgb(var(--glass-background-rgb) / var(--glass-tint));
   box-shadow:
     inset 0 0 0 1px rgb(255 255 255 / 0.08),
     0 32px 90px rgb(0 0 0 / 0.5);
+}
+
+html:root[data-theme="glass"] .app-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 /* A fine grain over the glass for depth. */
@@ -153,12 +191,15 @@ html:root[data-theme="glass"] .app-shell::after {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* Surfaces frost at the same blur value — nothing gets its own. */
-html:root[data-theme="glass"] .bg-surface,
+/* The floating surfaces frost at the same blur value. Content-plane surfaces
+   (.bg-surface) are deliberately left out: Chromium drops a nested
+   backdrop-filter when it sits inside the shell's own, which is what made glass
+   read as a broken/frozen edge — and made scaled children (canvas nodes) drop
+   their hit target. The shell's frost already carries the whole interface. */
 html:root[data-theme="glass"] .popover-shell,
 html:root[data-theme="glass"] .overlay-panel {
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
-  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 /* Let the backdrop show around the panel. */
@@ -195,7 +236,9 @@ html:root[data-theme="paper"] { background-color: #dcebf7; }
 html:root[data-theme="paper"] .app-shell {
   border-radius: 20px;
   border: 1px solid #c7ddf0;
-  background-color: #fbfaf7;
+  /* The page itself — follows the content-plane token, so Settings → colours
+     can recolour the surface the chat arrives on. */
+  background-color: var(--color-background);
   box-shadow: 0 18px 50px rgb(70 100 140 / 0.16);
 }
 
