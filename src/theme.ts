@@ -5,12 +5,24 @@
 // hex belongs. Components only ever consume tokens.
 import { browserSetTheme } from './runtime';
 
-export type ThemeKey = 'dark' | 'light' | 'cyber';
+export type ThemeKey = 'dark' | 'light' | 'cyber' | 'navy' | 'glass' | 'paper';
 
 export const THEMES: { key: ThemeKey; background: string; surface: string; border: string }[] = [
   { key: 'dark', background: '#191919', surface: '#202020', border: '#2a2a2a' },
   { key: 'light', background: '#f5f5f5', surface: '#ffffff', border: '#dddddd' },
-  { key: 'cyber', background: '#0c0d10', surface: '#14161c', border: '#23262d' },
+  // Greenish terminal cyberpunk.
+  { key: 'cyber', background: '#060d09', surface: '#0c1712', border: '#1b3125' },
+  // The original cool navy-black, kept under its own name.
+  { key: 'navy', background: '#0c0d10', surface: '#14161c', border: '#23262d' },
+  // One frosted panel over a muted, defocused backdrop.
+  {
+    key: 'glass',
+    background: 'linear-gradient(150deg, #6b6f63, #4a5566 55%, #2b2f36)',
+    surface: 'rgba(20,20,20,0.55)',
+    border: 'rgba(255,255,255,0.18)',
+  },
+  // Warm paper page on a pale blue desk.
+  { key: 'paper', background: '#dcebf7', surface: '#ffffff', border: '#c7ddf0' },
 ];
 
 export const activeTheme = (): ThemeKey =>

@@ -41,7 +41,7 @@ export function ChatComposer({ placeholder, busy, modelId, reasoning, onSend, on
   };
 
   return (
-    <div className="absolute right-0 bottom-0 left-0 bg-gradient-to-t from-background via-background/85 to-transparent p-3 pt-6">
+    <div className="absolute right-0 bottom-0 left-0 z-30 p-3 pt-6">
       <div className="relative mx-auto w-full max-w-[720px]">
         {/* Confirmation sits where the user is looking — above what they're typing. */}
         <div className="absolute right-0 bottom-[calc(100%+8px)] left-0 z-30">

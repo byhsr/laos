@@ -218,7 +218,7 @@ export default function App() {
   };
 
   return (
-    <div className="app-drag relative flex h-screen flex-col overflow-hidden">
+    <div className="app-shell app-drag relative flex h-screen flex-col overflow-hidden">
       <Topbar
         collapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((c) => !c)}

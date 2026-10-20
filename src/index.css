@@ -81,12 +81,175 @@ html:root[data-theme="light"] {
   --color-muted: #6b7280;
 }
 
+/* Greenish terminal cyberpunk — the same two planes, tinted green instead of
+   grey. The accent already reads green, so it stays put. */
 html:root[data-theme="cyber"] {
+  --color-background: #060d09;
+  --color-surface: #0c1712;
+  --color-border: #1b3125;
+  --color-foreground: #e7f4ec;
+  --color-muted: #7ba48c;
+}
+
+/* Navy — the original cool near-black, unchanged. */
+html:root[data-theme="navy"] {
   --color-background: #0c0d10;
   --color-surface: #14161c;
   --color-border: #23262d;
   --color-foreground: #f0efed;
   --color-muted: #8a8a8a;
+}
+
+/* ---------------------------------------------------------------------------
+   Glass — the whole app is ONE frosted panel floating over a defocused
+   backdrop. Chrome is a translucent dark tint; cards and inputs sit a shade
+   darker again. There is a single blur value everywhere, and surfaces carry no
+   gradients or fades of their own.
+--------------------------------------------------------------------------- */
+html:root[data-theme="glass"] {
+  --color-background: rgb(0 0 0 / 0.3);
+  --color-surface: rgb(0 0 0 / 0.25);
+  --color-border: rgb(255 255 255 / 0.1);
+  --color-foreground: #ececed;
+  --color-muted: #9a9aa2;
+  --color-accent: #ffffff;
+  --color-accent-foreground: #111111;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+}
+
+/* The backdrop the panel is lit by — a soft, muted, heavily defocused photo.
+   Low contrast on purpose so the panel above stays legible. */
+html:root[data-theme="glass"] {
+  background-color: #23262b;
+  background-image:
+    radial-gradient(1100px 900px at 12% -10%, #6b6f63 0%, transparent 58%),
+    radial-gradient(1000px 900px at 88% 4%, #4a5566 0%, transparent 60%),
+    radial-gradient(1200px 1000px at 62% 118%, #3a3f46 0%, transparent 62%),
+    radial-gradient(900px 800px at 20% 110%, #5a4f4a 0%, transparent 58%),
+    linear-gradient(160deg, #2b2f36 0%, #1a1d22 100%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+/* The one panel — full-bleed, so the backdrop reads only through the glass. */
+html:root[data-theme="glass"] .app-shell {
+  background-color: rgb(20 20 20 / 0.5);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.08),
+    0 32px 90px rgb(0 0 0 / 0.5);
+}
+
+/* A fine grain over the glass for depth. */
+html:root[data-theme="glass"] .app-shell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Surfaces frost at the same blur value — nothing gets its own. */
+html:root[data-theme="glass"] .bg-surface,
+html:root[data-theme="glass"] .popover-shell,
+html:root[data-theme="glass"] .overlay-panel {
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
+}
+
+/* Let the backdrop show around the panel. */
+html:root[data-theme="glass"] body { background: transparent; }
+
+/* ---------------------------------------------------------------------------
+   Paper — a warm off-white page on a pale blue desk: soft blue outline, white
+   cards, and ruled input lines instead of boxed fields.
+--------------------------------------------------------------------------- */
+html:root[data-theme="paper"] {
+  --color-background: #fbfaf7;
+  --color-surface: #ffffff;
+  --color-border: #e6e1d7;
+  --color-foreground: #2b2b33;
+  --color-muted: #8a8a93;
+  --color-accent: #8fb4dc;
+  --color-accent-foreground: #ffffff;
+  --ink: #2b2b33;
+  --accent-soft: #8fb4dc;
+  /* The pen palette — soft, paper-friendly inks. */
+  --pen-blue: #8fb4dc;
+  --pen-ink: #2b2b33;
+  --pen-coral: #e08a7f;
+  --pen-green: #8fbf9a;
+  --pen-amber: #e0b878;
+  --pen-teal: #7fbdc0;
+  --font-serif: 'Georgia', 'Iowan Old Style', 'Times New Roman', serif;
+}
+
+/* The desk the page rests on. */
+html:root[data-theme="paper"] { background-color: #dcebf7; }
+
+/* The page. */
+html:root[data-theme="paper"] .app-shell {
+  border-radius: 20px;
+  border: 1px solid #c7ddf0;
+  background-color: #fbfaf7;
+  box-shadow: 0 18px 50px rgb(70 100 140 / 0.16);
+}
+
+/* Ink on paper: white cards with the softest lift and a faint tint. */
+html:root[data-theme="paper"] .bg-surface {
+  background-image: linear-gradient(180deg, rgb(43 43 51 / 0.02), transparent 42%);
+  box-shadow: 0 6px 18px rgb(43 43 51 / 0.05);
+}
+
+/* Fields are ruled lines, not boxes. */
+html:root[data-theme="paper"] input,
+html:root[data-theme="paper"] textarea,
+html:root[data-theme="paper"] select {
+  background-color: transparent;
+  border: 0;
+  border-bottom: 1px dashed rgb(43 43 51 / 0.22);
+  border-radius: 0;
+}
+
+/* Headings and prompts pick up the serif accent. */
+html:root[data-theme="paper"] h1,
+html:root[data-theme="paper"] h2,
+html:root[data-theme="paper"] h3,
+html:root[data-theme="paper"] h4 {
+  font-family: var(--font-serif);
+  letter-spacing: 0;
+}
+
+/* Small, rounded pastel controls. */
+html:root[data-theme="paper"] .control,
+html:root[data-theme="paper"] .primary,
+html:root[data-theme="paper"] .secondary,
+html:root[data-theme="paper"] .accent,
+html:root[data-theme="paper"] .danger { border-radius: 999px; }
+
+/* The desk shows around the page. */
+html:root[data-theme="paper"] body { background: transparent; }
+
+/* ---------------------------------------------------------------------------
+   Paper pencil cursor. The system cursor stays the plain default everywhere —
+   the pencil is only ever shown by the scribble canvas itself, and only while
+   drawing. The SVG is inlined into the token because a data-URI image cannot
+   inherit a CSS colour.
+--------------------------------------------------------------------------- */
+html:root[data-theme="paper"] {
+  --cursor-action: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cg fill='none' stroke='%232b2b33' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M4 24l1.2-4.2 12-12 3 3-12 12z'/%3E%3Cpath d='M17.2 7.8l3 3'/%3E%3C/g%3E%3C/svg%3E") 4 24, pointer;
+}
+
+/* The scribble canvas is a transparent overlay — it must never paint a plane of
+   its own, so no background, border or shadow from anywhere can reach it. */
+.scribble-canvas {
+  background: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
 }
 
 @layer base {
