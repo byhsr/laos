@@ -91,7 +91,15 @@ export function TelegramView() {
                   }}>{b.webhookRegistered ? 'webhook off' : 'webhook on'}</Button>
                 )}
                 <Button onClick={() => openEdit({ ...b })}>edit</Button>
-                <IconButton label="delete bot" onClick={async () => { await deleteTelegramBot(b.id); await loadBots(); }}><Trash2 size={12} /></IconButton>
+                <IconButton
+                  label="delete bot"
+                  onClick={async () => {
+                    try { await deleteTelegramBot(b.id); await loadBots(); toast('bot deleted', 'success'); }
+                    catch (e) { toast(e instanceof Error ? e.message : String(e), 'error'); }
+                  }}
+                >
+                  <Trash2 size={12} />
+                </IconButton>
               </div>
             </Card>
           ))}

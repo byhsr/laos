@@ -199,6 +199,44 @@ fn kind_for_command(cmd: &str) -> Option<&'static str> {
   }
 }
 
+// `/items [kind]` numbers a kind-filtered, newest-first, 20-row view. `/done`,
+// `/forget` and Telegram's `/send` must index exactly that list, so each source's
+// last listed kind is remembered here. Without it they numbered a different list
+// (unfiltered, 500 rows) and `n` pointed at an item the user was never shown.
+static LAST_ITEMS_KIND: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = std::sync::OnceLock::new();
+
+fn items_kinds() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+  LAST_ITEMS_KIND.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn remember_items_kind(source: &str, kind: Option<&str>) {
+  if let Ok(mut m) = items_kinds().lock() {
+    match kind {
+      Some(k) => { m.insert(source.to_string(), k.to_string()); }
+      None => { m.remove(source); }
+    }
+  }
+}
+
+/// The kind `/items` was last asked for by this source, if any.
+fn remembered_items_kind(source: &str) -> Option<String> {
+  items_kinds().lock().ok().and_then(|m| m.get(source).cloned())
+}
+
+/// The items exactly as `/items [kind]` last listed them for this source.
+fn listed_items(conn: &Connection, source: &str) -> Vec<Item> {
+  let kind = remembered_items_kind(source);
+  list(conn, kind.as_deref()).into_iter().take(20).collect()
+}
+
+/// The id at 1-based position `n` of the list `/items` displayed for this source.
+/// Shared by `/done`, `/forget` and Telegram's `/send`, so one number means one
+/// item everywhere.
+pub(crate) fn listed_item_id(conn: &Connection, source: &str, n: usize) -> Option<String> {
+  let items = listed_items(conn, source);
+  n.checked_sub(1).and_then(|i| items.get(i)).map(|it| it.id.clone())
+}
+
 fn summary(conn: &Connection, kind: Option<&str>) -> String {
   let items = list(conn, kind);
   if items.is_empty() { return "Nothing saved yet.".into(); }
@@ -271,24 +309,23 @@ pub(crate) fn command(app: &AppHandle, text: &str, source: &str) -> Option<Resul
   match head.to_ascii_lowercase().as_str() {
     "/items" | "/saved" => {
       let kind = if rest.is_empty() { None } else { Some(rest) };
+      // Remember the filter so /done, /forget and /send keep numbering it.
+      remember_items_kind(source, kind);
       Some(Ok(summary(&conn, kind)))
     }
     "/due" => Some(Ok(crate::reminders::due_summary(&conn))),
     "/done" => {
-      let items = list(&conn, None);
       let n: usize = rest.parse().unwrap_or(0);
-      match n.checked_sub(1).and_then(|i| items.get(i)) {
-        Some(item) => { let id = item.id.clone(); Some(complete(&conn, &id)) }
+      match listed_item_id(&conn, source, n) {
+        Some(id) => Some(complete(&conn, &id)),
         None => Some(Err("Usage: /done <number> from /items.".into())),
       }
     }
     "/forget" => {
       let n: usize = rest.parse().unwrap_or(0);
-      let items = list(&conn, None);
-      let Some(item) = n.checked_sub(1).and_then(|i| items.get(i)) else {
+      let Some(id) = listed_item_id(&conn, source, n) else {
         return Some(Err("Usage: /forget <number> from /items.".into()));
       };
-      let id = item.id.clone();
       Some(conn.execute("DELETE FROM items WHERE id=?1", params![id]).map(|_| "Removed.".to_string()).map_err(|e| e.to_string()))
     }
     "/insights" => Some(Ok(crate::insights::summary(&conn))),
@@ -522,4 +559,72 @@ pub fn item_delete(app: AppHandle, id: String) -> Result<(), String> {
 pub fn item_toggle(app: AppHandle, id: String) -> Result<String, String> {
   let conn = db(&app)?;
   complete(&conn, &id)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// `/items [kind]` numbers a filtered view; `/done`, `/forget` and Telegram's
+  /// `/send` must index that same list. Remembering the filter is what makes the
+  /// number mean one item — before, they numbered a different, unfiltered list.
+  #[test]
+  fn items_kind_is_remembered_per_source() {
+    remember_items_kind("test-chat-a", Some("note"));
+    assert_eq!(remembered_items_kind("test-chat-a").as_deref(), Some("note"));
+
+    // A plain `/items` clears the filter.
+    remember_items_kind("test-chat-a", None);
+    assert_eq!(remembered_items_kind("test-chat-a"), None);
+
+    // One source's filter never leaks into another's numbering.
+    remember_items_kind("test-chat-b", Some("todo"));
+    assert_eq!(remembered_items_kind("test-chat-a"), None);
+    assert_eq!(remembered_items_kind("test-chat-b").as_deref(), Some("todo"));
+    remember_items_kind("test-chat-b", None);
+  }
+
+  fn items_db() -> Connection {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+      "CREATE TABLE items (id TEXT PRIMARY KEY, kind TEXT, title TEXT, body TEXT, url TEXT, tags TEXT, \
+       collection TEXT, status TEXT, due_at TEXT, cadence TEXT, streak INTEGER, last_done_at TEXT, \
+       project_id TEXT, fired_at TEXT, source TEXT, created_at TEXT, updated_at TEXT);",
+    ).unwrap();
+    conn
+  }
+
+  fn add_item(conn: &Connection, id: &str, kind: &str, created_at: &str) {
+    conn.execute(
+      "INSERT INTO items (id, kind, title, body, url, tags, collection, status, cadence, streak, project_id, source, created_at, updated_at) \
+       VALUES (?1,?2,'','','','[]','','active','',0,'','',?3,?3)",
+      params![id, kind, created_at],
+    ).unwrap();
+  }
+
+  /// The bug: `/send 1`, `/done 1` and `/forget 1` indexed an unfiltered list
+  /// while `/items note` had numbered a filtered one, so `1` meant two different
+  /// items. They now share one numbering.
+  #[test]
+  fn listed_item_id_follows_the_items_filter() {
+    let conn = items_db();
+    add_item(&conn, "n1", "note", "2026-01-01T00:00:00Z");
+    add_item(&conn, "n2", "note", "2026-01-02T00:00:00Z");
+    add_item(&conn, "t1", "todo", "2026-01-03T00:00:00Z");
+
+    // Unfiltered, newest first: t1, n2, n1.
+    remember_items_kind("test-list-a", None);
+    assert_eq!(listed_item_id(&conn, "test-list-a", 1).as_deref(), Some("t1"));
+    assert_eq!(listed_item_id(&conn, "test-list-a", 3).as_deref(), Some("n1"));
+    assert_eq!(listed_item_id(&conn, "test-list-a", 4), None, "past the end");
+    assert_eq!(listed_item_id(&conn, "test-list-a", 0), None, "numbering is 1-based");
+
+    // After `/items note`, 1 is the newest *note*, not the newest item.
+    remember_items_kind("test-list-a", Some("note"));
+    assert_eq!(listed_item_id(&conn, "test-list-a", 1).as_deref(), Some("n2"));
+    assert_eq!(listed_item_id(&conn, "test-list-a", 2).as_deref(), Some("n1"));
+    assert_eq!(listed_item_id(&conn, "test-list-a", 3), None);
+
+    remember_items_kind("test-list-a", None);
+  }
 }

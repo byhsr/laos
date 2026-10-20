@@ -71,7 +71,7 @@ fn mask_config(cfg: &serde_json::Value) -> serde_json::Value {
     for (k, v) in obj {
       // Never expose secrets to the frontend; show a "set" marker instead.
       if k.to_lowercase().contains("token") || k.to_lowercase().contains("key") || k.to_lowercase().contains("secret") {
-        if v.as_str().map(|s| !s.is_empty()).unwrap_or(false) { out.insert(k.clone(), serde_json::json!("â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢")); }
+        if v.as_str().map(|s| !s.is_empty()).unwrap_or(false) { out.insert(k.clone(), serde_json::json!(crate::vault::MASK)); }
         else { out.insert(k.clone(), serde_json::Value::Null); }
       } else {
         out.insert(k.clone(), v.clone());
@@ -136,7 +136,7 @@ fn merge_config(existing: &serde_json::Value, incoming: &serde_json::Value) -> R
         continue;
       }
       // Keep the stored secret if the frontend sent the masked placeholder or null.
-      let masked = v.as_str().map(|s| s == "â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" || s.is_empty()).unwrap_or(v.is_null());
+      let masked = v.as_str().map(|s| s == crate::vault::MASK || s.is_empty()).unwrap_or(v.is_null());
       if masked { continue; }
       obj.insert(k.clone(), v.clone());
     }
@@ -298,4 +298,24 @@ async fn complete_oauth_inner(app: &AppHandle, id: &str, code: &str) -> Result<(
 #[tauri::command]
 pub async fn complete_oauth(app: AppHandle, id: String, code: String) -> Result<(), String> {
   complete_oauth_inner(&app, &id, &code).await
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// The marker had been re-encoded twice, so a configured token rendered as
+  /// mojibake and never matched the frontend's `MASK` — meaning the UI treated a
+  /// set secret as an unknown value.
+  #[test]
+  fn secrets_are_masked_with_the_shared_marker() {
+    let cfg = serde_json::json!({ "botToken": "123:abc", "publicUrl": "https://example.test" });
+    let masked = mask_config(&cfg);
+    assert_eq!(masked["botToken"], serde_json::json!(crate::vault::MASK));
+    // Non-secret fields still pass through untouched.
+    assert_eq!(masked["publicUrl"], serde_json::json!("https://example.test"));
+    // An unset secret stays null rather than becoming a "set" marker.
+    let empty = mask_config(&serde_json::json!({ "botToken": "" }));
+    assert_eq!(empty["botToken"], serde_json::Value::Null);
+  }
 }

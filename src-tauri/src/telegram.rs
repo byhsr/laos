@@ -145,6 +145,21 @@ fn is_authorized(bot: &TelegramBot, user_id: Option<i64>) -> bool {
   matches!(user_id, Some(id) if list.iter().any(|x| x == &id.to_string()))
 }
 
+// Claims an unclaimed bot for `user_id`, returning how many rows changed (0 when
+// it was already claimed).
+//
+// The `AND allowed_users='[]'` guard is the whole point: it makes the bind a
+// compare-and-set. Without it, a burst of messages from different users — each
+// authorized against the same stale, empty snapshot that `poll_bot` loads once
+// per batch — let the last sender overwrite the first and steal the bot.
+fn bind_owner_if_unclaimed(conn: &Connection, bot_id: &str, user_id: i64) -> usize {
+  let arr = serde_json::json!([user_id.to_string()]).to_string();
+  conn.execute(
+    "UPDATE telegram_bots SET allowed_users=?1, updated_at=?2 WHERE id=?3 AND (allowed_users IS NULL OR allowed_users='' OR allowed_users='[]')",
+    params![arr, now(), bot_id],
+  ).unwrap_or(0)
+}
+
 // Basic auth with trust-on-first-use: when a bot has no allowlist, the first
 // sender is bound as its owner (persisted), and every later message is locked to
 // that id. Once bound it behaves exactly like an explicit allowlist.
@@ -154,11 +169,20 @@ fn authorize_and_bind(app: &AppHandle, bot: &TelegramBot, user_id: Option<i64>) 
     return matches!(user_id, Some(id) if list.iter().any(|x| x == &id.to_string()));
   }
   let Some(id) = user_id else { return false };
-  if let Ok(conn) = db(app) {
-    let arr = serde_json::json!([id.to_string()]).to_string();
-    let _ = conn.execute("UPDATE telegram_bots SET allowed_users=?1, updated_at=?2 WHERE id=?3", params![arr, now(), bot.id]);
+  // Fail closed: this is the authorization boundary, so a database we can't read
+  // must not read as "everyone is allowed".
+  let Ok(conn) = db(app) else { return false };
+  if bind_owner_if_unclaimed(&conn, &bot.id, id) > 0 { return true; }
+  match load_bot(&conn, &bot.id) {
+    // Someone else bound first: judge this sender against the list now stored.
+    Some(fresh) => {
+      let list: Vec<String> = serde_json::from_str(&fresh.allowed_users).unwrap_or_default();
+      matches!(user_id, Some(id) if list.iter().any(|x| x == &id.to_string()))
+    }
+    // Not a stored bot at all (the legacy single-token webhook fallback): keep
+    // trust-on-first-use, since there is no row to bind to.
+    None => true,
   }
-  true
 }
 
 // One-time migration: fold the legacy single telegram token (integration_configs
@@ -247,6 +271,25 @@ static ACTIVE_CHAT: std::sync::OnceLock<std::sync::Mutex<Option<(String, i64)>>>
 fn active_chat_store() -> &'static std::sync::Mutex<Option<(String, i64)>> { ACTIVE_CHAT.get_or_init(|| std::sync::Mutex::new(None)) }
 pub(crate) fn set_active_chat(v: Option<(String, i64)>) { if let Ok(mut s) = active_chat_store().lock() { *s = v; } }
 pub(crate) fn active_chat() -> Option<(String, i64)> { active_chat_store().lock().ok().and_then(|s| s.clone()) }
+
+// Marks the chat an in-flight turn came from, and clears it when that turn ends.
+//
+// The store is a single process-wide slot, so it may only be written while the
+// turn lock is held: setting it as a task starts (rather than inside the lock)
+// let a second incoming message overwrite it mid-turn, and the first turn's
+// ask_user then prompted — and consumed the answer from — the wrong chat.
+struct ActiveChat;
+impl ActiveChat {
+  fn set(bot_id: &str, chat_id: i64) -> Self {
+    set_active_chat(Some((bot_id.to_string(), chat_id)));
+    ActiveChat
+  }
+}
+impl Drop for ActiveChat {
+  // Also runs if the turn panics, so the slot can never be left pointing at a
+  // finished chat.
+  fn drop(&mut self) { set_active_chat(None); }
+}
 
 async fn telegram_send_markup(token: &str, chat_id: i64, text: &str, reply_markup: serde_json::Value) -> Result<(), String> {
   let url = format!("https://api.telegram.org/bot{token}/sendMessage");
@@ -455,9 +498,17 @@ pub(crate) async fn notify(token: &str, chat_id: &str, text: &str) -> Result<(),
 }
 
 // The bot's token + the chat to message unprompted (its owner), by bot name.
+//
+// The token column holds the vault sentinel once the secret has been sealed, so
+// it has to be resolved here. Reading the column raw handed back "__vault__" and
+// every proactive reminder went to `bot__vault__` instead of the real bot.
 pub(crate) fn owner_target(conn: &Connection, bot_name: &str) -> Option<(String, String)> {
-  conn.query_row("SELECT token, owner_chat_id FROM telegram_bots WHERE name=?1", params![bot_name],
-    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).ok()
+  conn.query_row("SELECT id, token, owner_chat_id FROM telegram_bots WHERE name=?1", params![bot_name],
+    |r| {
+      let id: String = r.get(0)?;
+      let raw: String = r.get(1)?;
+      Ok((resolve_bot_secret(&id, "token", &raw), r.get::<_, String>(2)?))
+    }).ok()
     .filter(|(t, c)| !t.is_empty() && !c.is_empty())
 }
 
@@ -497,11 +548,11 @@ async fn send_to_destination(app: &AppHandle, bot: &TelegramBot, rest: &str) -> 
     };
     let dest_name = crate::destinations::get(&conn, &dest_id).map(|d| d.name).unwrap_or_else(|| dest_id.clone());
     let n: usize = rest.parse().unwrap_or(0);
-    let items = crate::capture::list(&conn, None);
-    let Some(item) = n.checked_sub(1).and_then(|i| items.get(i)) else {
+    // Same list /items numbered for this bot — a kind filter, newest first, 20 rows.
+    let Some(item_id) = crate::capture::listed_item_id(&conn, &bot.name, n) else {
       return "Usage: /send <number> from /items.".into();
     };
-    (item.id.clone(), dest_name, dest_id)
+    (item_id, dest_name, dest_id)
   };
   match crate::destinations::push(app.clone(), item_id, dest_id).await {
     Ok(_) => format!("Sent to {dest_name}."),
@@ -536,29 +587,70 @@ fn tunnel_url_store() -> &'static std::sync::Mutex<Option<String>> {
 fn set_tunnel_url(u: Option<String>) { *tunnel_url_store().lock().unwrap() = u; }
 fn get_tunnel_url() -> Option<String> { tunnel_url_store().lock().unwrap().clone() }
 
+// The running cloudflared handle. Kept so "stop tunnel" can actually kill it —
+// the process used to be `mem::forget`ed, which orphaned it for good: stopping
+// the tunnel left cloudflared (and its trycloudflare URL) alive, and the next
+// registration then deleted a webhook pointing at a still-live orphan.
+static TUNNEL_CHILD: std::sync::OnceLock<std::sync::Mutex<Option<tokio::process::Child>>> = std::sync::OnceLock::new();
+fn tunnel_child() -> &'static std::sync::Mutex<Option<tokio::process::Child>> {
+  TUNNEL_CHILD.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Kills the tunnel process if one is running. Safe to call when there is none.
+pub(crate) fn kill_tunnel_child() {
+  if let Ok(mut slot) = tunnel_child().lock() {
+    if let Some(mut child) = slot.take() {
+      let _ = child.start_kill();
+    }
+  }
+}
+
 // Telegram turns run one at a time. The webhook server spawns a task per delivery
 // and the polling loop runs its own, so a few quick messages would otherwise fire
 // concurrent provider calls and trip the provider's rate limit — a burst is fine,
 // a stampede is not.
 static TELEGRAM_TURN_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
 
-async fn telegram_manager_turn(app: &AppHandle, text: &str) -> String {
+async fn telegram_manager_turn(app: &AppHandle, bot_id: &str, chat_id: i64, text: &str) -> String {
   let lock = TELEGRAM_TURN_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
   let _guard = lock.lock().await;
+  // Published only once the lock is held, so it can't be clobbered mid-turn.
+  let _active = ActiveChat::set(bot_id, chat_id);
   manager_turn(app, text).await.unwrap_or_else(|e| format!("Manager error: {e}"))
 }
 
 // Telegram re-delivers a webhook update when our response is slow. Remember what
 // we have already handled so a retry doesn't run the Manager a second time.
-static SEEN_UPDATES: std::sync::OnceLock<std::sync::Mutex<std::collections::VecDeque<i64>>> = std::sync::OnceLock::new();
+//
+// `update_id` is only unique *per bot* — the sequences of two bots overlap — so
+// the key is (bot id, update id). Keyed on the id alone, one bot's message whose
+// id matched a recently handled id on another bot was silently dropped. A bounded
+// FIFO, so a busy bot can't grow this without limit.
+struct UpdateDedup {
+  seen: std::collections::VecDeque<(String, i64)>,
+  cap: usize,
+}
 
-fn first_time_update(id: i64) -> bool {
-  let store = SEEN_UPDATES.get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()));
-  let Ok(mut q) = store.lock() else { return true };
-  if q.contains(&id) { return false; }
-  q.push_back(id);
-  while q.len() > 256 { q.pop_front(); }
-  true
+impl UpdateDedup {
+  fn new(cap: usize) -> Self { Self { seen: std::collections::VecDeque::new(), cap } }
+
+  /// True the first time this (bot, update) pair is seen, false on a redelivery.
+  fn first_time(&mut self, bot_id: &str, update_id: i64) -> bool {
+    if self.seen.iter().any(|(b, u)| b == bot_id && *u == update_id) { return false; }
+    self.seen.push_back((bot_id.to_string(), update_id));
+    while self.seen.len() > self.cap { self.seen.pop_front(); }
+    true
+  }
+}
+
+static SEEN_UPDATES: std::sync::OnceLock<std::sync::Mutex<UpdateDedup>> = std::sync::OnceLock::new();
+
+fn first_time_update(bot_id: &str, id: i64) -> bool {
+  let store = SEEN_UPDATES.get_or_init(|| std::sync::Mutex::new(UpdateDedup::new(256)));
+  match store.lock() {
+    Ok(mut q) => q.first_time(bot_id, id),
+    Err(_) => true,
+  }
 }
 
 // Reads the persisted tunnel URL from the telegram integration config (survives
@@ -595,6 +687,7 @@ pub async fn telegram_start_tunnel(app: AppHandle, local_port: Option<u16>, on_p
     .arg("--no-autoupdate")
     .stdout(std::process::Stdio::piped())
     .stderr(std::process::Stdio::piped())
+    .kill_on_drop(true)
     .spawn()
     .map_err(|e| format!("Failed to start cloudflared: {e}"))?;
 
@@ -652,9 +745,9 @@ pub async fn telegram_start_tunnel(app: AppHandle, local_port: Option<u16>, on_p
 
   let url = url.ok_or("Timed out waiting for cloudflared tunnel URL. Check that cloudflared can reach Cloudflare's edge (firewall/proxy?), or run cloudflared manually to see the error.")?;
   set_tunnel_url(Some(url.clone()));
-  // Keep the child alive for the app lifetime (detached handle).
-  let _ = child.id();
-  std::mem::forget(child);
+  // Keep the child alive and reachable, so "stop tunnel" can kill it.
+  kill_tunnel_child();
+  if let Ok(mut slot) = tunnel_child().lock() { *slot = Some(child); }
 
   // Persist the local port + tunnel URL, MERGING with any existing config
   // (never clobber the stored bot token).
@@ -823,26 +916,39 @@ pub async fn telegram_set_bot_webhook(app: AppHandle, bot_id: String, public_url
   Ok(format!("Webhook registered at {webhook_url}"))
 }
 
+// Deletes a webhook and fails unless Telegram confirms it. A failed delete that
+// we treat as success is the worst case: the flag says "no webhook", so polling
+// resumes, Telegram answers 409 to every getUpdates, and the bot goes deaf —
+// while the UI cheerfully shows "long-poll".
+async fn delete_webhook(token: &str) -> Result<(), String> {
+  if token.trim().is_empty() { return Ok(()); }
+  let resp = http::client()
+    .get(format!("https://api.telegram.org/bot{token}/deleteWebhook"))
+    .send().await.map_err(|e| format!("Could not reach Telegram: {e}"))?;
+  let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+  if json.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) { return Ok(()); }
+  Err(json.get("description").and_then(|d| d.as_str()).unwrap_or("deleteWebhook failed").to_string())
+}
+
 // Clears a bot's webhook so its long-poll loop resumes.
 #[tauri::command]
 pub async fn telegram_clear_bot_webhook(app: AppHandle, bot_id: String) -> Result<(), String> {
   let token = { let conn = db(&app)?; load_bot(&conn, &bot_id).map(|b| b.token).unwrap_or_default() };
-  if !token.trim().is_empty() {
-    let _ = http::client().get(format!("https://api.telegram.org/bot{token}/deleteWebhook")).send().await;
-  }
+  delete_webhook(&token).await?;
   let conn = db(&app)?;
   conn.execute("UPDATE telegram_bots SET webhook_registered=0, updated_at=?1 WHERE id=?2", params![now(), bot_id]).map_err(|e| e.to_string())?;
   Ok(())
 }
 
-// Unregisters the webhook and clears the tunnel state.
+// Unregisters the webhook, kills the tunnel process and clears the state.
 #[tauri::command]
 pub async fn telegram_stop_tunnel(app: AppHandle) -> Result<(), String> {
   let conn = db(&app)?;
   let token = telegram_token(&conn).ok().flatten();
-  if let Some(t) = token {
-    let _ = http::client().get(format!("https://api.telegram.org/bot{t}/deleteWebhook")).send().await;
-  }
+  // Unregister before tearing anything down: if Telegram won't confirm, leave
+  // the tunnel and flags as they are rather than stranding a live webhook.
+  if let Some(t) = token { delete_webhook(&t).await?; }
+  kill_tunnel_child();
   set_tunnel_url(None);
   // Clear the webhook flags too, otherwise the polling loop would keep pausing
   // for a webhook that no longer exists.
@@ -1041,11 +1147,20 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
           Some(id) => conn.as_ref().and_then(|c| load_bot(c, id)).map(|b| (b.webhook_secret.clone(), b.token.clone(), b)),
           None => {
             let secret = conn.as_ref().and_then(|c| webhook_secret(c)).unwrap_or_default();
-            let token = conn.as_ref().and_then(|c| telegram_token(c).ok().flatten());
-            token.map(|t| (secret, t.clone(), TelegramBot {
-              id: "bot-default".into(), name: "Telegram".into(), token: t, agent_id: "manager".into(), terminal_id: String::new(), allowed_users: "[]".into(),
-              enabled: true, webhook_secret: String::new(), webhook_registered: true, capture: false, destination_id: String::new(), poll_offset: 0,
-            }))
+            // Prefer the stored default bot when there is one, so its allowlist —
+            // and its owner binding — are what gate this URL. A synthesized bot
+            // carries `allowed_users: "[]"`, which reads as "open to everyone", so
+            // any user in the chat could press its inline-keyboard buttons.
+            if let Some(b) = conn.as_ref().and_then(|c| load_bot(c, "bot-default")) {
+              let secret = if secret.is_empty() { b.webhook_secret.clone() } else { secret };
+              Some((secret, b.token.clone(), b))
+            } else {
+              let token = conn.as_ref().and_then(|c| telegram_token(c).ok().flatten());
+              token.map(|t| (secret, t.clone(), TelegramBot {
+                id: "bot-default".into(), name: "Telegram".into(), token: t, agent_id: "manager".into(), terminal_id: String::new(), allowed_users: "[]".into(),
+                enabled: true, webhook_secret: String::new(), webhook_registered: true, capture: false, destination_id: String::new(), poll_offset: 0,
+              }))
+            }
           }
         }
       };
@@ -1114,11 +1229,11 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
           // Acknowledge before doing the model work, so Telegram doesn't time out
           // and re-deliver the update (which multiplies provider calls).
           let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
-          if first_time_update(update_id) {
+          if first_time_update(&bot.id, update_id) {
             tokio::spawn(async move {
-              set_active_chat(Some((bot.id.clone(), chat_id)));
+              // The active chat is published by the turn itself, under the turn
+              // lock (see telegram_manager_turn / run_agent_reply).
               let reply = route_bot_message(&app, &bot, chat_id, &text).await;
-              set_active_chat(None);
               // CLI/terminal turns relay separately and return nothing.
               if reply.trim().is_empty() { return; }
               let send_result = telegram_send_message(&token, chat_id, &reply).await;
@@ -1344,10 +1459,9 @@ async fn poll_bot(app: AppHandle, bot: TelegramBot) {
       let task_app = app.clone();
       let task_bot = current.clone();
       tokio::spawn(async move {
-        // Let an agent tool (ask_user) prompt this chat for the duration of the turn.
-        set_active_chat(Some((task_bot.id.clone(), chat_id)));
+        // The active chat is published by the turn itself, under the turn lock
+        // (see telegram_manager_turn / run_agent_reply).
         let reply = route_bot_message(&task_app, &task_bot, chat_id, &text).await;
-        set_active_chat(None);
         // A CLI/terminal turn relays its output separately and returns nothing —
         // don't send (or log) an empty message.
         if reply.trim().is_empty() { return; }
@@ -1468,7 +1582,7 @@ async fn route_bot_message(app: &AppHandle, bot: &TelegramBot, chat_id: i64, tex
         return String::new(); // no immediate reply — output is relayed
       }
       if bot.agent_id.is_empty() || bot.agent_id == "manager" {
-        telegram_manager_turn(app, text).await
+        telegram_manager_turn(app, &bot.id, chat_id, text).await
       } else {
         run_agent_reply(app, &bot.id, &bot.agent_id, chat_id, text).await
       }
@@ -1512,6 +1626,8 @@ async fn run_agent_reply(app: &AppHandle, bot_id: &str, agent_id: &str, chat_id:
 
   let lock = TELEGRAM_TURN_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
   let _guard = lock.lock().await;
+  // Published only once the lock is held, so it can't be clobbered mid-turn.
+  let _active = ActiveChat::set(bot_id, chat_id);
   let mut events = Vec::new();
   match crate::agents::run_agent_once_structured(app, &agent, &convo, None, &mut events, false).await {
     Ok((out, _, _)) => {
@@ -1548,5 +1664,115 @@ pub(crate) async fn telegram_loop(app: AppHandle) {
       });
     }
     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+  }
+}
+
+// Regression tests for the pipeline bugs that were fixed here. Each one fails
+// against the previous behaviour, so the bug can't quietly come back.
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // A telegram_bots table with just the columns these tests touch.
+  fn bots_db() -> Connection {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+      "CREATE TABLE telegram_bots (id TEXT PRIMARY KEY, name TEXT, token TEXT, owner_chat_id TEXT, allowed_users TEXT, updated_at TEXT);",
+    ).unwrap();
+    conn
+  }
+
+  /// update_id sequences are per bot, so a dedup keyed on the id alone dropped a
+  /// second bot's message whenever its id matched one already handled.
+  #[test]
+  fn update_dedup_is_scoped_per_bot() {
+    let mut d = UpdateDedup::new(256);
+    assert!(d.first_time("bot-a", 5), "first delivery of bot-a#5 must be handled");
+    assert!(!d.first_time("bot-a", 5), "a redelivery of bot-a#5 must be dropped");
+    assert!(d.first_time("bot-b", 5), "bot-b#5 is a different update and must be handled");
+    assert!(d.first_time("bot-a", 6));
+  }
+
+  #[test]
+  fn update_dedup_forgets_the_oldest_first() {
+    let mut d = UpdateDedup::new(3);
+    for id in 1..=3 { assert!(d.first_time("b", id)); }
+    assert!(!d.first_time("b", 3));
+    assert!(d.first_time("b", 4)); // evicts id 1
+    assert!(d.first_time("b", 1), "an evicted id is no longer remembered");
+  }
+
+  /// The bind must be a compare-and-set: the second sender in a burst cannot
+  /// overwrite the owner the first one claimed.
+  #[test]
+  fn trust_on_first_use_bind_cannot_be_stolen() {
+    let conn = bots_db();
+    conn.execute("INSERT INTO telegram_bots (id, allowed_users) VALUES ('b1', '[]')", []).unwrap();
+
+    assert_eq!(bind_owner_if_unclaimed(&conn, "b1", 111), 1, "the first sender claims the bot");
+    assert_eq!(bind_owner_if_unclaimed(&conn, "b1", 222), 0, "a later sender cannot steal it");
+
+    let stored: String = conn.query_row("SELECT allowed_users FROM telegram_bots WHERE id='b1'", [], |r| r.get(0)).unwrap();
+    assert_eq!(stored, "[\"111\"]");
+  }
+
+  #[test]
+  fn trust_on_first_use_bind_accepts_null_and_empty_lists() {
+    for initial in ["NULL", "''"] {
+      let conn = bots_db();
+      conn.execute(&format!("INSERT INTO telegram_bots (id, allowed_users) VALUES ('b1', {initial})"), []).unwrap();
+      assert_eq!(bind_owner_if_unclaimed(&conn, "b1", 7), 1, "an unset allowlist is still claimable");
+    }
+  }
+
+  /// The token column holds the vault sentinel once the secret is sealed.
+  /// `owner_target` used to return it raw, so every reminder was sent to
+  /// `bot__vault__` instead of the real bot.
+  #[test]
+  fn owner_target_never_returns_the_vault_sentinel() {
+    let conn = bots_db();
+    conn.execute("INSERT INTO telegram_bots (id, name, token, owner_chat_id) VALUES ('b1','Mybot',?1,'42')", params![crate::vault::REF]).unwrap();
+
+    let target = owner_target(&conn, "Mybot");
+    // Either the real secret resolved, or nothing did and the row is filtered out
+    // for having an empty token — but never the sentinel itself.
+    assert_ne!(target.map(|(t, _)| t), Some(crate::vault::REF.to_string()));
+  }
+
+  /// A plaintext (pre-vault) token passes through unchanged, so a legacy install
+  /// keeps receiving its reminders.
+  #[test]
+  fn owner_target_resolves_a_plaintext_token() {
+    let conn = bots_db();
+    conn.execute("INSERT INTO telegram_bots (id, name, token, owner_chat_id) VALUES ('b1','Mybot','123:abc','42')", []).unwrap();
+    assert_eq!(owner_target(&conn, "Mybot"), Some(("123:abc".to_string(), "42".to_string())));
+  }
+
+  #[test]
+  fn owner_target_needs_both_a_token_and_a_chat() {
+    let conn = bots_db();
+    conn.execute("INSERT INTO telegram_bots (id, name, token, owner_chat_id) VALUES ('b1','Mybot','123:abc','')", []).unwrap();
+    conn.execute("INSERT INTO telegram_bots (id, name, token, owner_chat_id) VALUES ('b2','Other','','42')", []).unwrap();
+    assert_eq!(owner_target(&conn, "Mybot"), None, "no owner chat yet");
+    assert_eq!(owner_target(&conn, "Other"), None, "no token");
+  }
+
+  fn bot_with_allowlist(allowed: &str) -> TelegramBot {
+    TelegramBot {
+      id: "b1".into(), name: "n".into(), token: "t".into(), agent_id: "manager".into(),
+      terminal_id: String::new(), allowed_users: allowed.into(), enabled: true,
+      webhook_secret: String::new(), webhook_registered: false, capture: false,
+      destination_id: String::new(), poll_offset: 0,
+    }
+  }
+
+  #[test]
+  fn allowlist_locks_the_bot_once_set() {
+    // An empty list is the open (trust-on-first-use) state.
+    assert!(is_authorized(&bot_with_allowlist("[]"), Some(7)));
+    // A set list admits only its ids — and nobody without one.
+    assert!(is_authorized(&bot_with_allowlist("[\"7\"]"), Some(7)));
+    assert!(!is_authorized(&bot_with_allowlist("[\"7\"]"), Some(8)));
+    assert!(!is_authorized(&bot_with_allowlist("[\"7\"]"), None));
   }
 }
