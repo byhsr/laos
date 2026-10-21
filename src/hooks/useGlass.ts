@@ -8,18 +8,13 @@ const KEY = 'laos.glass';
 
 export type GlassPrefs = {
   image: string;    // a backdrop image URL/data URL; '' = the built-in backdrop
-  blur: number;     // px — how heavy the frost reads
+  blur: number;     // 0..100 — how heavy the frost reads; maps to px at apply()
   saturate: number; // % — how much colour the frost keeps
   tint: number;     // 0..1 — how dark the panel's own tint is
 };
 
-export const GLASS_BLUR_STOPS = [
-  { value: '0', label: 'clear' },
-  { value: '16', label: 'soft' },
-  { value: '32', label: 'frosted' },
-  { value: '48', label: 'heavy' },
-  { value: '64', label: 'deep' },
-];
+// Frost is a plain 0–100%; at full it blurs this many px.
+export const GLASS_BLUR_MAX = 64;
 
 export const GLASS_TINT_STOPS = [
   { value: '0.2', label: 'sheer' },
@@ -29,7 +24,7 @@ export const GLASS_TINT_STOPS = [
   { value: '0.8', label: 'solid' },
 ];
 
-export const DEFAULT_GLASS: GlassPrefs = { image: '', blur: 32, saturate: 150, tint: 0.5 };
+export const DEFAULT_GLASS: GlassPrefs = { image: '', blur: 50, saturate: 150, tint: 0.5 };
 
 const read = (): GlassPrefs => {
   try {
@@ -57,7 +52,7 @@ const apply = (p: GlassPrefs) => {
   // A soft dark veil sits over a user image so chrome stays legible on a busy
   // photo; the built-in gradient backdrop needs none.
   el.style.setProperty('--glass-veil', image ? 'linear-gradient(rgb(10 12 16 / 0.34), rgb(10 12 16 / 0.46))' : 'none');
-  el.style.setProperty('--glass-blur', `${Math.max(0, p.blur)}px`);
+  el.style.setProperty('--glass-blur', `${(Math.min(100, Math.max(0, p.blur)) / 100) * GLASS_BLUR_MAX}px`);
   el.style.setProperty('--glass-saturate', `${Math.max(0, p.saturate)}%`);
   el.style.setProperty('--glass-tint', String(Math.min(1, Math.max(0, p.tint))));
 };

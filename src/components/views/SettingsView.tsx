@@ -15,7 +15,7 @@ import { NAV_SECTIONS, navLabel, useNavLabels } from '../../hooks/useNavLabels';
 import { useSidebarTabs } from '../../hooks/useSidebarTabs';
 import { RAIL_KEYS } from '../Rail';
 import { THEMES, activeTheme, applyTheme, type ThemeKey } from '../../theme';
-import { useGlass, GLASS_BLUR_STOPS, GLASS_TINT_STOPS, readBackgroundImage } from '../../hooks/useGlass';
+import { useGlass, GLASS_TINT_STOPS, readBackgroundImage } from '../../hooks/useGlass';
 import { useThemeColors, COLOR_TOKENS, type ColorToken } from '../../hooks/useThemeColors';
 import { Slider } from '../ui/Slider';
 import { ColorField } from '../ui/ColorField';
@@ -198,40 +198,42 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
             </Section>
           </Card>
 
-          <Card className="hover:bg-surface">
-            <h3 className="m-0 font-mono text-xs lowercase text-foreground">glass</h3>
-            <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">
-              How the glass theme looks — a backdrop image behind the frost, and how heavy the frost reads. Other themes ignore this.
-            </p>
-            <div className="grid gap-3">
-              <div>
-                <span className={FIELD_LABEL_CLS}>backdrop image</span>
-                <div className="flex items-center gap-2">
-                  <span
-                    aria-hidden
-                    className="h-10 w-16 shrink-0 rounded border border-border bg-background bg-cover bg-center"
-                    style={glassImage ? { backgroundImage: `url("${glassImage}")` } : undefined}
-                  />
-                  <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted">
-                    {glassImage ? (glassImage.startsWith('data:') ? 'uploaded image' : glassImage) : 'the built-in backdrop'}
-                  </span>
-                  <input ref={glassFileRef} type="file" accept="image/*" className="hidden" onChange={pickGlassImage} />
-                  <Button onClick={() => glassFileRef.current?.click()}>choose</Button>
-                  {glassImage && <Button onClick={() => setGlassImage('')}>clear</Button>}
+          {theme === 'glass' && (
+            <Card className="hover:bg-surface">
+              <h3 className="m-0 font-mono text-xs lowercase text-foreground">glass</h3>
+              <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">
+                How the glass theme looks — a backdrop image behind the frost, and how heavy the frost reads.
+              </p>
+              <div className="grid gap-3">
+                <div>
+                  <span className={FIELD_LABEL_CLS}>backdrop image</span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      aria-hidden
+                      className="h-10 w-16 shrink-0 rounded border border-border bg-background bg-cover bg-center"
+                      style={glassImage ? { backgroundImage: `url("${glassImage}")` } : undefined}
+                    />
+                    <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted">
+                      {glassImage ? (glassImage.startsWith('data:') ? 'uploaded image' : glassImage) : 'the built-in backdrop'}
+                    </span>
+                    <input ref={glassFileRef} type="file" accept="image/*" className="hidden" onChange={pickGlassImage} />
+                    <Button onClick={() => glassFileRef.current?.click()}>choose</Button>
+                    {glassImage && <Button onClick={() => setGlassImage('')}>clear</Button>}
+                  </div>
+                </div>
+
+                <div>
+                  <span className={FIELD_LABEL_CLS}>frost</span>
+                  <Slider percent value={glassBlur} ariaLabel="frost" onChange={setGlassBlur} />
+                </div>
+
+                <div>
+                  <span className={FIELD_LABEL_CLS}>tint</span>
+                  <Slider value={String(glassTint)} stops={GLASS_TINT_STOPS} ariaLabel="tint" onChange={(v) => setGlassTint(Number(v))} />
                 </div>
               </div>
-
-              <div>
-                <span className={FIELD_LABEL_CLS}>frost</span>
-                <Slider value={String(glassBlur)} stops={GLASS_BLUR_STOPS} ariaLabel="frost" onChange={(v) => setGlassBlur(Number(v))} />
-              </div>
-
-              <div>
-                <span className={FIELD_LABEL_CLS}>tint</span>
-                <Slider value={String(glassTint)} stops={GLASS_TINT_STOPS} ariaLabel="tint" onChange={(v) => setGlassTint(Number(v))} />
-              </div>
-            </div>
-          </Card>
+            </Card>
+          )}
 
           <Card className="hover:bg-surface">
             <h3 className="m-0 font-mono text-xs lowercase text-foreground">you &amp; your assistant</h3>
