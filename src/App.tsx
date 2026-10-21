@@ -218,7 +218,11 @@ export default function App() {
   };
 
   return (
-    <div className="app-shell app-drag relative flex h-screen flex-col overflow-hidden">
+    // The window drags from the Topbar alone — never from the whole shell. The
+    // shell used to carry app-drag with no-drag holes, but WebView2 v152 made
+    // app-region an inherited property, so glass's full-bleed ::before/::after
+    // frost layers inherited `drag` and covered every click as a window drag.
+    <div className="app-shell relative flex h-screen flex-col overflow-hidden">
       <Topbar
         collapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
