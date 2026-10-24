@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronRight, Download, RefreshCw, Search, Upload, X } from 'lucide-react';
 import { useAgentsStore } from '../../hooks/useAgents';
-import { amListMemories, amSearch, amGetSelfModel, amStats, amListNamespaces, amAddMemory, amSetSelfModel } from '../../runtime';
+import type { BrainObservation } from '../../types';
+import { amListMemories, amSearch, amGetSelfModel, amStats, amListNamespaces, amAddMemory, amSetSelfModel, brainListObservations, brainAcceptObservation, brainDismissObservation, brainCorrectObservation, brainReflectNow, brainEval, type BrainEval } from '../../runtime';
 import { toast } from '../../hooks/useToast';
 import { Select } from '../ui/Select';
-import { IconButton } from '../ui/Button';
+import { Button, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { tabCls } from '../ui/tabs';
 import { GROUP_LABEL_CLS } from '../ui/Input';
@@ -21,7 +22,14 @@ type FoxSelfEntry = { id: string; key: string; value: string; confidence?: numbe
 type FoxStats = { events: number; memories: number; selfModelEntries: number };
 type FoxNamespace = { namespace: { key: string; type: string; id: string | null; name: string; description?: string | null }; counts: { events: number; memories: number; selfModelEntries: number }; lastActivityAt?: number | null };
 
-type Tab = 'memories' | 'self' | 'namespaces';
+type Tab = 'memories' | 'self' | 'namespaces' | 'observations';
+
+const DIMENSION_LABEL: Record<string, string> = {
+  salience: 'salience', allocation: 'attention', intention: 'intention',
+  displacement: 'displaced', persistence: 'persistence', drift: 'drift',
+  momentum: 'momentum', dormancy: 'dormant', reentry: 're-entry', pattern: 'pattern',
+  entity_resolution: 'resolution',
+};
 
 const fmtDate = (ms?: number | null) => {
   if (!ms) return '';
@@ -40,9 +48,14 @@ export function MemoryView() {
   const [selfEntries, setSelfEntries] = useState<FoxSelfEntry[]>([]);
   const [namespaces, setNamespaces] = useState<FoxNamespace[]>([]);
   const [stats, setStats] = useState<FoxStats | null>(null);
+  const [observations, setObservations] = useState<BrainObservation[]>([]);
+  const [evalr, setEvalr] = useState<BrainEval | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
 
   // Default to the lead agent so the view has something to show immediately.
   useEffect(() => {
@@ -85,6 +98,41 @@ export function MemoryView() {
     catch { setNamespaces([]); }
   }, []);
   useEffect(() => { if (tab === 'namespaces') void loadNamespaces(); }, [tab, loadNamespaces]);
+
+  // Inferred observations (the attention / learning layer), loaded on demand.
+  const loadObservations = useCallback(async () => {
+    try { setObservations((await brainListObservations()) ?? []); }
+    catch { setObservations([]); }
+  }, []);
+  useEffect(() => {
+    if (tab !== 'observations') return;
+    void loadObservations();
+    void brainEval().then(setEvalr);
+  }, [tab, loadObservations]);
+
+  const reflect = async () => {
+    setBusy(true);
+    try {
+      const n = await brainReflectNow();
+      toast(n > 0 ? `${n} observation${n === 1 ? '' : 's'}` : 'nothing new to infer', 'success');
+      await loadObservations();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const act = async (id: string, kind: 'accept' | 'dismiss') => {
+    if (kind === 'accept') await brainAcceptObservation(id); else await brainDismissObservation(id);
+    await loadObservations();
+  };
+
+  const saveCorrection = async (id: string) => {
+    await brainCorrectObservation(id, { body: draft });
+    setEditId(null);
+    await loadObservations();
+  };
 
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -180,7 +228,7 @@ export function MemoryView() {
           <IconButton label="export memory" className="h-[30px] w-[30px] shrink-0" onClick={() => void exportMemory()}><Download size={13} /></IconButton>
           <IconButton label="import memory" className="h-[30px] w-[30px] shrink-0" onClick={() => fileRef.current?.click()}><Upload size={13} /></IconButton>
           <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => void importMemory(e)} />
-          {([['memories', 'memories'], ['self', 'self-model'], ['namespaces', 'namespaces']] as const).map(([key, label]) => (
+          {([['memories', 'memories'], ['self', 'self-model'], ['namespaces', 'namespaces'], ['observations', 'mind']] as const).map(([key, label]) => (
             <button key={key} className={tabCls(tab === key)} onClick={() => setTab(key)}>{label}</button>
           ))}
         </div>
@@ -272,6 +320,60 @@ export function MemoryView() {
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'observations' ? '' : 'hidden'}`}>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="m-0 font-mono text-[10px] leading-relaxed text-muted">
+            Patterns inferred from what you actually file — proposals, never facts. Accept, correct or dismiss them.
+          </p>
+          <IconButton label="reflect now" className="h-[26px] w-[26px] shrink-0" onClick={() => void reflect()}>
+            <RefreshCw size={12} className={busy ? 'animate-spin' : ''} />
+          </IconButton>
+        </div>
+        {observations.length === 0 ? (
+          <p className="m-0 px-1 font-mono text-[11px] text-muted">nothing inferred yet</p>
+        ) : (
+          <div className="grid gap-2">
+            {observations.map((o) => (
+              <div key={o.id} className="rounded-xl border border-border bg-surface px-3.5 py-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 rounded bg-background px-1.5 py-0.5 font-mono text-[9.5px] text-muted">{DIMENSION_LABEL[o.dimension] ?? o.dimension}</span>
+                  <b className="min-w-0 flex-1 truncate text-[12.5px] text-foreground">{o.title}</b>
+                  <span className="shrink-0 font-mono text-[10px] text-muted">{o.status} · conf {pct(o.confidence)}</span>
+                </div>
+                {editId === o.id ? (
+                  <>
+                    <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} className="mt-2 w-full rounded-lg border border-border bg-background px-2 py-1 font-mono text-[11px] text-foreground outline-none" />
+                    <div className="mt-1.5 flex gap-1.5">
+                      <Button onClick={() => void saveCorrection(o.id)}>save</Button>
+                      <Button onClick={() => setEditId(null)}>cancel</Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-1.5 mb-0 text-[12.5px] leading-[1.6] break-words whitespace-pre-wrap text-foreground/80">{o.body}</p>
+                    <div className="mt-2 flex gap-1.5">
+                      {o.status === 'new' && <Button onClick={() => void act(o.id, 'accept')}>accept</Button>}
+                      <Button onClick={() => { setEditId(o.id); setDraft(o.body); }}>correct</Button>
+                      {o.status !== 'dismissed' && <Button onClick={() => void act(o.id, 'dismiss')}>dismiss</Button>}
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {evalr && (
+          <p className="mt-3 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+            eval · precision {pct(evalr.quality.precision)} · recall {pct(evalr.quality.recall)} · mrr {evalr.quality.mrr.toFixed(2)}
+            {' · '}{evalr.quality.cases} cases · dup {evalr.quality.reliability.duplicates.ok ? 'ok' : 'FAIL'}
+            {' · '}extract {evalr.quality.reliability.extraction.ok ? 'ok' : 'FAIL'}
+            <br />
+            live · {evalr.live.nodes} nodes · {evalr.live.vector_scan.vectors} vectors · scan {evalr.live.vector_scan.micros}µs
+            {' · '}{evalr.live.fts ? 'fts5' : 'lexical scan'} · {evalr.live.guidance}
+          </p>
         )}
       </div>
     </div>

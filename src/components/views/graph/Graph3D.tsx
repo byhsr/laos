@@ -128,17 +128,18 @@ export default function Graph3D({ nodes, edges, positions, focus, connected, sel
       {nodes.map((n) => {
         const p = positions.get(n.id);
         if (!p) return null;
-        // Memory is sized by what it holds; everything else by how connected it is.
-        const r = n.kind === 'memory'
+        // Memory is sized by what it holds; everything else by how connected it
+        // is. The attention/salience lens supplies an explicit r + colour.
+        const r = n.r ?? (n.kind === 'memory'
           ? 0.5 + Math.min(Math.sqrt(n.weight ?? 1), 6) * 0.18
-          : 0.42 + Math.min(degree.get(n.id) ?? 0, 8) * 0.045;
+          : 0.42 + Math.min(degree.get(n.id) ?? 0, 8) * 0.045);
         return (
           <Node
             key={n.id}
             node={n}
             position={p}
             radius={r}
-            color={NODE_COLOR[n.kind]}
+            color={n.color ?? NODE_COLOR[n.kind]}
             labelColor={labelColor}
             dim={dimmed(n.id)}
             selected={selected === n.id}

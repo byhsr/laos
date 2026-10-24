@@ -1,4 +1,4 @@
-import type { Agent, Integration, Project, Skill, Tool, Workflow } from '../../../types';
+import type { Agent, BrainEdge, BrainNode, Integration, Project, Skill, Tool, Workflow } from '../../../types';
 import type { GEdge, GNode } from './shared';
 
 // One memory scope that holds something. `am_list_scopes` returns this shape (see
@@ -12,12 +12,13 @@ export type MemoryScope = {
 export type GraphInput = {
   agents: Agent[]; skills: Skill[]; tools: Tool[]; integrations: Integration[];
   workflows: Workflow[]; projects: Project[]; scopes: MemoryScope[];
+  brain?: { nodes: BrainNode[]; edges: BrainEdge[] };
 };
 
 // Everything in the workspace as one graph: what exists, and what is wired to
 // what. Agents are the hub — capabilities hang off them, workflows consume them,
 // and memory scopes attach to whatever owns them.
-export function buildGraph({ agents, skills, tools, integrations, workflows, projects, scopes }: GraphInput): { nodes: GNode[]; edges: GEdge[] } {
+export function buildGraph({ agents, skills, tools, integrations, workflows, projects, scopes, brain }: GraphInput): { nodes: GNode[]; edges: GEdge[] } {
   const nodes: GNode[] = [];
   skills.forEach((s) => nodes.push({ id: `skill:${s.id}`, kind: 'skill', label: s.name, sub: 'instructions' }));
   tools.forEach((t) => nodes.push({ id: `tool:${t.id}`, kind: 'tool', label: t.name, sub: t.kind.replace('_', ' ') }));
@@ -38,6 +39,26 @@ export function buildGraph({ agents, skills, tools, integrations, workflows, pro
       weight: c.memories + c.events + c.selfModelEntries,
     });
   });
+
+  // The brain map: the user's life as nodes + typed edges. Kept as one visual
+  // family (`brain`) with the node's own kind in the sub-line, so the palette
+  // stays legible. Capped so a large map can't swamp the workspace graph.
+  if (brain) {
+    const brainId = (id: string) => `brain:${id}`;
+    brain.nodes.slice(0, 250).forEach((n) => nodes.push({
+      id: brainId(n.id), kind: 'brain', label: n.label || n.kind,
+      sub: `${n.kind}${n.provenance === 'inferred' ? ' · inferred' : ''} · ${n.scope}`,
+      brainKind: n.kind, scope: n.scope, provenance: n.provenance,
+      attention: n.attention, salience: n.salience,
+    }));
+    const brainKnown = new Set(brain.nodes.map((n) => brainId(n.id)));
+    brain.edges.forEach((e) => {
+      const from = brainId(e.from);
+      const to = brainId(e.to);
+      // Solid when the relationship was stated, dashed (derives) when inferred.
+      if (from !== to && brainKnown.has(from) && brainKnown.has(to)) edges.push({ id: `brain:${e.id}`, from, to, kind: e.provenance === 'inferred' ? 'derives' : 'uses' });
+    });
+  }
 
   const known = new Set(nodes.map((n) => n.id));
   const edges: GEdge[] = [];

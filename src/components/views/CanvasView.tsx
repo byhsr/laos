@@ -63,6 +63,7 @@ const PORTS: Record<WorkflowNodeType, { in: Port[]; out: Port[] }> = {
   llm:         { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'success', label: 'success', tone: 'ok' }, { id: 'error', label: 'error', tone: 'bad' }] },
   script:      { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'success', label: 'success', tone: 'ok' }, { id: 'error', label: 'error', tone: 'bad' }] },
   loop:        { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'loop', label: 'loop', tone: 'loop' }, { id: 'done', label: 'done', tone: 'ok' }] },
+  retrieve_context: { in: [{ id: 'in', label: 'in', tone: 'text' }], out: [{ id: 'success', label: 'success', tone: 'ok' }, { id: 'error', label: 'error', tone: 'bad' }] },
 };
 
 const portRows = (t: WorkflowNodeType) => Math.max(1, PORTS[t].in.length, PORTS[t].out.length);
@@ -443,6 +444,7 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
       case 'integration': return !!n.config?.integrationId && !!n.config?.action;
       case 'llm': return String(n.config?.prompt ?? '').trim().length > 0;
       case 'script': return !!n.config?.scriptId || String(n.config?.command ?? '').trim().length > 0;
+      case 'retrieve_context': return true; // query defaults to the accumulated input
       default: return true;
     }
   };
@@ -465,6 +467,7 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
       case 'loop': return { key: 'iterations', value: `max ${String(n.config?.maxIterations ?? 3)}` };
       case 'llm': return { key: 'model', value: String(n.config?.model ?? 'model not set') };
       case 'script': return { key: 'script', value: n.config?.scriptId ? (scripts.find((s) => s.id === n.config?.scriptId)?.name ?? 'missing script') : (String(n.config?.command ?? '').trim().slice(0, 42) || 'not set') };
+      case 'retrieve_context': return { key: 'scope', value: String(n.config?.scope ?? '').trim() || `auto · ${String(n.config?.budget ?? 8)} items` };
     }
   };
 
@@ -989,6 +992,17 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
                         </>
                       )}
                       <p className="mt-1.5 mb-0 text-[11px] leading-relaxed text-muted">Runs the saved script, or the command through the system shell (cmd /C on Windows). Use {'{input}'} for the previous node's output. stdout + stderr becomes the node output.</p>
+                    </>
+                  )}
+                  {node.type === 'retrieve_context' && (
+                    <>
+                      <label className={label}>query</label>
+                      <textarea value={String(node.config?.query ?? '')} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, query: e.target.value } } : n)) }))} placeholder="Leave empty to use the previous node's output." rows={3} className={PROSE_CLS} />
+                      <label className={label}>scope</label>
+                      <input value={String(node.config?.scope ?? '')} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, scope: e.target.value } } : n)) }))} placeholder="auto (global + life) — or project:<id> / agent:<id>" className={INPUT_CLS} />
+                      <label className={label}>result budget</label>
+                      <input type="number" min={1} value={String(node.config?.budget ?? 8)} onChange={(e) => update((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === node.id ? { ...n, config: { ...n.config, budget: Number(e.target.value) } } : n)) }))} className={INPUT_CLS} />
+                      <p className="mt-1.5 mb-0 text-[11px] leading-relaxed text-muted">Retrieves the most relevant memories, tasks and notes for the query (keyword + semantic + graph + structured). Output is JSON: <code className="font-mono">{'{ text, items }'}</code>.</p>
                     </>
                   )}
                   <div className="mt-5">

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
-import type { ModelConfig, Provider, Reasoning } from '../../types';
+import type { ModelConfig, ModelRoles, Provider, Reasoning } from '../../types';
+import { listModelRoles, setModelRole } from '../../runtime';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
@@ -20,6 +21,15 @@ const MODEL_PLACEHOLDER: Record<string, string> = {
   groq: 'llama-3.3-70b-versatile',
   openrouter: 'anthropic/claude-3.5-haiku',
 };
+// What each model role is for, shown beside the picker in the order they matter.
+const ROLE_ORDER = ['classifier', 'embedding', 'reranker', 'vision', 'distillation'];
+const ROLE_HINT: Record<string, string> = {
+  classifier: 'reads captures into structured data',
+  embedding: 'vectorises text for semantic recall',
+  reranker: 'reorders retrieved memory',
+  vision: 'sees screenshots and images',
+  distillation: 'turns finished chats into memory',
+};
 const KEY_PLACEHOLDER: Record<string, string> = {
   openai: 'sk-…',
   google: 'AIza…',
@@ -32,6 +42,14 @@ const KEY_PLACEHOLDER: Record<string, string> = {
 export function ModelsView({ models, onAdd, onEdit, onDelete }: {
   models: ModelConfig[]; onAdd: () => void; onEdit: (m: ModelConfig) => void; onDelete: (id: string) => Promise<void>;
 }) {
+  // Roles: which model fills classifier / embedding. Unset means "auto" (a
+  // deterministic default in the backend), so nothing here is required.
+  const [roles, setRoles] = useState<ModelRoles>({});
+  useEffect(() => { void listModelRoles().then(setRoles).catch(() => setRoles({})); }, []);
+  const assign = async (role: string, modelId: string) => {
+    await setModelRole(role, modelId);
+    setRoles(await listModelRoles().catch(() => ({})));
+  };
   return (
     <>
       <div className="mb-4 flex justify-end">
@@ -59,6 +77,34 @@ export function ModelsView({ models, onAdd, onEdit, onDelete }: {
         ))}
         {models.length === 0 && <p className="m-0 font-mono text-[11px] text-muted">no models configured — add one to get started</p>}
       </div>
+
+      <Card className="mt-4">
+        <b className="block font-mono text-[11px] text-foreground">model roles</b>
+        <p className="mt-1 mb-3 font-mono text-[10px] leading-relaxed text-muted">
+          One model need not do every job. Pin which model reads your captures, which vectorises text for recall, which reorders
+          retrieved memory, which sees images, and which distils chats into memory. Leave a role on auto and the app picks a default.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {ROLE_ORDER.filter((role) => role in roles).map((role) => (
+            <div key={role}>
+              <label className={FIELD_LABEL_CLS}>{role}</label>
+              <Select
+                value={roles[role]?.modelId ?? ''}
+                options={[{ value: '', label: 'auto' }, ...models.map((m) => ({ value: m.id, label: m.label || `${m.provider}:${m.model}` }))]}
+                onChange={(v) => void assign(role, v)}
+                placeholder="auto"
+              />
+              <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+                {ROLE_HINT[role] ?? ''}
+                {' — '}
+                {roles[role]?.resolved
+                  ? `using ${roles[role]?.resolved}`
+                  : (role === 'classifier' || role === 'embedding' ? 'no model available' : 'not set — off until you pick one')}
+              </p>
+            </div>
+          ))}
+        </div>
+      </Card>
     </>
   );
 }

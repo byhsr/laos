@@ -40,7 +40,7 @@ import { BrowserPanel } from './components/BrowserPanel';
 import { useBrowserStore } from './hooks/useBrowser';
 import { toast } from './hooks/useToast';
 import { syncBrowserTheme } from './theme';
-import { checkForUpdate, onBrowserEvent, onReminder, type UpdateInfo } from './runtime';
+import { checkForUpdate, onBrainNotice, onBrowserEvent, onReminder, type UpdateInfo } from './runtime';
 
 // Every view lives in a pane that scrolls internally — the shell itself never
 // scrolls, so there is never a double scrollbar or a page that jumps.
@@ -113,6 +113,10 @@ export default function App() {
   }, []);
   // Reminders fire from the backend's 30s scheduler; surface them in-app too.
   useEffect(() => onReminder((r) => toast(`⏰ ${r.kind}: ${r.title}`, 'success')), []);
+
+  // The learning layer announces a pattern it noticed, so it reaches the user
+  // where they are rather than waiting for the Memory view to be opened.
+  useEffect(() => onBrainNotice((n) => toast(`${n.title} (${n.count})`, 'info')), []);
 
   // The mini browser reports its state from the backend; a browser action from an
   // agent slides the drawer open (see useBrowserStore.applyState).

@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { Agent, Integration, ModelConfig, Project, Run, RunEvent, Script, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
+import type { Agent, BrainGraph, BrainObservation, Integration, ModelConfig, ModelRoles, Project, Run, RunEvent, Script, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
 
 // Streams a chat completion, calling onDelta with each token chunk and onConfirm
 // with structured confirmation requests from the Manager.
@@ -239,6 +239,82 @@ export async function amUpdateMemory(id: string, patch: Record<string, unknown>)
 }
 export async function amForgetMemory(id: string): Promise<void> {
   await invoke('am_forget_memory', { id });
+}
+
+// The brain map (personal context engine). Graph reads nodes + edges; the
+// observations tab lists inferred patterns with their evidence.
+export async function brainGraph(): Promise<BrainGraph> {
+  try { return await invoke<BrainGraph>('brain_graph'); } catch { return { nodes: [], edges: [] }; }
+}
+export async function brainNode(id: string): Promise<unknown> {
+  try { return await invoke('brain_node', { id }); } catch { return null; }
+}
+export async function brainStats(): Promise<unknown> {
+  try { return await invoke('brain_stats'); } catch { return null; }
+}
+export async function brainForgetNode(id: string): Promise<void> {
+  await invoke('brain_forget_node', { id });
+}
+export async function brainListObservations(status?: string): Promise<BrainObservation[]> {
+  try { return await invoke<BrainObservation[]>('brain_list_observations', { status: status ?? null }); } catch { return []; }
+}
+export async function brainAcceptObservation(id: string): Promise<void> {
+  await invoke('brain_accept_observation', { id });
+}
+export async function brainDismissObservation(id: string): Promise<void> {
+  await invoke('brain_dismiss_observation', { id });
+}
+export async function brainCorrectObservation(id: string, patch: { body?: string; confidence?: number }): Promise<void> {
+  await invoke('brain_correct_observation', { id, patch });
+}
+export async function brainReindex(): Promise<number> {
+  return await invoke<number>('brain_reindex');
+}
+export async function brainReflectNow(): Promise<number> {
+  return await invoke<number>('brain_reflect_now');
+}
+// Hybrid retrieval — the same service chat, agents and workflows use. `rerank`
+// asks the `reranker` model role to reorder the top hits (a no-op when unset).
+export async function retrieveContext(query: string, scope?: string, modes?: string[], budget?: number, rerank?: boolean): Promise<{ items: unknown[]; text: string }> {
+  try { return await invoke<{ items: unknown[]; text: string }>('retrieve_context', { query, scope: scope ?? null, modes: modes ?? null, budget: budget ?? null, rerank: rerank ?? null }); } catch { return { items: [], text: '' }; }
+}
+// The evaluation harness. `quality` scores a labelled fixture (precision/recall/MRR
+// per case, plus duplicate + extraction reliability); `live` is a read-only
+// measurement of the real store's scan size, vector-scan latency and context size.
+export type BrainEval = {
+  quality: {
+    cases: number; precision: number; recall: number; mrr: number; worst_case: string | null;
+    results: { case: string; modes: string[]; hits: number; precision: number; recall: number; mrr: number; micros: number; context_tokens_est: number }[];
+    reliability: {
+      duplicates: { ok: boolean; same_ref_nodes: number; items: number };
+      extraction: { ok: boolean; recovered: number; samples: number; lost: number };
+    };
+  };
+  live: {
+    nodes: number; embeddings: number; fts: boolean; guidance: string;
+    vector_scan: { dim: number; vectors: number; micros: number; per_vector_ns: number; top_similarity: number };
+    context: { hits: number; chars: number; tokens_est: number; budget_tokens: number };
+  };
+};
+export async function brainEval(): Promise<BrainEval | null> {
+  try { return await invoke<BrainEval>('brain_eval'); } catch { return null; }
+}
+// The backend announces newly drafted observations so the mind doesn't have to be
+// opened to learn there is something to review.
+export type BrainNotice = { kind: string; count: number; title: string };
+export function onBrainNotice(cb: (n: BrainNotice) => void): () => void {
+  let unlisten: (() => void) | null = null;
+  listen<BrainNotice>('brain-notice', (e) => cb(e.payload))
+    .then((un) => { unlisten = un; })
+    .catch(() => {});
+  return () => { unlisten?.(); };
+}
+// Model roles (classifier / embedding).
+export async function listModelRoles(): Promise<ModelRoles> {
+  try { return await invoke<ModelRoles>('list_model_roles'); } catch { return {}; }
+}
+export async function setModelRole(role: string, modelId: string): Promise<void> {
+  await invoke('set_model_role', { role, modelId });
 }
 
 export async function executeAgent(agent: Agent, input: string, apiKey?: string): Promise<{ output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number }> {

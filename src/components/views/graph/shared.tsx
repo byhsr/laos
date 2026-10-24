@@ -1,14 +1,22 @@
 import type { ReactNode } from 'react';
-import { ArrowUpRight, Bot, Brain, FolderKanban, Globe, Plus, Sparkles, UserCog, Workflow as WorkflowIcon, Wrench, X } from 'lucide-react';
+import { ArrowUpRight, Bot, Brain, FolderKanban, Globe, Network, Plus, Sparkles, UserCog, Workflow as WorkflowIcon, Wrench, X } from 'lucide-react';
 import type { Agent, Integration, Project, Skill, Tool, Workflow } from '../../../types';
 import { IconButton } from '../../ui/Button';
 import { Tooltip } from '../../ui/Tooltip';
 import { GROUP_LABEL_CLS } from '../../ui/Input';
 
 // Every kind of thing the graph can show, and the palette both renderers use.
-export type Kind = 'skill' | 'tool' | 'integration' | 'agent' | 'manager' | 'workflow' | 'project' | 'memory';
+export type Kind = 'skill' | 'tool' | 'integration' | 'agent' | 'manager' | 'workflow' | 'project' | 'memory' | 'brain';
 
-export type GNode = { id: string; kind: Kind; label: string; sub: string; weight?: number };
+export type GNode = {
+  id: string; kind: Kind; label: string; sub: string; weight?: number;
+  // Brain-map extras (only on `brain` nodes): its own kind, scope, provenance and
+  // attention signals, so the graph can filter and run the attention lens.
+  brainKind?: string; scope?: string; provenance?: string;
+  attention?: Record<string, number>; salience?: number;
+  // Render overrides set by the attention/salience lens (radius + heat colour).
+  r?: number; color?: string;
+};
 export type GEdge = { id: string; from: string; to: string; kind: 'uses' | 'flow' | 'derives' };
 
 export type LinkField = 'toolIds' | 'skillIds' | 'integrations';
@@ -22,6 +30,7 @@ export const ICON: Record<Kind, ReactNode> = {
   workflow: <WorkflowIcon size={13} />,
   project: <FolderKanban size={13} />,
   memory: <Brain size={13} />,
+  brain: <Network size={13} />,
 };
 
 export const LABEL: Record<Kind, string> = {
@@ -33,6 +42,7 @@ export const LABEL: Record<Kind, string> = {
   workflow: 'Workflows',
   project: 'Projects',
   memory: 'Memory',
+  brain: 'Mind',
 };
 
 // One hue per kind, in the same desaturated register as the port tints, so the
@@ -46,6 +56,7 @@ export const NODE_COLOR: Record<Kind, string> = {
   workflow: '#c07f7f',
   project: '#a89ec4',
   memory: '#7fc0b8',
+  brain: '#b0a08f',
 };
 
 // Which agent field a capability node links through.
@@ -231,6 +242,19 @@ export function Inspector({ node, agents, skills, tools, integrations, workflows
                 {projects.find((p) => p.id === memKey.slice('project:'.length))?.name ? `Project: ${projects.find((p) => p.id === memKey.slice('project:'.length))?.name}` : 'Project no longer exists — this memory is orphaned.'}
               </p>
             )}
+          </section>
+        )}
+
+        {/* A brain-map node: its kind/scope, and how its edges were formed. */}
+        {node.kind === 'brain' && (
+          <section className="mb-5 last:mb-0">
+            <div className="mb-2 flex items-baseline justify-between gap-2">
+              <span className={GROUP_LABEL_CLS}>mind</span>
+            </div>
+            <p className="m-0 font-mono text-[11px] text-foreground">{node.sub}</p>
+            <p className="mt-2 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+              Part of the brain map. Dashed relationships were inferred; solid ones were stated. Correct or remove anything wrong from the Memory view.
+            </p>
           </section>
         )}
 

@@ -1,4 +1,4 @@
-import { Bot, GitBranch, Repeat, ShieldCheck, Sparkles, Terminal, Webhook } from 'lucide-react';
+import { Bot, GitBranch, Repeat, Search, ShieldCheck, Sparkles, Terminal, Webhook } from 'lucide-react';
 import type { WorkflowNodeType } from '../../types';
 
 // The builder's vocabulary. Each type is legible from its glyph alone, so the
@@ -14,6 +14,7 @@ export const NODE_TYPES: { type: WorkflowNodeType; label: string; icon: React.Re
   { type: 'checker', label: 'checker', icon: <ShieldCheck size={13} />, desc: 'Validate output' },
   { type: 'integration', label: 'integration', icon: <Webhook size={13} />, desc: 'Call a tool/integration' },
   { type: 'gate', label: 'gate', icon: <GitBranch size={13} />, desc: 'Conditional branch' },
+  { type: 'retrieve_context', label: 'retrieve', icon: <Search size={13} />, desc: 'Hybrid memory retrieval' },
 ];
 
 export const TYPE_META: Record<WorkflowNodeType, { label: string; icon: React.ReactNode; desc: string }> =

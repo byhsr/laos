@@ -27,7 +27,7 @@ export type Script = { id: string; name: string; description: string; kind: 'com
 // A project groups conversations and scopes their memory.
 export type Project = { id: string; name: string; description: string; createdAt: string; updatedAt: string };
 
-export type WorkflowNodeType = 'agent' | 'subagent' | 'loop' | 'checker' | 'integration' | 'gate' | 'trigger' | 'llm' | 'script';
+export type WorkflowNodeType = 'agent' | 'subagent' | 'loop' | 'checker' | 'integration' | 'gate' | 'trigger' | 'llm' | 'script' | 'retrieve_context';
 export type WorkflowNode = {
   id: string; type: WorkflowNodeType; agentId?: string; toolId?: string; label: string; x: number; y: number;
   config?: Record<string, unknown>;
@@ -57,6 +57,24 @@ export type DrawerForm =
   | null;
 
 export type ChatMessage = { role: 'user' | 'assistant' | 'tool' | 'thought'; content: string; detail?: string; time: string };
+
+// The brain map: the user's life as connected nodes + typed edges. `provenance`
+// is 'stated' (the user said it) or 'inferred' (the system guessed, with a
+// confidence) — never blurred together.
+export type BrainNode = {
+  id: string; kind: string; scope: string; label: string;
+  refKind?: string; refId?: string; provenance: string; status: string;
+  salience?: number;
+  // Per-dimension attention signals (allocation, dormancy, momentum, drift…).
+  attention?: Record<string, number>;
+};
+export type BrainEdge = { id: string; from: string; to: string; relation: string; provenance: string; confidence: number };
+export type BrainGraph = { nodes: BrainNode[]; edges: BrainEdge[] };
+// An inferred pattern with evidence — a proposal the user can accept, dismiss or correct.
+export type BrainObservation = { id: string; scope: string; dimension: string; kind: string; title: string; body: string; confidence: number; evidence: unknown; status: string; firstSeenAt: number; lastSeenAt: number };
+// A model role (classifier / embedding): the pinned model and the one actually resolved.
+export type ModelRoleInfo = { modelId: string; resolved: string | null };
+export type ModelRoles = Record<string, ModelRoleInfo>;
 
 // One real step in a chat turn, fed live from the backend so the pending bubble
 // reports what the agent is doing rather than a fixed "thinking" label.
