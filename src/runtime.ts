@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { Agent, BrainGraph, BrainObservation, Integration, ModelConfig, ModelRoles, Project, Run, RunEvent, Script, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
+import type { Agent, Attachment, BrainGraph, BrainObservation, Integration, ModelConfig, ModelRoles, Project, Run, RunEvent, Script, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
 
 // Streams a chat completion, calling onDelta with each token chunk and onConfirm
 // with structured confirmation requests from the Manager.
@@ -27,6 +27,7 @@ export async function streamChat(
   sessionId?: string,
   onStep?: (s: StreamStep) => void,
   streamId?: string,
+  attachments?: Attachment[],
 ): Promise<void> {
   const channel = new Channel<string>();
   channel.onmessage = (raw) => {
@@ -53,7 +54,7 @@ export async function streamChat(
     }
     onDelta(raw);
   };
-  await invoke('stream_chat', { agent, input, isManager, onEvent: channel, sessionId: sessionId ?? null, streamId: streamId ?? null });
+  await invoke('stream_chat', { agent, input, isManager, onEvent: channel, sessionId: sessionId ?? null, streamId: streamId ?? null, attachments: attachments?.length ? attachments : null });
 }
 
 // Chat session management (bifurcated history).

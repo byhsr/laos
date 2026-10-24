@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RotateCcw, Settings, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from '../ui/ContextMenu';
-import type { Agent, Integration, ModelConfig, Reasoning, Task, Tool } from '../../types';
+import type { Agent, Attachment, Integration, ModelConfig, Reasoning, Task, Tool } from '../../types';
 import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
 import { useTasksStore } from '../../hooks/useTasks';
 import { useAgentsStore } from '../../hooks/useAgents';
@@ -144,7 +144,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
     });
   };
 
-  const submit = async (text: string) => {
+  const submit = async (text: string, attachments: Attachment[]) => {
     // Deterministic slash commands — resolved locally, no LLM involved.
     const cmd = text.toLowerCase().split(/\s+/)[0];
     const reply = runCommand(cmd, text);
@@ -153,7 +153,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
       echo(agentId, reply);
       return;
     }
-    await send(text, managerAgent);
+    await send(text, managerAgent, attachments);
   };
 
   const activeTasks = tasks.filter((t) => t.status === 'pending' || t.status === 'running');
@@ -184,6 +184,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
                 key={i}
                 role={m.role}
                 content={m.content}
+                attachments={m.attachments}
                 steps={steps}
                 streaming={busy && i === messages.length - 1 && m.role === 'assistant'}
                 onRate={m.role === 'assistant' && i === messages.length - 1 && !busy

@@ -3,11 +3,11 @@ import { cancelChatStream, clearAgentMemory, closeSession, createChatSession, ne
 import { useConfirmStore } from './useConfirm';
 import { useProjectsStore } from './useProjects';
 import { useRunsStore } from './useRuns';
-import type { Agent, ChatStep } from '../types';
+import type { Agent, Attachment, ChatStep } from '../types';
 import { createDeltaBuffer } from '../streamBuffer';
 import { mergeStep } from '../chatSteps';
 
-export type ChatEntry = { role: 'user' | 'assistant'; content: string; time: string };
+export type ChatEntry = { role: 'user' | 'assistant'; content: string; time: string; attachments?: Attachment[] };
 
 // Derives a short, readable title from the first user message.
 const titleFrom = (msg: string) => {
@@ -35,7 +35,7 @@ type ManagerState = {
   loadHistory: (agentId: string) => Promise<void>;
   resumeSession: (agentId: string, sessionId: string, entries: ChatEntry[]) => void;
   reset: (agentId: string) => Promise<void>;
-  send: (message: string, managerAgent: Agent) => Promise<void>;
+  send: (message: string, managerAgent: Agent, attachments?: Attachment[]) => Promise<void>;
   cancel: (action: 'pause' | 'delete') => void;
 };
 
@@ -104,7 +104,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     });
   },
 
-  send: async (message, managerAgent) => {
+  send: async (message, managerAgent, attachments) => {
     // Lazily create a session on the first message so every chat is recorded,
     // titled by the first user message.
     if (!get().sessionIds[managerAgent.id]) {
@@ -122,7 +122,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     cancelledTurn = false;
     const streamId = newChatStreamId();
     set({ busy: true, steps: [], activeStreamId: streamId, activeAgentId: agentId });
-    const userEntry: ChatEntry = { role: 'user', content: message, time: new Date().toLocaleTimeString() };
+    const userEntry: ChatEntry = { role: 'user', content: message, time: new Date().toLocaleTimeString(), attachments };
     // Seed an empty assistant bubble that grows as tokens stream in.
     const assistantEntry: ChatEntry = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
     set((s) => {
@@ -144,7 +144,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       await streamChat(managerAgent, message, true, (delta) => batcher.push(delta), (confirmReq) => {
         // Pop the confirmation dialog; the backend waits for the decision.
         useConfirmStore.getState().request(confirmReq);
-      }, get().sessionIds[managerAgent.id] ?? undefined, (ev) => set((s) => ({ steps: mergeStep(s.steps, ev) })), streamId);
+      }, get().sessionIds[managerAgent.id] ?? undefined, (ev) => set((s) => ({ steps: mergeStep(s.steps, ev) })), streamId, attachments);
       useRunsStore.getState().loadRuns();
     } catch (e) {
       failed = true;

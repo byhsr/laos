@@ -6,7 +6,7 @@ export type Agent = { id: string; name: string; objective: string; model: string
 export type RunEvent = { time: string; type: 'thought' | 'tool' | 'result'; title: string; detail?: string };
 export type Run = { id: string; agentId: string; startedAt: string; endedAt?: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; model: string; input: string; events: RunEvent[]; output?: string; promptTokens?: number; completionTokens?: number };
 export type Edge = { id: string; from: string; to: string };
-export type ModelConfig = { id: string; provider: Provider; label: string; model: string; host?: string; apiKey?: string; hasKey?: boolean; clearKey?: boolean; enabled: boolean; reasoning: Reasoning };
+export type ModelConfig = { id: string; provider: Provider; label: string; model: string; host?: string; apiKey?: string; hasKey?: boolean; clearKey?: boolean; enabled: boolean; reasoning: Reasoning; vision?: boolean };
 export type IntegrationAction = { name: string; description: string };
 export type Integration = { id: string; name: string; provider: string; enabled: boolean; connected: boolean; config: Record<string, unknown>; actions: IntegrationAction[] };
 export type ToolParam = { name: string; type: string; description: string; required: boolean };
@@ -57,6 +57,11 @@ export type DrawerForm =
   | null;
 
 export type ChatMessage = { role: 'user' | 'assistant' | 'tool' | 'thought'; content: string; detail?: string; time: string };
+
+// A file handed to a chat turn. `data` is base64 without the `data:` prefix, the
+// same shape the vision tools produce, so the backend can put it straight into a
+// provider request.
+export type Attachment = { name: string; mime: string; data: string };
 
 // The brain map: the user's life as connected nodes + typed edges. `provenance`
 // is 'stated' (the user said it) or 'inferred' (the system guessed, with a

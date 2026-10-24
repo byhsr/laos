@@ -99,6 +99,16 @@ export default function App() {
     syncBrowserTheme();
   }, [loadAgents, loadModels, loadTools, loadSkills, loadScripts, loadProjects, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns]);
 
+  // Native drag-drop is off (see tauri.conf.json) so the chat composer can accept
+  // HTML5 drops. That means every other drop in the window has to be swallowed
+  // here, or the webview would navigate away to the dropped file.
+  useEffect(() => {
+    const swallow = (e: DragEvent) => e.preventDefault();
+    window.addEventListener('dragover', swallow);
+    window.addEventListener('drop', swallow);
+    return () => { window.removeEventListener('dragover', swallow); window.removeEventListener('drop', swallow); };
+  }, []);
+
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(() => localStorage.getItem('laos.onboarded') !== '1');

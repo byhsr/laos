@@ -1,17 +1,18 @@
 import { useState } from 'react';
-import { ThumbsDown, ThumbsUp } from 'lucide-react';
+import { FileText, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { Markdown } from '../ui/Markdown';
 import { StreamIndicator } from '../ui/StreamIndicator';
 import { IconButton } from '../ui/Button';
-import type { ChatStep } from '../../types';
+import type { Attachment, ChatStep } from '../../types';
 
 // One message shape for both chat surfaces. Your own turns take the surface
 // fill; the agent's prose sits on the content plane behind a hairline, so the
 // two read apart without a second colour. An assistant reply can carry a
 // good/bad signal that feeds the agent's memory.
-export function MessageBubble({ role, content, streaming, steps, meta, onRate }: {
+export function MessageBubble({ role, content, attachments, streaming, steps, meta, onRate }: {
   role: 'user' | 'assistant';
   content: string;
+  attachments?: Attachment[];
   streaming?: boolean;
   steps?: ChatStep[];
   meta?: string;
@@ -35,6 +36,19 @@ export function MessageBubble({ role, content, streaming, steps, meta, onRate }:
           }`}
         >
           {meta && <span className="mb-1 block font-mono text-[10px] text-muted">{meta}</span>}
+          {/* What was attached to this turn, shown as it was sent — the same
+              picture back, not a filename. */}
+          {attachments && attachments.length > 0 && (
+            <div className={`mb-1.5 flex flex-wrap gap-1.5 ${mine ? 'justify-end' : ''}`}>
+              {attachments.map((a, i) => (a.mime.startsWith('image/') ? (
+                <img key={i} src={`data:${a.mime};base64,${a.data}`} alt={a.name} className="max-h-44 max-w-[240px] rounded-lg border border-border object-cover" />
+              ) : (
+                <span key={i} className="flex items-center gap-1.5 rounded border border-border px-2 py-1 font-mono text-[10px] text-muted">
+                  <FileText size={11} className="shrink-0" />{a.name}
+                </span>
+              )))}
+            </div>
+          )}
           {mine ? content : <Markdown>{content}</Markdown>}
           {streaming && (content
             ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-foreground/50 align-middle" />

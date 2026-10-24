@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Activity, AlertTriangle, ArrowLeft, Check, ChevronRight, History, Info, Lock, MessageSquare, MessageSquarePlus, RotateCcw, Settings, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from './ui/ContextMenu';
-import type { Agent, ChatMessage, ChatStep, ExecutionResult, Integration, ModelConfig, Reasoning, Run, Skill, Tool } from '../types';
+import type { Agent, Attachment, ChatMessage, ChatStep, ExecutionResult, Integration, ModelConfig, Reasoning, Run, Skill, Tool } from '../types';
 import { Select } from './ui/Select';
 import { Slider } from './ui/Slider';
 import { REASONING_STOPS } from '../reasoning';
@@ -167,14 +167,14 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
   useStickToBottom(scrollRef, messages);
 
-  const send = async (text: string) => {
-    if (!text.trim() || running) return;
+  const send = async (text: string, attachments: Attachment[] = []) => {
+    if ((!text.trim() && attachments.length === 0) || running) return;
     const myTurn = ++turnSeq.current;
     cancelledRef.current = false;
     const streamId = newChatStreamId();
     streamIdRef.current = streamId;
     setRunning(true); setError(undefined); setSteps([]);
-    const userMsg: ChatEntry = { role: 'user', content: text, time: new Date().toLocaleTimeString() };
+    const userMsg: ChatEntry = { role: 'user', content: text, time: new Date().toLocaleTimeString(), attachments };
     const assistantMsg: ChatEntry = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     const agentToRun = agent;
@@ -196,7 +196,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       await streamChat(agentToRun, text, false, (delta) => batcher.push(delta), (confirmReq) => {
         // Agent tools that need approval (e.g. run_command) pop the same panel.
         useConfirmStore.getState().request(confirmReq);
-      }, sid, pushStep, streamId);
+      }, sid, pushStep, streamId, attachments);
       useRunsStore.getState().loadRuns();
     } catch (e) {
       failed = true;
@@ -307,6 +307,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                   key={i}
                   role={m.role}
                   content={m.content}
+                  attachments={m.attachments}
                   steps={steps}
                   streaming={running && i === messages.length - 1 && m.role === 'assistant'}
                   onRate={m.role === 'assistant' && i === messages.length - 1 && !running

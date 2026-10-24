@@ -27,7 +27,7 @@ const ROLE_HINT: Record<string, string> = {
   classifier: 'reads captures into structured data',
   embedding: 'vectorises text for semantic recall',
   reranker: 'reorders retrieved memory',
-  vision: 'sees screenshots and images',
+  vision: 'sees dropped images and screenshots',
   distillation: 'turns finished chats into memory',
 };
 const KEY_PLACEHOLDER: Record<string, string> = {
@@ -62,7 +62,7 @@ export function ModelsView({ models, onAdd, onEdit, onDelete }: {
             <div className="min-w-0">
               <b className="block truncate font-mono text-[11px] text-foreground">{m.label}</b>
               <span className="block truncate font-mono text-[10px] text-muted">
-                {m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.hasKey ? ' · key set' : ''}{m.reasoning !== 'auto' ? ` · reasoning: ${m.reasoning}` : ''}
+                {m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.hasKey ? ' · key set' : ''}{m.vision ? ' · vision' : ''}{m.reasoning !== 'auto' ? ` · reasoning: ${m.reasoning}` : ''}
               </span>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -82,27 +82,40 @@ export function ModelsView({ models, onAdd, onEdit, onDelete }: {
         <b className="block font-mono text-[11px] text-foreground">model roles</b>
         <p className="mt-1 mb-3 font-mono text-[10px] leading-relaxed text-muted">
           One model need not do every job. Pin which model reads your captures, which vectorises text for recall, which reorders
-          retrieved memory, which sees images, and which distils chats into memory. Leave a role on auto and the app picks a default.
+          retrieved memory, which describes dropped images, and which distils chats into memory. Models that can see are marked
+          vision; leave a role on auto and the app picks a default.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
-          {ROLE_ORDER.filter((role) => role in roles).map((role) => (
-            <div key={role}>
-              <label className={FIELD_LABEL_CLS}>{role}</label>
-              <Select
-                value={roles[role]?.modelId ?? ''}
-                options={[{ value: '', label: 'auto' }, ...models.map((m) => ({ value: m.id, label: m.label || `${m.provider}:${m.model}` }))]}
-                onChange={(v) => void assign(role, v)}
-                placeholder="auto"
-              />
-              <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
-                {ROLE_HINT[role] ?? ''}
-                {' — '}
-                {roles[role]?.resolved
-                  ? `using ${roles[role]?.resolved}`
-                  : (role === 'classifier' || role === 'embedding' ? 'no model available' : 'not set — off until you pick one')}
-              </p>
-            </div>
-          ))}
+          {ROLE_ORDER.filter((role) => role in roles).map((role) => {
+            // For vision the models that can actually see come first and are
+            // marked — pinning a text-only model there would describe nothing.
+            const options = [
+              { value: '', label: role === 'vision' ? 'off' : 'auto' },
+              ...[...models]
+                .sort((a, b) => (role === 'vision' ? Number(b.vision ?? false) - Number(a.vision ?? false) : 0))
+                .map((m) => ({ value: m.id, label: `${m.label || `${m.provider}:${m.model}`}${m.vision ? ' · vision' : ''}` })),
+            ];
+            return (
+              <div key={role}>
+                <label className={FIELD_LABEL_CLS}>{role}</label>
+                <Select
+                  value={roles[role]?.modelId ?? ''}
+                  options={options}
+                  onChange={(v) => void assign(role, v)}
+                  placeholder={role === 'vision' ? 'off' : 'auto'}
+                />
+                <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+                  {ROLE_HINT[role] ?? ''}
+                  {' — '}
+                  {roles[role]?.resolved
+                    ? `using ${roles[role]?.resolved}`
+                    : role === 'vision'
+                      ? 'off — images go straight to the chat model'
+                      : (role === 'classifier' || role === 'embedding' ? 'no model available' : 'not set — off until you pick one')}
+                </p>
+              </div>
+            );
+          })}
         </div>
       </Card>
     </>
