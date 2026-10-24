@@ -19,6 +19,7 @@ mod insights;
 mod integrations;
 mod manager;
 mod mcp;
+mod media;
 mod memory;
 mod models;
 mod provider;

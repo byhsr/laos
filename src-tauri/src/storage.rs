@@ -157,8 +157,10 @@ pub fn list_model_configs(app: AppHandle) -> Result<Vec<ModelConfigRecord>, Stri
   let rows = stmt.query_map([], |row| {
     // The key itself never leaves the backend — only whether one is stored.
     let stored: Option<String> = row.get(5)?;
+    let id: String = row.get(0)?;
     Ok(ModelConfigRecord {
-      id: row.get(0)?, provider: row.get(1)?, label: row.get(2)?, model: row.get(3)?, host: row.get(4)?,
+      vision: crate::provider::looks_like_vision(&id),
+      id, provider: row.get(1)?, label: row.get(2)?, model: row.get(3)?, host: row.get(4)?,
       has_key: stored.map(|s| !s.trim().is_empty()).unwrap_or(false),
       enabled: row.get::<_, i64>(6)? != 0, reasoning: row.get(7)?,
     })

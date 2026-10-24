@@ -21,7 +21,7 @@ pub struct ExecutionEvent { pub time: String, #[serde(rename = "type")] pub kind
 // What the UI sees: never the key itself, only whether one is set.
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct ModelConfigRecord { pub id: String, pub provider: String, pub label: String, pub model: String, pub host: Option<String>, pub has_key: bool, pub enabled: bool, pub reasoning: String }
+pub struct ModelConfigRecord { pub id: String, pub provider: String, pub label: String, pub model: String, pub host: Option<String>, pub has_key: bool, pub enabled: bool, pub reasoning: String, pub vision: bool }
 
 // What the UI sends back. `api_key` is write-only: empty leaves the stored key
 // alone, `clear_key` removes it.

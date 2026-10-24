@@ -280,6 +280,23 @@ pub(crate) const ROLES: [&str; 5] = ["classifier", "embedding", "reranker", "vis
 /// explicit so a future text-only provider is filtered at resolution.
 pub(crate) fn supports_vision(_kind: Kind) -> bool { true }
 
+/// Whether a model id is likely to accept images. Providers here publish no
+/// capability list, so this is a name read used to decide whether to hand a
+/// picture to a model or describe it in words instead. The list is deliberately
+/// conservative because the two ways of being wrong are not symmetrical: a
+/// capable model that misses the list loses nothing (it gets a description),
+/// while a text-only model that hits it receives image parts and fails the turn.
+pub(crate) fn looks_like_vision(model_id: &str) -> bool {
+  let name = model_id.split_once(':').map(|(_, m)| m).unwrap_or(model_id).to_ascii_lowercase();
+  const MARKERS: &[&str] = &[
+    "gpt-4o", "gpt-4.1", "gpt-5", "o3", "o4",
+    "claude-3", "claude-4", "claude-sonnet", "claude-opus",
+    "gemini", "grok-2-vision", "grok-4",
+    "llava", "qwen-vl", "qwen2-vl", "llama-3.2-11b", "minicpm-v", "moondream",
+  ];
+  MARKERS.iter().any(|m| name.contains(m))
+}
+
 /// A role that only takes effect when explicitly pinned. Used where a default
 /// would silently change existing behaviour (which model edits images, reorders
 /// memory, or distils a chat) instead of adding a capability, so an unconfigured

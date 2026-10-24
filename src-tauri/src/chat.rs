@@ -62,8 +62,8 @@ async fn wait_for_cancel(stream_id: Option<String>) {
 // Ollama uses NDJSON; Groq/OpenRouter use SSE `data:` lines. Context is a rolling
 // window of the last ROLLING_WINDOW persisted messages.
 #[tauri::command]
-pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>) -> Result<(), String> {
-  let result = stream_chat_inner(app, agent, input, is_manager, on_event, session_id, stream_id.clone()).await;
+pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>, attachments: Option<Vec<crate::media::Attachment>>) -> Result<(), String> {
+  let result = stream_chat_inner(app, agent, input, is_manager, on_event, session_id, stream_id.clone(), attachments.unwrap_or_default()).await;
   // Clear the cancel flag for this turn so the registry can't grow unbounded.
   if let Some(id) = &stream_id {
     if let Ok(mut set) = cancelled_streams().lock() { set.remove(id); }
@@ -71,8 +71,18 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   result
 }
 
-async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>) -> Result<(), String> {
+async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>, attachments: Vec<crate::media::Attachment>) -> Result<(), String> {
   let conn = db(&app)?;
+
+  // Anything dropped into the composer (screenshots, photos, pasted images) is
+  // resolved BEFORE the turn is built, so the user's first token of the reply
+  // already accounts for it. The note becomes part of the user turn, which is
+  // what makes a follow-up ("what's wrong with it?") work.
+  if !attachments.is_empty() {
+    emit_status(&on_event, "vision", &format!("Looking at {} attachment{}…", attachments.len(), if attachments.len() == 1 { "" } else { "s" }));
+  }
+  let media = crate::media::prepare(&app, &agent.model, &attachments).await;
+  let turn_text = if media.note.is_empty() { input.clone() } else { format!("{input}\n\n{}", media.note) };
 
   // Rolling window: the CURRENT CHAT's turns. A new session starts empty, so a
   // new chat gets a clean context and only long-term memory carries over. A call
@@ -83,7 +93,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     Some(sid) if scoped_to_session => load_session_messages(&conn, sid),
     _ => load_conversation(&conn, &agent.id),
   };
-  history.push(serde_json::json!({ "role": "user", "content": input }));
+  history.push(serde_json::json!({ "role": "user", "content": turn_text }));
 
   // The session's project (if any) scopes this turn's memory: durable memory is
   // filed under the project so it accumulates across its conversations.
@@ -199,6 +209,10 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   if let Some(note) = &fallback_note { emit_status(&on_event, "think", note); }
   let mut is_ollama = resolved.kind == provider::Kind::Ollama;
   let mut is_anthropic = resolved.kind == provider::Kind::Anthropic;
+
+  // Images the chat model is meant to see go on the user's own turn, so they sit
+  // with the request they belong to rather than in a turn of their own.
+  attach_images(&mut messages, &media.images, is_ollama);
 
   // Tool-call rounds (non-streaming) run first, then the final reply streams.
   // Usage is accumulated across every round (and the final stream) so a run's
@@ -410,7 +424,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
       // The session IS the conversation, so record the turns there and leave the
       // agent-level copy alone — it belongs to the session-less path.
       if let Some(sess) = &session_id {
-        let _ = append_session_message(&conn, sess, &agent.id, "user", &input);
+        let _ = append_session_message(&conn, sess, &agent.id, "user", &turn_text);
         let _ = append_session_message(&conn, sess, &agent.id, "assistant", &delta);
       }
     } else {
@@ -507,6 +521,25 @@ async fn execute_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager:
       None => ToolOutput::text(format!("Unknown tool '{name}'.")),
     }
   }
+}
+
+// Puts the images the chat model is meant to see onto the user's own turn.
+// OpenAI-compatible providers take a content array; Ollama takes an `images`
+// array on the message. The text part is kept, so dropping an image never loses
+// what the user typed alongside it.
+fn attach_images(messages: &mut [serde_json::Value], images: &[String], is_ollama: bool) {
+  if images.is_empty() { return; }
+  let Some(turn) = messages.iter_mut().rev().find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user")) else { return };
+  if is_ollama {
+    turn["images"] = serde_json::json!(images);
+    return;
+  }
+  let text = turn.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+  let mut content = vec![serde_json::json!({ "type": "text", "text": text })];
+  for url in images {
+    content.push(serde_json::json!({ "type": "image_url", "image_url": { "url": url } }));
+  }
+  turn["content"] = serde_json::json!(content);
 }
 
 // Appends the model-visible image turn for a tool that returned images. OpenAI-
