@@ -174,7 +174,8 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     Some(p) if !p.trim().is_empty() => crate::agent_memory::scope_key("project", p),
     _ => crate::agent_memory::scope_key("agent", &agent.id),
   };
-  let system = format!("{system}{}", crate::memory::memory_block(&conn, &agent.id, &memory_scope));
+  let memory = crate::memory::memory_block(&app, &agent.id, &memory_scope, &input).await;
+  let system = format!("{system}{memory}");
 
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
   let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({ "role": "system", "content": system })];
@@ -182,7 +183,17 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
 
   // Resolve with a local fallback: if the configured model can't be used (no key
   // or unknown provider), fall back to a local Ollama model so the turn still replies.
-  let primary = provider::resolve(&conn, &agent.model, None);
+  let mut primary = provider::resolve(&conn, &agent.model, None);
+  // A dedicated vision model takes over when this agent can actually receive
+  // images (screen capture or browser). Falling through on any failure keeps the
+  // agent's own model in charge, so an unset or unusable role changes nothing.
+  if pc_control || has_browser {
+    if let Some(vid) = provider::explicit_role(&conn, "vision").filter(|v| *v != agent.model) {
+      if let Ok(v) = provider::resolve(&conn, &vid, None) {
+        if provider::supports_vision(v.kind) { primary = Ok(v); }
+      }
+    }
+  }
   let fallback_candidates = crate::fallback::local_candidates(&conn);
   let (mut resolved, fallback_note) = crate::fallback::resolve_with_fallback(primary, fallback_candidates.clone(), &agent.reasoning).await?;
   if let Some(note) = &fallback_note { emit_status(&on_event, "think", note); }

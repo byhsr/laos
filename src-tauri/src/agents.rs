@@ -346,10 +346,19 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
   for folder in ["files", "memory", "runs", "outputs"] { fs::create_dir_all(home.join(folder)).map_err(|e| e.to_string())?; }
   fs::write(home.join("config.json"), serde_json::to_string_pretty(&serde_json::json!({"id":agent.id,"name":agent.name,"objective":agent.objective,"model":agent.model,"tools":agent.tool_ids})).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
   let skills = skills_prompt(&conn, &agent.skill_ids);
-  let prompt = if structured {
-    format!("You are {}. Objective: {}\n{skills}\nTask: {}\n\nReturn a concise structured result in JSON with keys summary and result.", agent.name, agent.objective, input)
+  // Pull relevant history for this task when the agent keeps memory, so a
+  // one-shot run / task / workflow node / Telegram reply is not context-blind.
+  let memory_on: bool = conn.query_row("SELECT memory FROM agents WHERE id=?1", params![agent.id], |r| r.get::<_, i64>(0)).map(|v| v != 0).unwrap_or(false);
+  let ctx = if memory_on {
+    let scope = crate::agent_memory::scope_key("agent", &agent.id);
+    crate::retrieve::context_block(app, &scope, input, 300).await
   } else {
-    format!("You are {}. Objective: {}\n{skills}\nTask: {}\n\nReturn a helpful, direct answer.", agent.name, agent.objective, input)
+    String::new()
+  };
+  let prompt = if structured {
+    format!("You are {}. Objective: {}\n{skills}{ctx}\nTask: {}\n\nReturn a concise structured result in JSON with keys summary and result.", agent.name, agent.objective, input)
+  } else {
+    format!("You are {}. Objective: {}\n{skills}{ctx}\nTask: {}\n\nReturn a helpful, direct answer.", agent.name, agent.objective, input)
   };
   let mut resolved = provider::resolve(&conn, &agent.model, api_key)?;
   // The agent's own reasoning wins over the model's default.

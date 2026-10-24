@@ -227,3 +227,93 @@ pub(crate) fn apply_ollama_options(body: &mut serde_json::Value, max_tokens: u64
   body["keep_alive"] = serde_json::json!(OLLAMA_KEEP_ALIVE);
   body["options"] = serde_json::json!({ "num_predict": max_tokens });
 }
+
+// ---------------------------------------------------------------------------
+// Model roles
+//
+// One model need not do every job: classification and embeddings can be pinned to
+// dedicated models (a small local model, or a hosted embedding API) while chat
+// stays on its own. A role is optional — unset means "use the sensible default",
+// so an app that never configured roles behaves exactly as before.
+// ---------------------------------------------------------------------------
+
+/// The provider kind of a stored `"<provider>:<model>"` id, if recognised.
+pub(crate) fn kind_of_id(id: &str) -> Option<Kind> {
+  Some(match id.split(':').next().unwrap_or("") {
+    "ollama" => Kind::Ollama,
+    "groq" => Kind::Groq,
+    "openrouter" => Kind::OpenRouter,
+    "openai" => Kind::OpenAi,
+    "google" => Kind::Google,
+    "xai" => Kind::Xai,
+    "anthropic" => Kind::Anthropic,
+    _ => return None,
+  })
+}
+
+/// Whether a provider can serve embeddings. Kept deliberately conservative — a
+/// role that claims a capability the provider lacks would fail at request time.
+pub(crate) fn supports_embeddings(kind: Kind) -> bool {
+  matches!(kind, Kind::Ollama | Kind::OpenAi | Kind::Google | Kind::Xai)
+}
+
+/// The embeddings endpoint for a resolved model. Ollama exposes it under
+/// `/api/embeddings`; OpenAI-compatible providers under `/embeddings` beneath the
+/// same base as chat (strip the `/chat/completions` tail).
+pub(crate) fn embeddings_url(resolved: &Resolved) -> String {
+  match resolved.kind {
+    Kind::Ollama => format!("{}/api/embeddings", resolved.base),
+    _ => {
+      let base = resolved.base.trim_end_matches('/');
+      let base = base.strip_suffix("/chat/completions").unwrap_or(base);
+      format!("{base}/embeddings")
+    }
+  }
+}
+
+/// The roles a model can fill. `embedding` has a hard capability requirement
+/// (see `supports_embeddings`); the rest fall back to the generic default.
+pub(crate) const ROLES: [&str; 5] = ["classifier", "embedding", "reranker", "vision", "distillation"];
+
+/// Whether a provider can serve vision (image) input. Every chat provider here
+/// accepts image parts, so this only exists to exclude nothing today — kept
+/// explicit so a future text-only provider is filtered at resolution.
+pub(crate) fn supports_vision(_kind: Kind) -> bool { true }
+
+/// A role that only takes effect when explicitly pinned. Used where a default
+/// would silently change existing behaviour (which model edits images, reorders
+/// memory, or distils a chat) instead of adding a capability, so an unconfigured
+/// app behaves exactly as it did before the role existed.
+pub(crate) fn explicit_role(conn: &Connection, role: &str) -> Option<String> {
+  conn.query_row("SELECT model_id FROM model_roles WHERE role=?1", params![role], |r| r.get::<_, String>(0))
+    .ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// Which model fills a role. An explicit `model_roles` row wins; otherwise a
+/// deterministic default so the feature works with no configuration:
+///
+/// * `embedding` — the first enabled model whose provider supports embeddings
+///   (preferring a local Ollama one), else `None`.
+/// * anything else (`classifier`, `reranker`, `vision`, `distillation`) — the
+///   first enabled model, preferring a cloud model over Ollama (structured work
+///   on a small local model is unreliable).
+pub(crate) fn resolve_role(conn: &Connection, role: &str) -> Option<String> {
+  if let Ok(explicit) = conn.query_row("SELECT model_id FROM model_roles WHERE role=?1", params![role], |r| r.get::<_, String>(0)) {
+    let explicit = explicit.trim();
+    if !explicit.is_empty() { return Some(explicit.to_string()); }
+  }
+  if role == "embedding" {
+    let mut stmt = conn.prepare("SELECT id FROM model_configs WHERE enabled=1 ORDER BY CASE WHEN provider='ollama' THEN 0 ELSE 1 END, id").ok()?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0)).ok()?;
+    for r in rows {
+      if let Ok(id) = r {
+        if kind_of_id(&id).map(supports_embeddings).unwrap_or(false) { return Some(id); }
+      }
+    }
+    return None;
+  }
+  conn.query_row(
+    "SELECT id FROM model_configs WHERE enabled=1 ORDER BY CASE WHEN provider='ollama' THEN 1 ELSE 0 END, id LIMIT 1",
+    [], |r| r.get(0),
+  ).ok()
+}

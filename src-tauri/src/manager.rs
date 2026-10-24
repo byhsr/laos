@@ -306,7 +306,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   // what it has learned (recall_memory still works for a deeper pull).
   let pc_control = manager.permissions.iter().any(|p| p == "pc_control");
   let scope = crate::agent_memory::scope_key("agent", &manager.id);
-  let memory = crate::memory::memory_block(&conn, &manager.id, &scope);
+  let memory = crate::memory::memory_block(app, &manager.id, &scope, message).await;
   let context = build_manager_system_prompt(&conn, &manager.name, &manager.tool_ids, pc_control)?;
   let prompt = format!("{context}{memory}\n\nUser message: {message}");
 

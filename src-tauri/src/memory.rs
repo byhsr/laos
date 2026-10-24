@@ -309,9 +309,20 @@ async fn close_chat_session(app: &AppHandle, session_id: &str, agent_id: &str, m
   }
   // Distill the finished chat into durable memory — the agent's own typed
   // memories and self-model — so it learns from the session without being asked.
-  distill_session(app, agent_id, model, &joined).await;
+  // Project sessions file under the project's scope, so project memory stays
+  // together instead of leaking into the agent's own namespace.
+  let scope = session_scope(&conn, session_id, agent_id);
+  distill_session(app, agent_id, &scope, model, &joined).await;
 
   Ok(summary)
+}
+
+// The memory scope a session's distilled memory belongs to.
+fn session_scope(conn: &Connection, session_id: &str, agent_id: &str) -> String {
+  match session_project(conn, session_id) {
+    Some(p) if !p.trim().is_empty() => crate::agent_memory::scope_key("project", &p),
+    _ => crate::agent_memory::scope_key("agent", agent_id),
+  }
 }
 
 const DISTILL_MAX_TOKENS: u64 = 1200;
@@ -319,7 +330,7 @@ const DISTILL_MAX_TOKENS: u64 = 1200;
 // Turns a finished chat into durable memory: asks the model for the agent's own
 // self-knowledge and know-how (not a recap), then writes it straight into the
 // memory connector. This is how the agent learns from a session on its own.
-async fn distill_session(app: &AppHandle, agent_id: &str, model: &str, transcript: &str) {
+async fn distill_session(app: &AppHandle, agent_id: &str, scope: &str, model: &str, transcript: &str) {
   if transcript.trim().is_empty() { return; }
   let transcript: String = transcript.chars().take(MAX_SUMMARY_INPUT_CHARS).collect();
   let prompt = format!(
@@ -328,16 +339,22 @@ async fn distill_session(app: &AppHandle, agent_id: &str, model: &str, transcrip
      {{\"self\":[{{\"key\":\"identity|values|goals|current_focus|capabilities\",\"value\":\"...\"}}],\"memories\":[{{\"kind\":\"semantic|procedural|policy|preference|reflection\",\"title\":\"...\",\"content\":\"...\",\"tags\":[\"...\"],\"importance\":0.0,\"confidence\":0.0}}]}}\n\
      Only include items clearly supported by the chat. Empty arrays are fine.\n\nConversation:\n{transcript}"
   );
-  let Ok(reply) = one_shot_completion(app, model, &prompt, DISTILL_MAX_TOKENS).await else { return; };
+  // A dedicated distillation model wins when configured; otherwise the caller's
+  // (the chatting agent's) model does the work, exactly as before.
+  let model = db(app).ok()
+    .and_then(|conn| crate::provider::explicit_role(&conn, "distillation"))
+    .unwrap_or_else(|| model.to_string());
+  let Ok(reply) = one_shot_completion(app, &model, &prompt, DISTILL_MAX_TOKENS).await else { return; };
   let Some(json) = extract_json(&reply) else { return; };
   let app = app.clone();
   let agent_id = agent_id.to_string();
-  let _ = tauri::async_runtime::spawn_blocking(move || { crate::fox::write_distilled(&app, &agent_id, &json); }).await;
+  let scope = scope.to_string();
+  let _ = tauri::async_runtime::spawn_blocking(move || { crate::fox::write_distilled(&app, &agent_id, &scope, &json); }).await;
 }
 
 // Pulls the first JSON object out of a model reply that may be wrapped in prose
 // or ```json fences.
-fn extract_json(text: &str) -> Option<serde_json::Value> {
+pub(crate) fn extract_json(text: &str) -> Option<serde_json::Value> {
   let start = text.find('{')?;
   let end = text.rfind('}')?;
   if end <= start { return None; }
@@ -352,15 +369,16 @@ const DISTILL_EVERY: i64 = 8;
 /// makes memory accumulate during normal use. Re-distillation is safe because
 /// `fox::write_distilled` skips memories it already holds.
 pub(crate) async fn distill_if_due(app: &AppHandle, session_id: &str, agent_id: &str, model: &str) {
-  let (transcript, count) = {
+  let (transcript, count, scope) = {
     let Ok(conn) = db(app) else { return };
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM chat_messages WHERE session_id=?1", params![session_id], |r| r.get(0)).unwrap_or(0);
     let distilled: i64 = conn.query_row("SELECT distilled_count FROM chat_sessions WHERE id=?1", params![session_id], |r| r.get(0)).unwrap_or(0);
     if count - distilled < DISTILL_EVERY { return; }
     let transcript = match session_transcript(&conn, session_id) { Some(t) => t, None => return };
-    (transcript, count)
+    let scope = session_scope(&conn, session_id, agent_id);
+    (transcript, count, scope)
   };
-  distill_session(app, agent_id, model, &transcript).await;
+  distill_session(app, agent_id, &scope, model, &transcript).await;
   if let Ok(conn) = db(app) {
     let _ = conn.execute("UPDATE chat_sessions SET distilled_count=?2 WHERE id=?1", params![session_id, count]);
   }
@@ -376,19 +394,30 @@ fn session_transcript(conn: &Connection, session_id: &str) -> Option<String> {
 }
 
 /// The durable-memory block injected into an agent's system prompt: what it has
-/// learned (typed memories + self-model) for its scope, plus recent day context.
-/// Empty when there's nothing to recall, so a fresh agent's prompt is unchanged.
-pub(crate) fn memory_block(conn: &Connection, agent_id: &str, scope: &str) -> String {
-  let mut out = String::new();
-  let learned = crate::agent_memory::compile_context(conn, agent_id, scope, 700);
-  if !learned.trim().is_empty() {
-    out.push_str("\n\n## What you remember (long-term memory)\n");
-    out.push_str(&learned);
-  }
-  if let Ok(day) = build_day_context(conn, agent_id) {
-    if !day.trim().is_empty() { out.push_str(&day); }
-  }
-  out
+/// learned (typed memories + self-model) for its scope, recent day context, and a
+/// bounded slice of hybrid-retrieved context for THIS request. Empty when there's
+/// nothing to recall, so a fresh agent's prompt is unchanged.
+///
+/// The retrieved slice is what makes recall query-aware: a "what should I work on
+/// today" turn pulls active commitments, a "that idea I had" turn pulls dormant
+/// ideas — instead of always dumping the same compiled memory.
+pub(crate) async fn memory_block(app: &AppHandle, agent_id: &str, scope: &str, request: &str) -> String {
+  // Scoped so the connection is dropped before the retrieval await.
+  let base = {
+    let Ok(conn) = db(app) else { return String::new() };
+    let mut out = String::new();
+    let learned = crate::agent_memory::compile_context(&conn, agent_id, scope, 700);
+    if !learned.trim().is_empty() {
+      out.push_str("\n\n## What you remember (long-term memory)\n");
+      out.push_str(&learned);
+    }
+    if let Ok(day) = build_day_context(&conn, agent_id) {
+      if !day.trim().is_empty() { out.push_str(&day); }
+    }
+    out
+  };
+  let retrieved = crate::retrieve::context_block(app, scope, request, 350).await;
+  format!("{base}{retrieved}")
 }
 
 #[tauri::command]

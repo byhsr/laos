@@ -7,7 +7,7 @@ use std::time::Duration;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use crate::db::db;
 
@@ -193,10 +193,13 @@ pub(crate) async fn reflect(app: &AppHandle) -> Result<usize, String> {
       let body = ins["body"].as_str().unwrap_or("").to_string();
       let confidence = ins["confidence"].as_f64().unwrap_or(0.5);
       insert(&conn, kind, &title, &body, confidence)?;
-      // Goals and preferences are durable — mirror them into native memory.
+      // Goals and preferences are durable — mirror them into native memory and
+      // index them in the brain map so they participate in retrieval.
       if kind == "goal" || kind == "preference" {
         let mem_kind = if kind == "goal" { "reflection" } else { "preference" };
-        let _ = crate::agent_memory::add_memory(&conn, "manager", "global", mem_kind, &title, &body, &json!([]), confidence, 0.7);
+        if let Ok(mem_id) = crate::agent_memory::add_memory(&conn, "manager", "global", mem_kind, &title, &body, &json!([]), confidence, 0.7) {
+          crate::brain::index_memory(app, &conn, "global", &mem_id, mem_kind, &title, &body, confidence, 0.7);
+        }
       }
       written += 1;
     }
@@ -210,7 +213,52 @@ pub(crate) async fn reflect(app: &AppHandle) -> Result<usize, String> {
     }
   }
 
+  // Refresh attention signals and (deterministically) draft any observations the
+  // evidence supports. These are proposals — never facts, always correctable.
+  let drafted = {
+    let _ = crate::brain::compute_attention(&conn);
+    crate::brain::draft_observations(&conn)
+  };
+  drop(conn);
+  // Phrase the new observations in plain language (best effort) and announce
+  // them, so a real pattern reaches the user instead of waiting to be found.
+  if drafted > 0 {
+    let _ = phrase_observations(app).await;
+    let _ = app.emit("brain-notice", json!({ "kind": "observation", "count": drafted, "title": "New observation to review" }));
+  }
+
   Ok(written)
+}
+
+/// Rewrites the deterministic observation wording with a model, so a proposal
+/// reads like a sentence rather than a template. Best-effort throughout: with no
+/// model, or an unusable reply, the deterministic wording simply stands.
+async fn phrase_observations(app: &AppHandle) -> usize {
+  let (pending, model_id) = {
+    let Ok(conn) = db(app) else { return 0 };
+    let pending = crate::brain::unphrased_observations(&conn);
+    if pending.is_empty() { return 0; }
+    let model_id = crate::provider::resolve_role(&conn, "classifier");
+    (pending, model_id)
+  };
+  let Some(model_id) = model_id else { return 0 };
+  let listing = pending.iter().map(|(_, t, b)| format!("- {t}: {b}")).collect::<Vec<_>>().join("\n");
+  let prompt = format!(
+    "Rewrite each observation as one calm, plain sentence. No advice, no judgment, no exclamation marks. \
+     Return STRICT JSON only: {{\"lines\":[\"...\"]}} with one line per observation, in the same order.\n\n{listing}"
+  );
+  let Ok(reply) = crate::memory::one_shot_completion(app, &model_id, &prompt, 400).await else { return 0 };
+  let Some(json) = crate::memory::extract_json(&reply) else { return 0 };
+  let Some(lines) = json["lines"].as_array() else { return 0 };
+  let Ok(conn) = db(app) else { return 0 };
+  let mut n = 0;
+  for (i, (id, _, _)) in pending.iter().enumerate() {
+    if let Some(line) = lines.get(i).and_then(|l| l.as_str()).map(|s| s.trim()).filter(|s| s.len() > 3) {
+      crate::brain::mark_observation_phrased(&conn, id, line);
+      n += 1;
+    }
+  }
+  n
 }
 
 /// Reflects in the background every 30 minutes; a no-op pass costs nothing when

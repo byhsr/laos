@@ -44,17 +44,19 @@ pub(crate) fn record_turn(app: &AppHandle, agent_id: &str, user: &str, assistant
   if !assistant.trim().is_empty() {
     let _ = am::record_event(&conn, agent_id, &scope, "assistant_message", "assistant", assistant, &empty, 0.5);
   }
+  // Mirror the turn into the brain map as a searchable conversation node.
+  crate::brain::index_conversation(app, &conn, agent_id, &scope, user, assistant);
 }
 
-/// Writes the memories + self-model entries produced by a distillation pass.
-/// Returns how many items were stored.
-pub(crate) fn write_distilled(app: &AppHandle, agent_id: &str, distilled: &Value) -> usize {
-  let scope = am::scope_key("agent", agent_id);
+/// Writes the memories + self-model entries produced by a distillation pass, into
+/// the given scope (the project's when the session belongs to one, else the
+/// agent's). Returns how many items were stored.
+pub(crate) fn write_distilled(app: &AppHandle, agent_id: &str, scope: &str, distilled: &Value) -> usize {
   let Ok(conn) = db(app) else { return 0 };
   let mut stored = 0;
   // Distillation re-runs as a session grows, so skip anything this scope already
   // knows (matched by title) rather than piling up near-duplicates.
-  let mut seen: std::collections::HashSet<String> = am::list_memories(&conn, &scope, 500).iter()
+  let mut seen: std::collections::HashSet<String> = am::list_memories(&conn, scope, 500).iter()
     .filter_map(|m| m.get("title").and_then(|t| t.as_str()).map(|s| s.trim().to_lowercase()))
     .collect();
 
@@ -63,7 +65,7 @@ pub(crate) fn write_distilled(app: &AppHandle, agent_id: &str, distilled: &Value
       let key = e.get("key").and_then(|x| x.as_str()).unwrap_or("").trim();
       let value = e.get("value").and_then(|x| x.as_str()).unwrap_or("").trim();
       if key.is_empty() || value.is_empty() { continue; }
-      if am::set_self_model(&conn, agent_id, &scope, key, value, 0.8, 0.7).is_ok() { stored += 1; }
+      if am::set_self_model(&conn, agent_id, scope, key, value, 0.8, 0.7).is_ok() { stored += 1; }
     }
   }
 
@@ -77,7 +79,11 @@ pub(crate) fn write_distilled(app: &AppHandle, agent_id: &str, distilled: &Value
       let tags = m.get("tags").cloned().unwrap_or_else(|| serde_json::json!([]));
       let confidence = m.get("confidence").and_then(|x| x.as_f64()).unwrap_or(0.8);
       let importance = m.get("importance").and_then(|x| x.as_f64()).unwrap_or(0.5);
-      if am::add_memory(&conn, agent_id, &scope, kind, title, content, &tags, confidence, importance).is_ok() { stored += 1; }
+      if let Ok(mem_id) = am::add_memory(&conn, agent_id, scope, kind, title, content, &tags, confidence, importance) {
+        // Index it so distilled memory is part of the graph + retrieval.
+        crate::brain::index_memory(app, &conn, scope, &mem_id, kind, title, content, confidence, importance);
+        stored += 1;
+      }
     }
   }
 

@@ -642,6 +642,19 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
           }
         }
       }
+      "retrieve_context" => {
+        // Hybrid retrieval as a reusable step: the query is the node's own config
+        // or the accumulated input; the output is JSON the next node can consume.
+        let query = config.get("query").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()).map(|s| s.to_string()).unwrap_or_else(|| current_input.clone());
+        let scope = config.get("scope").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()).map(|s| s.to_string());
+        let modes: Vec<String> = config.get("modes").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+        let budget = config.get("budget").and_then(|v| v.as_u64()).unwrap_or(8) as usize;
+        let opts = crate::retrieve::RetrieveOpts { scope, modes, budget, ..Default::default() };
+        let hits = crate::retrieve::gather(app, &query, opts).await;
+        let items: Vec<serde_json::Value> = hits.iter().map(|h| serde_json::json!({ "node": h.node, "score": h.score, "evidence": h.evidence })).collect();
+        let text = crate::retrieve::render_block(&hits, 900);
+        serde_json::json!({ "text": text, "items": items }).to_string()
+      }
       _ => current_input.clone(), // trigger/loop: pass through for now
     };
     steps.push(WorkflowStep { node_id: node_id.clone(), node_label: label, output: output.clone(), prompt_tokens: 0, completion_tokens: 0 });

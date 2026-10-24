@@ -5,7 +5,6 @@
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tauri::AppHandle;
 
 use crate::db::db;
@@ -71,6 +70,14 @@ fn find(conn: &Connection, query: &str) -> Option<Item> {
   list(conn, None).into_iter().find(|i| {
     i.title.to_lowercase().contains(&q) || i.body.to_lowercase().contains(&q)
   })
+}
+
+/// An open item whose title is exactly this text (case-insensitive). Used to make
+/// free-text ingestion idempotent: filing the same thought twice updates one item.
+pub(crate) fn find_exact_active(conn: &Connection, title: &str) -> Option<Item> {
+  let t = title.trim().to_lowercase();
+  if t.is_empty() { return None; }
+  list(conn, None).into_iter().find(|i| i.status == "active" && i.title.trim().to_lowercase() == t)
 }
 
 pub(crate) fn upsert(conn: &Connection, item: &Item) -> Result<(), String> {
@@ -199,6 +206,16 @@ fn kind_for_command(cmd: &str) -> Option<&'static str> {
   }
 }
 
+/// Maps a Lumin item kind to the brain map's content type.
+fn content_type_for(kind: &str) -> &'static str {
+  match kind {
+    "todo" | "reminder" => "task",
+    "promise" => "goal",
+    "habit" => "habit",
+    _ => "note",
+  }
+}
+
 // `/items [kind]` numbers a kind-filtered, newest-first, 20-row view. `/done`,
 // `/forget` and Telegram's `/send` must index exactly that list, so each source's
 // last listed kind is remembered here. Without it they numbered a different list
@@ -293,11 +310,22 @@ pub(crate) fn command(app: &AppHandle, text: &str, source: &str) -> Option<Resul
     } else { "" };
     let title = title_from(&body);
     let url = url_in(&body);
+    // The fast path never calls a model, so the reading is synthesized, not inferred.
+    let class = crate::classify::Classification {
+      content_type: content_type_for(kind).into(),
+      intent: "create".into(),
+      feature: kind.into(),
+      action: "create".into(),
+      confidence: 0.9,
+      ..Default::default()
+    };
     return Some(match add(&conn, NewItem {
       kind, title: &title, body: &body, url: &url, tags, collection: &collection,
       due_at, cadence, project_id: "", source,
     }) {
       Ok(item) => {
+        // Mirror it into the brain map (index node + entities + event).
+        crate::brain::ingest_item(app, &conn, &item, &class, "life");
         // A capture bot with a destination sends the idea on (fire-and-forget).
         crate::destinations::auto_push(app, &item, source);
         Ok(confirm(&item))
@@ -341,7 +369,10 @@ fn confirm(item: &Item) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// The extractor: messy text -> structured intent.
+// The intent (Lumin's view of a classification).
+//
+// The model that produces it now lives in `classify.rs` (the universal
+// classifier); these types are the shape `capture::apply` consumes.
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize, Default)]
@@ -363,120 +394,26 @@ pub(crate) struct IntentParams {
   #[serde(default)] pub cadence: String,
 }
 
-const EXTRACTOR: &str = "You are the extractor — the anchor every message passes through. Turn messy, \
-low-effort language into one structured intent. Output strict JSON only: no prose, no code fences.\n\
-\n\
-SCHEMA:\n\
-{\n\
-  \"type\": \"chat|feature\",\n\
-  \"feature\": \"note|todo|reminder|promise|link|habit|null\",\n\
-  \"action\": \"create|read|update|delete|complete|null\",\n\
-  \"params\": {\n\
-    \"title\": \"short title, 3-7 words\",\n\
-    \"body\": \"the full text as the user said it\",\n\
-    \"url\": \"the link, or empty\",\n\
-    \"tags\": [\"#tags without #\"],\n\
-    \"due_at\": \"absolute local ISO-8601 timestamp, or null\",\n\
-    \"cadence\": \"daily|weekly|monthly for habits, else empty\"\n\
-  },\n\
-  \"mood\": \"neutral|positive|negative\",\n\
-  \"intent_shape\": \"clear|vague|mixed\",\n\
-  \"needs_guardrail\": false,\n\
-  \"confidence\": 0.0\n\
-}\n\
-\n\
-RULES\n\
-- feature: reminder = has a time (\"call mom at 6pm\", \"tonight\"); todo = intends to do it, no time; \
-promise = an explicit commitment (\"I will\", \"I'll\"); habit = something repeated (\"every day\", \
-\"every week\", \"daily\"); link = the message shares a URL; note = an idea/fact/thought worth keeping; \
-chat = just conversation, nothing to file (then feature and action are null).\n\
-- action: create for new things; complete for \"I did X\" / \"done with X\"; read for \"show me / what \
-are my X\"; update for \"change X to Y\"; delete for \"remove X\".\n\
-- Resolve EVERY relative time to an absolute local ISO-8601 timestamp in params.due_at. Never leave \
-\"tonight\" or \"6pm\" as text.\n\
-- Always fill every field; unknown -> null or empty string.";
-
-fn extractor_system() -> String {
-  let now = chrono::Local::now();
-  format!("{EXTRACTOR}\n\nRight now it is {} (local time, UTC offset {}). Resolve times against this.",
-    now.format("%Y-%m-%d %H:%M %A"), now.offset())
-}
-
-/// Runs the extractor over free text. Never errors: an unparsable reply becomes a
-/// plain `note`, so nothing the user sends is ever lost.
-pub(crate) async fn extract(app: &AppHandle, text: &str) -> Intent {
-  let mut intent = extract_inner(app, text).await.unwrap_or_default();
-  // A failed call (no model, network error) comes back empty — treat it as a note.
-  if intent.r#type.trim().is_empty() { intent.r#type = "feature".into(); }
-  if !intent_feature_known(&intent.feature) { intent.feature = "note".into(); }
-  if intent.action.trim().is_empty() || intent.action == "null" { intent.action = "create".into(); }
-  intent
-}
-
 fn intent_feature_known(f: &str) -> bool { KINDS.contains(&f.trim()) }
 
-async fn extract_inner(app: &AppHandle, text: &str) -> Result<Intent, String> {
-  let (model_id, reply) = {
-    let conn = db(app)?;
-    let model_id = pick_model(&conn).ok_or("No model configured.")?;
-    let resolved = crate::provider::resolve(&conn, &model_id, None)?;
-
-    let mut body = json!({
-      "model": resolved.model,
-      "messages": [
-        { "role": "system", "content": extractor_system() },
-        { "role": "user", "content": text }
-      ],
-      "temperature": 0.1,
-      "stream": false
-    });
-    crate::http::apply_openai_defaults(&mut body, resolved.kind == crate::provider::Kind::OpenRouter, 400);
-    crate::provider::apply_reasoning(&mut body, &resolved, 400);
-    if resolved.kind == crate::provider::Kind::Anthropic { body = crate::anthropic::to_wire(&body); }
-
-    let client = crate::http::client();
-    let resp = crate::http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, crate::http::MODEL_ATTEMPTS).await?;
-    let mut reply: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    if resolved.kind == crate::provider::Kind::Anthropic { reply = crate::anthropic::normalize_response(&reply); }
-    (model_id, reply["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
-  };
-  let _ = model_id;
-  Ok(parse_intent(&reply))
-}
-
-fn parse_intent(raw: &str) -> Intent {
-  let cleaned = raw.replace("```json", "").replace("```", "");
-  let value: serde_json::Value = serde_json::from_str(cleaned.trim()).unwrap_or(serde_json::Value::Null);
-  let mut intent: Intent = serde_json::from_value(value.clone()).unwrap_or_default();
-  // Models sometimes answer with a bare feature string ("todo").
-  if intent.feature.is_empty() {
-    if let Some(s) = value.as_str() { intent.feature = s.trim().to_ascii_lowercase(); }
-  }
-  if intent.action.trim().is_empty() || intent.action == "null" { intent.action = "create".into(); }
-  if intent.params.cadence.trim().is_empty() {
-    intent.params.cadence = norm_cadence(&intent.params.cadence);
-  }
-  intent
-}
-
-fn pick_model(conn: &Connection) -> Option<String> {
-  conn.query_row("SELECT id FROM model_configs WHERE enabled=1 ORDER BY id LIMIT 1", [], |r| r.get(0)).ok()
-}
-
-/// Files free text: extract the intent, then apply it to the store.
+/// Files free text: classify it, then apply the intent to the store.
 pub(crate) async fn remember(app: &AppHandle, text: &str, source: &str) -> Result<String, String> {
   let trimmed = text.trim();
   if trimmed.is_empty() { return Err(help()); }
-  let intent = extract(app, trimmed).await;
+  let class = crate::classify::classify(app, trimmed, source).await;
+  let intent = crate::classify::to_intent(&class);
   let conn = db(app)?;
-  // The extractor's `type` gate: pure conversation isn't filed. Say so rather
+  // The classifier's `type` gate: pure conversation isn't filed. Say so rather
   // than silently swallowing it.
   if intent.r#type.trim() == "chat" && intent.action.trim() != "read" {
     return Ok("Noted — nothing to file (use /n to keep it as a note).".into());
   }
   let (reply, created) = apply(&conn, &intent, trimmed, source)?;
-  // A capture bot with a destination sends the new item on (fire-and-forget).
-  if let Some(item) = &created { crate::destinations::auto_push(app, item, source); }
+  if let Some(item) = &created {
+    // Mirror the file into the brain map, then hand it to the bot's destination.
+    crate::brain::ingest_item(app, &conn, item, &class, "life");
+    crate::destinations::auto_push(app, item, source);
+  }
   // A low-confidence read still files (nothing is ever lost) but says so.
   Ok(if intent.confidence > 0.0 && intent.confidence < 0.4 { format!("{reply} · low confidence, check it in Items") } else { reply })
 }
@@ -516,6 +453,15 @@ fn apply(conn: &Connection, intent: &Intent, raw: &str, source: &str) -> Result<
       } else { Err(format!("Couldn't find anything matching “{title}”.")) }
     }
     _ => {
+      // Idempotent ingestion: the same thought filed twice (a retried bot message,
+      // a repeated note) updates the open item instead of making a duplicate.
+      if let Some(existing) = find_exact_active(conn, &title) {
+        conn.execute(
+          "UPDATE items SET body=?2, kind=?3, url=?4, tags=?5, due_at=COALESCE(?6, due_at), cadence=?7, updated_at=?8 WHERE id=?1",
+          params![existing.id, body, kind, url, serde_json::to_string(&tags).unwrap_or_else(|_| "[]".into()), p.due_at.clone(), norm_cadence(&p.cadence), now()],
+        ).map_err(|e| e.to_string())?;
+        return Ok((format!("Already saved — {title}"), None));
+      }
       let item = add(conn, NewItem {
         kind, title: &title, body: &body, url: &url, tags, collection: &collection,
         due_at: p.due_at.clone(), cadence: &p.cadence, project_id: "", source,
@@ -600,6 +546,20 @@ mod tests {
        VALUES (?1,?2,'','','','[]','','active','',0,'','',?3,?3)",
       params![id, kind, created_at],
     ).unwrap();
+  }
+
+  /// Filing the same thought twice must keep one item, not two: the brain node is
+  /// idempotent by `ref_id`, so without this the item list would grow a duplicate.
+  #[test]
+  fn refiling_the_same_title_finds_the_open_item() {
+    let conn = items_db();
+    let a = add(&conn, NewItem {
+      kind: "todo", title: "Water the plants", body: "", url: "", tags: vec![],
+      collection: "", due_at: None, cadence: "", project_id: "", source: "app",
+    }).unwrap();
+    let found = find_exact_active(&conn, "  water the PLANTS ").expect("case/space-insensitive exact match");
+    assert_eq!(found.id, a.id);
+    assert!(find_exact_active(&conn, "water the ferns").is_none(), "a different title is not the same item");
   }
 
   /// The bug: `/send 1`, `/done 1` and `/forget 1` indexed an unfiltered list

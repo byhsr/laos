@@ -3,11 +3,15 @@ mod agents;
 mod agent_memory;
 mod anthropic;
 mod app_settings;
+mod brain;
 mod browser;
 mod capture;
 mod chat;
+mod classify;
 mod db;
 mod destinations;
+mod embed;
+mod eval;
 mod fallback;
 mod fox;
 mod http;
@@ -19,6 +23,7 @@ mod memory;
 mod models;
 mod provider;
 mod reminders;
+mod retrieve;
 mod storage;
 mod tasks;
 mod telegram;
@@ -262,6 +267,24 @@ fn main() {
       destinations::destination_tools,
       destinations::test_destination,
       destinations::push_item,
+      // Brain map (the personal context engine: nodes, edges, observations)
+      brain::brain_graph,
+      brain::brain_node,
+      brain::brain_stats,
+      brain::brain_forget_node,
+      brain::brain_list_observations,
+      brain::brain_correct_observation,
+      brain::brain_dismiss_observation,
+      brain::brain_accept_observation,
+      brain::brain_reindex,
+      brain::brain_reflect_now,
+      // Hybrid retrieval (shared by chat, agents, workflows and the UI)
+      retrieve::retrieve_context,
+      // Evaluation harness (quality + reliability metrics)
+      eval::brain_eval,
+      // Model roles (classifier / embedding)
+      storage::list_model_roles,
+      storage::set_model_role,
     ])
     .build(tauri::generate_context!())
     .expect("error while running Local Agent OS")

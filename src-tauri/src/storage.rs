@@ -200,6 +200,43 @@ pub fn delete_model_config(app: AppHandle, id: String) -> Result<(), String> {
   Ok(())
 }
 
+// Model roles: which model fills `classifier` / `embedding` / `reranker` /
+// `vision` / `distillation`. An unset role means "use the deterministic default"
+// (see provider::resolve_role), so a fresh app needs no configuration.
+
+#[tauri::command]
+pub fn list_model_roles(app: AppHandle) -> Result<serde_json::Value, String> {
+  let conn = db(&app)?;
+  let mut out = serde_json::Map::new();
+  for role in crate::provider::ROLES {
+    let explicit = crate::provider::explicit_role(&conn, role);
+    // classifier/embedding always resolve to a default; the opt-in roles
+    // (reranker/vision/distillation) only take effect when pinned, so the UI can
+    // show them as off until chosen.
+    let resolved = if matches!(role, "classifier" | "embedding") {
+      crate::provider::resolve_role(&conn, role)
+    } else {
+      explicit.clone()
+    };
+    out.insert(role.to_string(), serde_json::json!({
+      "modelId": explicit.unwrap_or_default(),
+      "resolved": resolved,
+    }));
+  }
+  Ok(serde_json::Value::Object(out))
+}
+
+#[tauri::command]
+pub fn set_model_role(app: AppHandle, role: String, model_id: String) -> Result<(), String> {
+  let conn = db(&app)?;
+  conn.execute(
+    "INSERT INTO model_roles (role, model_id, updated_at) VALUES (?1,?2,?3)
+     ON CONFLICT(role) DO UPDATE SET model_id=excluded.model_id, updated_at=excluded.updated_at",
+    params![role, model_id, chrono::Local::now().to_rfc3339()],
+  ).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 // Header values whose name marks them secret live in the credential store, so a
 // tool's saved config only ever carries the `REF` sentinel. The UI sees the
 // "set" marker instead; the real value is resolved when the request is built.
