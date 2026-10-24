@@ -79,6 +79,52 @@ created_at, updated_at, UNIQUE(agent_id, scope, key)); `am_namespaces`(key PK, t
 description, created_at, updated_at, metadata). Scopes are keys (`agent:<id>` / `project:<id>` /
 `global`).
 
+### `brain_nodes` / `brain_edges` / `brain_events` / `brain_observations` / `attention_state` / `embeddings`
+
+The personal context engine (`src-tauri/src/brain.rs`, `classify.rs`, `retrieve.rs`, `embed.rs`).
+Additive: nothing existing is migrated.
+
+- `brain_nodes`(id PK, kind, scope, title, body, ref_kind, ref_id, source, provenance, status,
+  tags, importance, salience, confidence, meta, created_at, updated_at) — the unified node
+  registry. When `ref_id != ''` the authoritative row lives in `items` / `am_memories` /
+  `chat_messages` (`ref_kind` names it) and the node is an index + edge anchor; otherwise the node
+  owns its content (people, decisions, ideas, goals…). A partial unique index
+  `(ref_kind, ref_id)` keeps re-filing an item idempotent. `provenance` is `stated` or `inferred`.
+- `brain_edges`(id PK, src_id, dst_id, relation, provenance, confidence, evidence, created_at,
+  updated_at, UNIQUE(src_id, dst_id, relation)) — typed relationships; a re-observed edge raises
+  its confidence. Relations include `associated with`, `belongs to project`, `related to`, and the
+  inferred `supersedes` (a new goal/decision replacing an earlier one).
+- `brain_events`(id PK, agent_id, scope, kind, content, data, node_id, occurred_at) — append-only
+  log of interactions and state changes (distinct from `am_events`, the raw episode log).
+- `brain_observations`(id PK, scope, dimension, kind, title, body, confidence, evidence, status,
+  first_seen_at, last_seen_at, created_at, updated_at) — inferred patterns with evidence,
+  de-duplicated by title. `status` is `new` / `accepted` / `dismissed` / `corrected`. `dimension`
+  names the signal (`displacement`, `drift`, …) or `entity_resolution` for a name that matched two
+  nodes equally and needs the user to choose; `evidence` may carry `{"phrased":true}` once the
+  wording has been through the model.
+- `attention_state`(id PK, scope, node_id, dimension, value, evidence, confidence, observed_at,
+  updated_at, UNIQUE(node_id, dimension)) — per-node attention signals, computed deterministically
+  from observable evidence: `allocation`, `dormancy`, `intention`, `persistence`, `momentum`,
+  `displacement`, `drift`, `reentry`, `salience`. `brain_graph` returns them per node (keyed by
+  dimension) so the Graph view's attention lens can size/colour nodes.
+- `embeddings`(id PK, source_kind, source_id, model, dim, vector BLOB, content_hash, created_at,
+  UNIQUE(source_kind, source_id)) — vectors stored as little-endian f32 and ranked in Rust
+  (cosine); no native SQLite extension.
+- `brain_fts` — an FTS5 index over `brain_nodes` (`node_id UNINDEXED, title, body, tags`). When
+  SQLite is built without FTS5 the keyword path falls back to a token-containment scan.
+
+### `model_roles`
+
+`role` (PK — `classifier` / `embedding` / `reranker` / `vision` / `distillation`), `model_id` (the
+pinned `"<provider>:<model>"` id, or `''` for auto), `updated_at`. `classifier` and `embedding`
+always resolve to a default (`provider::resolve_role` — embedding picks the first enabled provider
+that supports embeddings, preferring local; classifier prefers a cloud model). `reranker` /
+`vision` / `distillation` are **opt-in**: they take effect only when pinned
+(`provider::explicit_role`), so an unconfigured app behaves exactly as it did before the role
+existed. Where each is used: `classifier` reads captures and phrases observations, `embedding`
+vectorises for recall, `reranker` reorders retrieved hits, `vision` takes over for an agent that
+receives images, `distillation` writes durable memory from a finished chat.
+
 ### `model_configs`
 
 `id` (PK, e.g. `groq:llama-3.3-70b-versatile`), `provider`, `label`, `model`, `host`,
@@ -255,10 +301,12 @@ There is no version table — migrations are single-column `ALTER`s that are saf
 | `workflows.rs` | `workflow_runs` (each execution + its per-node steps) |
 | `integrations.rs` | `integration_configs` |
 | `telegram.rs` | `integration_configs` (telegram row), `telegram_logs` |
+| `brain.rs` (+ `classify.rs`, `retrieve.rs`, `insights.rs`, `eval.rs`) | `brain_nodes`, `brain_edges`, `brain_events`, `brain_observations`, `attention_state`, `embeddings` |
 
 `workflows.nodes` / `workflows.edges` are stored as JSON and executed by
 `workflows::execute_workflow` (linear BFS order; `loop`/`trigger` pass through, `checker` and
 `gate` emit envelopes; `llm` makes a single model call and `script` runs a shell command;
+`retrieve_context` runs the hybrid retrieval service and emits `{ text, items }`;
 per-step token fields are currently always `0`).
 
 ## What is *not* persisted

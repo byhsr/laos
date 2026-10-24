@@ -10,7 +10,7 @@ you. That is a port of **fren** (`A:\code\Projects\fren`).
 This doc covers the parts that make that work: the extractor (the anchor every message passes
 through), the items store, habits, reminders + the scheduler, and the learning layer.
 
-Code: `src-tauri/src/capture.rs` (extractor + store), `reminders.rs` (scheduler),
+Code: `src-tauri/src/capture.rs` (store + fast path), `classify.rs` (the extractor), `reminders.rs` (scheduler),
 `insights.rs` (learning), `telegram.rs` (commands + delivery). UI: `ItemsView.tsx`.
 Data: `items` / `insights` (see [data-model.md](./data-model.md)).
 
@@ -27,9 +27,11 @@ never call a model; free text is extracted.
 "slept through it again"         →  { feature: null,       type: "chat" }
 ```
 
-The schema (`EXTRACTOR` in `capture.rs`) fills: `type`, `feature`, `action`, `params`
-(`title`, `body`, `url`, `tags`, `due_at`, `cadence`), `mood`, `intent_shape`,
-`needs_guardrail`, `confidence`.
+The schema (`CLASSIFIER` in `classify.rs`) fills the Lumin fields (`type`, `feature`, `action`,
+`params` — `title`, `body`, `url`, `tags`, `due_at`, `cadence`, `confidence`) plus the brain-map
+reading: `content_type`, `intent`, `entities`, `relationships`, `salience`, `salience_signals`,
+`should_act`. Those extra fields drive the graph and retrieval; `capture::to_intent` maps the
+reading back onto the Lumin fields so the `items` store is unchanged.
 
 - **Relative times are resolved against "now"** — the prompt is given the current local
   timestamp, so "tonight" becomes an absolute instant. Nothing is stored as "tonight".

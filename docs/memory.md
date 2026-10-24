@@ -199,3 +199,65 @@ Wiring:
   (`am_list_memories` / `am_search` / `am_get_self_model` / `am_stats` / `am_list_namespaces`).
 - A lup **project** registers a `project:<id>` namespace on save and removes it on delete, so
   project memory is tracked together; turns in that project file under the project's scope.
+
+## The context engine (brain map + hybrid retrieval)
+
+Beyond the three tiers above, the app now keeps a **brain map** (`brain.rs`) and retrieves from
+it for every conversational turn (`retrieve.rs`). Additive: the existing tiers are untouched.
+
+Pipeline: `interaction → classify → entity resolution → store (brain_nodes + edges) → hybrid
+retrieve → assemble → assist → learn`.
+
+- **Classify** — `classify.rs` (the ex-`capture.rs` extractor, generalized) reads a message into
+  content type, intent, entities, relationships, temporal info, salience and confidence. It never
+  fails: an unparsable reply degrades to a `note`, so nothing is lost. The classifier model comes
+  from the `classifier` role (see [data-model.md](./data-model.md#model_roles)).
+- **Store** — every filed item / distilled memory / finished turn becomes a `brain_nodes` row
+  (an *index* row pointing at the authoritative record, or an owning row for people/decisions/
+  ideas/goals), wired to resolved entities with typed `brain_edges`. Inferred edges carry
+  `provenance='inferred'` + a confidence; stated ones carry `'stated'`. Entity resolution is
+  confidence-banded (exact title 1.0, alias tag 0.95, kind + contains 0.75, plain contains 0.55); a
+  name that lands equally on two nodes is never guessed — it becomes an `entity_resolution`
+  question in the mind tab, and nothing is linked until the user chooses. A new goal/decision that
+  shares a subject with an earlier one gets an inferred `supersedes` edge, so the old node is shown
+  as replaced rather than overwritten.
+- **Retrieve** — `retrieve.rs` merges four candidate sources: FTS5 keyword, cosine over
+  `embeddings` (pure Rust, no native extension), graph expansion over `brain_edges`, and
+  structured reads (active/due items, recent events). Candidates are ranked with a deterministic
+  weighted blend; the query class picks a weighting profile (a "what should I work on today" turn
+   favours active commitments, a "that idea I had" turn favours dormant nodes). Time decay is
+  selective — durable kinds (preferences, decisions, goals) never decay. An optional `reranker`
+  model role reorders the top candidates; with no role, or on any failure, the deterministic order
+  stands — candidates the model omits keep their original order at the tail.
+- **Assemble** — `memory::memory_block` (async) appends a bounded, attributed retrieval slice for
+  the current request to the injected block. `chat` and `manager_turn` get it through
+  `memory_block`; one-shot agents / workflow nodes / tasks / Telegram replies get it from
+  `agents::run_agent_once_structured` when the agent keeps memory. The remaining model paths
+  (`one_shot_completion`, `classify`, `insights::reflect`) are deliberately context-free.
+- **Learn** — `insights::reflect` also runs the deterministic attention maths
+  (`brain::compute_attention`) and drafts `brain_observations` from the evidence. Observations are
+  proposals with confidence + evidence, surfaced in the Memory view's **mind** tab where they can
+  be accepted, corrected or dismissed — never asserted as fact. Attention tracks eight dimensions
+  per node, all from observable evidence: `allocation`, `dormancy`, `intention`, `persistence`,
+  `momentum`, `displacement`, `drift`, `reentry`, plus `salience` from the capture. `brain_graph`
+  computes them once if the graph is opened before any reflect pass. A model rewrites the wording in
+  plain language when one is available (the deterministic template stands otherwise), and freshly
+  drafted observations are announced with a `brain-notice` event, surfaced as an in-app toast.
+- **Visualise** — the Graph view renders the brain map as 3D nodes alongside the workspace graph,
+  with filters (kind, scope, inferred) and a **lens** (structure / attention / salience) that
+  re-sizes and heat-colours nodes by a chosen signal — so what is consuming attention, and what
+  has gone dormant or been displaced, is visible at a glance.
+
+Retrieval is the same service everywhere: the `retrieve_context` Tauri command, the
+`retrieve_context` workflow node, chat, agents and the Manager all call into `retrieve.rs`.
+Retrieval is explainable (each hit records its keyword/semantic/graph/structured evidence); the
+deterministic blend is the default and always the fallback.
+
+Quality and cost are measured rather than assumed. `eval.rs` (the brief's Phase 6) scores a labelled
+fixture in a throwaway in-memory database — exact-keyword, semantic, graph-expansion, priorities,
+dormant-recall and project-scoped cases — reporting precision/recall/MRR, latency, and
+assembled-context size per case, and measuring the two reliability failures that matter: duplicate
+creation and lost input from malformed classification. `retrieve::eval_report` adds live, read-only
+numbers (scan size, vector-scan latency, context size) with a `guidance` verdict. The `brain_eval`
+command returns both, and the Memory view's mind tab shows them inline. An ANN index stays out until
+those numbers say the brute-force scan is a problem.
