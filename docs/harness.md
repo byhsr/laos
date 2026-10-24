@@ -143,6 +143,30 @@ compatible as a user message with a `text` + `image_url` content array. Before e
 doesn't re-send each screenshot each round. Requires a vision-capable model; the non-streaming
 paths carry text only.
 
+### Media dropped into the chat
+
+The composer (drop, paste, or the paperclip) sends `attachments` with the turn — up to 4 files,
+6 MB each, base64 without a `data:` prefix, the same shape the vision tools produce.
+`media::prepare` decides how they reach the model, and which route applies is the user's choice
+under `vision` in Settings → Models:
+
+- **`vision` pinned.** The images go to that model in one non-streaming call and its written
+  description is appended to the user's turn as `[attached files] …`. The chat model then works
+  from the description, so the picture only ever reaches one provider. If the call fails the
+  images are handed over instead — a broken role never loses the attachment.
+- **`vision` off.** The images ride on the user's own turn via `attach_images` (Ollama an
+  `images` array, otherwise a `text` + `image_url` content array), but only when
+  `provider::looks_like_vision` says the chat model can take them. Otherwise the turn states
+  plainly that the file cannot be seen.
+
+The note is part of the turn text, so it is what lands in `chat_messages` — a follow-up ("what was
+wrong with it?") still knows what was on screen. Non-images are named for the model and over-size
+files are reported, never silently dropped.
+
+Because native drag-drop is disabled (`dragDropEnabled: false` in `tauri.conf.json`) so HTML5 drops
+reach the composer, `App` swallows any drop outside it — otherwise the webview would navigate to
+the dropped file.
+
 API keys are resolved inside `provider::resolve`, from the model's `api_key` column — which holds
 the vault sentinel, so the real value comes from the OS credential store under `model/<id>`. Never
 sent from the UI for stored models. The browser preview may pass one explicitly to `execute_agent`;

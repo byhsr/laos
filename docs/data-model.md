@@ -122,8 +122,10 @@ that supports embeddings, preferring local; classifier prefers a cloud model). `
 `vision` / `distillation` are **opt-in**: they take effect only when pinned
 (`provider::explicit_role`), so an unconfigured app behaves exactly as it did before the role
 existed. Where each is used: `classifier` reads captures and phrases observations, `embedding`
-vectorises for recall, `reranker` reorders retrieved hits, `vision` takes over for an agent that
-receives images, `distillation` writes durable memory from a finished chat.
+vectorises for recall, `reranker` reorders retrieved hits, `vision` describes media dropped into a
+chat (see [harness.md](./harness.md)), `distillation` writes durable memory from a finished chat.
+A model record also reports a computed `vision` flag (`provider::looks_like_vision`) so the role
+picker can mark which configured models can actually see; it is a name heuristic, not stored state.
 
 ### `model_configs`
 
