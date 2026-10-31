@@ -29,12 +29,14 @@ import { RunsConsole } from './components/views/RunsConsole';
 import { Onboarding, type OnboardingPatch } from './components/Onboarding';
 import { WorkshopView } from './components/views/WorkshopView';
 import { MemoryView } from './components/views/MemoryView';
+import { KnowledgeBaseView } from './components/views/KnowledgeBaseView';
 import { TerminalView } from './components/views/TerminalView';
 import { ItemsView } from './components/views/ItemsView';
 import { SkillFormDrawer } from './components/views/SkillsView';
 import { ScriptFormDrawer } from './components/views/ScriptsView';
 import { ProjectFormDrawer } from './components/views/ProjectsView';
 import { Toaster } from './components/ui/Toaster';
+import { ConfirmDialog } from './components/ui/ConfirmDialog';
 import { UpdatePrompt } from './components/ui/UpdatePrompt';
 import { BrowserPanel } from './components/BrowserPanel';
 import { useBrowserStore } from './hooks/useBrowser';
@@ -309,6 +311,7 @@ export default function App() {
           </div>
           <div className={pane(view === 'manager')}><ManagerView agents={agents} integrations={integrations} models={models} tools={tools} openConfigRequest={configRequest.id === leadAgent?.id ? configRequest.n : 0} /></div>
           <div className={pane(view === 'memory')}><MemoryView /></div>
+          <div className={pane(view === 'knowledge')}><KnowledgeBaseView /></div>
           <div className={pane(view === 'tasks')}><TasksView agents={agents} /></div>
           <div className={pane(view === 'telegram')}><TelegramView /></div>
           <div className={pane(view === 'terminal')}><TerminalView /></div>
@@ -385,6 +388,9 @@ export default function App() {
           onSave={async (p) => { await saveProject(p); setDrawerForm(null); toast('project saved', 'success'); }}
         />
       )}
+      {/* Tool approval is a modal at the root, so it works from any view (agent
+          or Manager chat) rather than only while the composer is mounted. */}
+      <ConfirmDialog />
       <Toaster />
       {showOnboarding && leadAgent && (
         <Onboarding manager={leadAgent} models={models} onFinish={finishOnboarding} onSkip={dismissOnboarding} />
