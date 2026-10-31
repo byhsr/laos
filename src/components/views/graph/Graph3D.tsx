@@ -90,13 +90,21 @@ export default function Graph3D({ nodes, edges, positions, focus, connected, sel
     return max * 2.3 + 8;
   }, [positions]);
 
+  // Orbit around the graph's centre, not the world origin, so orbiting and
+  // zooming aim at the cluster even when it isn't centred on [0,0,0].
+  const center = useMemo<Vec>(() => {
+    let x = 0, y = 0, z = 0, n = 0;
+    positions.forEach((p) => { x += p[0]; y += p[1]; z += p[2]; n++; });
+    return n ? [x / n, y / n, z / n] : [0, 0, 0];
+  }, [positions]);
+
   const dimmed = (id: string) => !!focus && !connected.has(id);
   const edgeActive = (e: GEdge) => !!focus && (e.from === focus || e.to === focus);
   const edgeDim = (e: GEdge) => !!focus && !edgeActive(e);
 
   return (
     <Canvas
-      camera={{ position: [0, 0, distance], fov: 55, near: 0.1, far: distance * 6 }}
+      camera={{ position: [center[0], center[1], center[2] + distance], fov: 55, near: 0.1, far: distance * 6 }}
       gl={{ antialias: true }}
       dpr={[1, 2]}
       style={{ background: backdrop }}
@@ -149,8 +157,11 @@ export default function Graph3D({ nodes, edges, positions, focus, connected, sel
         );
       })}
 
-      {/* Off by default: a moving scene makes picking out a node much harder. */}
-      <OrbitControls makeDefault enableDamping dampingFactor={0.08} autoRotate={spin} autoRotateSpeed={0.35} minDistance={4} maxDistance={distance * 3} />
+      {/* Off by default: a moving scene makes picking out a node much harder.
+          `minDistance` is deliberately small so you can dolly right up to a node;
+          the old 4-unit floor (measured from a fixed origin target) stopped
+          zoom-in far short of anything. */}
+      <OrbitControls makeDefault target={center} enableDamping dampingFactor={0.08} autoRotate={spin} autoRotateSpeed={0.35} minDistance={0.5} maxDistance={distance * 3} />
     </Canvas>
   );
 }

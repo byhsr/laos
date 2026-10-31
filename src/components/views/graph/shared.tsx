@@ -145,8 +145,10 @@ export function Inspector({ node, agents, skills, tools, integrations, workflows
   // A memory node's scope is a compact key: agent:<id>, project:<id> or global.
   const memKey = node.kind === 'memory' ? node.id.slice(node.id.indexOf(':') + 1) : '';
 
+  // Inner content only — the right-hand panel in GraphView owns the `<aside>`
+  // shell and the filters/inspect tab strip above it.
   return (
-    <aside className="flex w-[300px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-surface">
+    <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex shrink-0 items-start justify-between gap-2 border-b border-border px-3.5 py-3">
         <div className="min-w-0 flex-1">
           <span className={`${GROUP_LABEL_CLS} flex items-center gap-1.5`}>
@@ -296,6 +298,6 @@ export function Inspector({ node, agents, skills, tools, integrations, workflows
           </section>
         )}
       </div>
-    </aside>
+    </div>
   );
 }

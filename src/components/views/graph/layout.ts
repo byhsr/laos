@@ -37,6 +37,9 @@ export function buildGraph({ agents, skills, tools, integrations, workflows, pro
       label: s.namespace.name || s.namespace.key,
       sub: `${c.memories} memories · ${c.events} events`,
       weight: c.memories + c.events + c.selfModelEntries,
+      // Carried so the scope filter can hide memory globs too, not just brain
+      // nodes (it used to leave every memory node on screen).
+      scope: s.namespace.key,
     });
   });
 
