@@ -50,8 +50,9 @@ non-tool content. They differ only in request/message encoding.
 The reference implementation. It:
 1. Loads the current session's messages (or the agent-level conversation when a call carries no
    session) and appends the user turn (rolling window; see [memory.md](./memory.md)).
-2. Builds the system prompt (Manager prompt, or agent prompt). Memory is **not** injected — it
-   is pull-only.
+2. Builds the system prompt (Manager prompt, or agent prompt) and appends the learned
+   `memory_block` — typed memories + self-model + day context + a bounded retrieval slice (see
+   [memory.md](./memory.md)). It is empty until there is something to recall.
 3. Runs the **tool-call loop** with `stream: false` rounds — this loop already handles both
    Ollama and OpenAI-compatible response shapes in one branch.
 4. Streams the final answer (`stream: true`) and emits deltas over a Tauri `Channel`.
@@ -145,10 +146,10 @@ paths carry text only.
 
 ### Media dropped into the chat
 
-The composer (drop, paste, or the paperclip) sends `attachments` with the turn — up to 4 files,
-6 MB each, base64 without a `data:` prefix, the same shape the vision tools produce.
-`media::prepare` decides how they reach the model, and which route applies is the user's choice
-under `vision` in Settings → Models:
+The composer (drop, paste, the paperclip, or the mic) sends `attachments` with the turn — up to 4
+files (6 MB each, or 25 MB for audio), base64 without a `data:` prefix, the same shape the vision
+tools produce. `media::prepare` decides how they reach the model, and which route applies is the
+user's choice under `vision` in Settings → Models:
 
 - **`vision` pinned.** The images go to that model in one non-streaming call and its written
   description is appended to the user's turn as `[attached files] …`. The chat model then works
@@ -162,6 +163,19 @@ under `vision` in Settings → Models:
 The note is part of the turn text, so it is what lands in `chat_messages` — a follow-up ("what was
 wrong with it?") still knows what was on screen. Non-images are named for the model and over-size
 files are reported, never silently dropped.
+
+### Audio (voice notes)
+
+Audio takes a single route: a pinned **`transcriber`** model (OpenAI, Groq, or a local whisper
+server speaking the same API) turns it into text via `POST /audio/transcriptions` (multipart —
+`transcribe.rs`), and the transcript is appended to the user's turn as `[attached files] …`, so the
+chat model reads it like anything typed. The mic button records a voice note with `MediaRecorder`
+and attaches it through the same path. With no `transcriber` pinned, or a provider that cannot
+transcribe, the attachment is named rather than dropped.
+
+The same path serves **Telegram voice notes**: `telegram.rs` resolves the file id (`getFile`), pulls
+the bytes from the file endpoint, and transcribes before routing — so the bot's agent sees the
+words. A voice note that cannot be transcribed gets a short reply saying so.
 
 Because native drag-drop is disabled (`dragDropEnabled: false` in `tauri.conf.json`) so HTML5 drops
 reach the composer, `App` swallows any drop outside it — otherwise the webview would navigate to

@@ -77,7 +77,10 @@ content, tags, confidence, importance, source, expires_at, created_at, updated_a
 `am_self_model`(id, agent_id, scope, scope_type, key, value, confidence, importance, source,
 created_at, updated_at, UNIQUE(agent_id, scope, key)); `am_namespaces`(key PK, type, id, name,
 description, created_at, updated_at, metadata). Scopes are keys (`agent:<id>` / `project:<id>` /
-`global`).
+`global`). Distilled chat memory is written under the session's scope — `project:<id>` when the
+session belongs to a project, else `agent:<id>` — but always with the agent's `agent_id`. The
+Memory view reads agent-centric (`am_list_memories` / `am_search`): its own scope, anything it
+authored (project scopes included), and `global`.
 
 ### `brain_nodes` / `brain_edges` / `brain_events` / `brain_observations` / `attention_state` / `embeddings`
 
@@ -115,17 +118,20 @@ Additive: nothing existing is migrated.
 
 ### `model_roles`
 
-`role` (PK — `classifier` / `embedding` / `reranker` / `vision` / `distillation`), `model_id` (the
-pinned `"<provider>:<model>"` id, or `''` for auto), `updated_at`. `classifier` and `embedding`
-always resolve to a default (`provider::resolve_role` — embedding picks the first enabled provider
-that supports embeddings, preferring local; classifier prefers a cloud model). `reranker` /
-`vision` / `distillation` are **opt-in**: they take effect only when pinned
+`role` (PK — `classifier` / `embedding` / `reranker` / `vision` / `transcriber` / `distillation`),
+`model_id` (the pinned `"<provider>:<model>"` id, or `''` for auto), `updated_at`. `classifier` and
+`embedding` always resolve to a default (`provider::resolve_role` — embedding picks the first enabled
+provider that supports embeddings, preferring local; classifier prefers a cloud model). `reranker` /
+`vision` / `transcriber` / `distillation` are **opt-in**: they take effect only when pinned
 (`provider::explicit_role`), so an unconfigured app behaves exactly as it did before the role
 existed. Where each is used: `classifier` reads captures and phrases observations, `embedding`
 vectorises for recall, `reranker` reorders retrieved hits, `vision` describes media dropped into a
-chat (see [harness.md](./harness.md)), `distillation` writes durable memory from a finished chat.
-A model record also reports a computed `vision` flag (`provider::looks_like_vision`) so the role
-picker can mark which configured models can actually see; it is a name heuristic, not stored state.
+chat, `transcriber` turns voice notes and audio into text (`POST /audio/transcriptions` — OpenAI,
+Groq, or a local whisper server; see [harness.md](./harness.md)), `distillation` writes durable
+memory from a finished chat.
+A model record also reports two computed flags so the role picker can mark suitable models:
+`vision` (`provider::looks_like_vision`, a name heuristic) and `transcribes`
+(`provider::supports_transcription`, a provider-level fact). Neither is stored state.
 
 ### `model_configs`
 

@@ -25,7 +25,26 @@ flat `memory` rows (`__summary__`, `fact:*`) remain pull-only, reachable via the
 Learning happens *during* a session, not only at its close: `distill_if_due` re-distills a
 growing session every `DISTILL_EVERY` (8) new messages, and `close_session` distills again on
 close (and `delete_chat_session` distills before deleting). Re-distillation is safe because
-`fox::write_distilled` skips a memory title the scope already holds.
+`fox::write_distilled` skips a memory title the scope already holds. A pass that fails to produce
+parseable JSON does **not** advance the session's `distilled_count`, so that stretch of chat is
+retried on the next turn instead of being lost.
+
+### Explicit "remember this"
+
+The periodic pass is not the only way in. When the user asks explicitly, memory is written
+immediately, two ways:
+
+- **Phrase fast path** — `memory::is_explicit_remember` matches cues ("remember this", "keep track
+  of", "don't forget", …) in the user turn; `memory::remember_explicit` stores it the moment it's
+  sent.
+- **`remember` tool** — every agent (and the Manager) holds a `remember` tool; the model calls it
+  with `content`/`title`/`kind`.
+
+Both funnel through `memory::store_remembered`, which de-dupes by content and indexes the memory
+into the brain map. A plain fact is deliberately **agent-scoped**; a **standing rule** ("never use
+emoji", "from now on…") is filed at `global` scope by `memory::store_rule`, so every agent and
+every project chat inherits it — see [routing.md](./routing.md) for why, and for what belongs in
+memory vs the knowledge base vs items.
 
 ## Constants & keys
 
@@ -181,9 +200,9 @@ is **learned** in the background, **injected** into the prompt, and **recalled**
 
 | Phase | Where | What happens |
 | --- | --- | --- |
-| **Capture** | `chat.rs` (`stream_chat_inner`) | After every turn, the user turn + reply are written as `am_events` (`user_message`/`assistant_message`). No tool call, no instruction. |
-| **Inject** | `memory.rs::memory_block` → `chat.rs`, `manager.rs` | Each turn's system prompt carries `compile_context` (typed memories + self-model for the scope) and the day context. Empty until there is something to recall. |
-| **Distill** | `memory.rs` (`distill_if_due` while the chat runs; `close_chat_session` on close) | One model call extracts the agent's own **self-model entries + typed memories** from the transcript and writes them into the store. Re-runs are de-duplicated by title. |
+| **Capture** | `chat.rs` (`stream_chat_inner`) | After every turn, the user turn + reply are written as `am_events` (`user_message`/`assistant_message`), plus the brain conversation node. No tool call, no instruction. An explicit "remember this" (`is_explicit_remember`) is additionally written as a durable memory at once. |
+| **Inject** | `memory.rs::memory_block` → `chat.rs`, `manager.rs` | Each turn's system prompt carries `compile_context` (typed memories + self-model for the scope, with a content snippet) and the day context. Empty until there is something to recall. |
+| **Distill** | `memory.rs` (`distill_if_due` while the chat runs; `close_chat_session` on close) | One model call extracts durable knowledge — the agent's own self-model/procedures **and** facts, preferences and decisions about the user — into the store. Re-runs are de-duplicated by title; a non-JSON reply leaves the watermark so it retries. |
 | **Recall (on demand)** | `am_search` / `am_compile_context` / Memory view | A deeper pull than the injected slice — search, or the full compiled context. |
 | **Feedback loop** | `fox::rate_turn` + `MessageBubble` | A good/bad signal on a reply is recorded as an `outcome` event; a bad one triggers `reflect` (recurring failures → a reflection memory). |
 
@@ -197,6 +216,9 @@ Wiring:
 
 - The **Memory** view reads the store through the `am_*` Tauri commands
   (`am_list_memories` / `am_search` / `am_get_self_model` / `am_stats` / `am_list_namespaces`).
+  `am_list_memories` / `am_search` are **agent-centric**: with no explicit scope they return the
+  agent's own scope, anything it authored (project scopes included) and `global`, so memory from
+  chats in a project shows on the agent's tab; passing a `scope` narrows to it (plus `global`).
 - A lup **project** registers a `project:<id>` namespace on save and removes it on delete, so
   project memory is tracked together; turns in that project file under the project's scope.
 

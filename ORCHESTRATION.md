@@ -1,6 +1,10 @@
 # Orchestration pipeline
 
-How a request becomes work: the layers, the chat turn, tools, memory, workflows.
+How a request becomes work: the layers, the chat turn, tools, memory, capture routing,
+workflows.
+
+> Starting a session? Read [DEVLOG.md](./DEVLOG.md) first — it records what changed last
+> time and what is still open. This file is the map; the dev log is the state.
 
 ## Layers
 
@@ -110,6 +114,28 @@ Mutating tools pause for approval; read-only ones run immediately.
 - **Conversation context** (`memory.rs`): rolling window (4 messages), background summarization into `__summary__` + `fact:*`, chat sessions, day contexts.
 - **Agent memory** (`agent_memory.rs`, native — was the fox `agent-memory` MCP server): `am_events` (raw turns), `am_memories` (typed), `am_self_model` (keyed), `am_namespaces` (scopes). Captured every turn, distilled in the background, injected into the prompt via `memory_block`.
 
+## Capture routing — where a thing goes
+
+Three stores, not interchangeable. `routing.rs` owns the contract *and* the reading.
+
+| Store | Holds | Scope | In the prompt? |
+| --- | --- | --- | --- |
+| `items` | anything with a when or a do — todos, reminders, promises, links, habits | global + `project_id` | no (the scheduler reads it) |
+| `remember` | facts and **standing rules about the user** | rules: `global`; facts: `agent:<id>` | **yes**, every turn |
+| `knowledge_base` | shared *reference* — wiki, ICP, specs, runbooks | global, shared | no, pull-only |
+
+`routing::triage` runs **before the model is offered its tools** (`chat::stream_chat_inner`,
+`manager::manager_turn`): deterministic cues first, the `classifier` role only when the message
+looks like content worth filing. Agents hold three corresponding tools — `items`, `remember`,
+`knowledge_base` — whose descriptions restate the contract.
+
+Rules are stored at `global` scope because `agent_memory::scopes_for` inherits only
+`<scope> + global`, so an agent-scoped rule is invisible inside a project chat. Due dates and
+relative times resolve in the user's configured zone (`tz.rs`, default `Asia/Kolkata`).
+
+`refile.rs` migrates a knowledge base that already accumulated memories/todos (the **tidy**
+button in the Knowledge tab). Full detail: `docs/routing.md`.
+
 ## Workflows
 
 `execute_workflow` (`workflows.rs`) runs nodes in **BFS (topological) order**, threading each node's output into the next; the last output is the result.
@@ -136,9 +162,32 @@ Branch outcomes travel as **data envelopes**, not routing — `fromPort`/`toPort
 | --- | --- |
 | Turn loop | `chat.rs`, `manager.rs`, `agents.rs` |
 | Harness | `provider.rs`, `http.rs`, `anthropic.rs`, `fallback.rs` |
-| Tools | `tools/*.rs`, `mcp.rs`, `integrations.rs`, `browser.rs` |
-| Memory | `memory.rs`, `agent_memory.rs`, `fox.rs` |
+| Tools | `tools/*.rs` (`items`, `knowledge`, `browser`, `desktop`, `filesystem`, `mcp`, `script`, `web`), `mcp.rs`, `integrations.rs` |
+| Memory | `memory.rs`, `agent_memory.rs`, `fox.rs`, `brain.rs`, `retrieve.rs` |
+| Capture routing | `routing.rs`, `tools/items.rs`, `tz.rs`, `refile.rs`, `capture.rs`, `reminders.rs` |
+| Media | `media.rs`, `transcribe.rs` |
 | Workflows / tasks | `workflows.rs`, `tasks.rs` |
 | Frontend bridge / UI | `runtime.ts`, `hooks/*`, `components/views/*` |
 
-Deeper detail: `docs/harness.md`, `docs/tool-calls.md`, `docs/memory.md`, `docs/data-model.md`.
+## Where to dive deep
+
+Find your concern, then start at the file that decides, and follow to the rest.
+
+| If you need to… | Start here | Then | Doc |
+| --- | --- | --- | --- |
+| Change what a model call sends or how it streams | `chat::stream_chat_inner` (the reference path) | `provider.rs`, `http.rs`, `fallback.rs` | [harness.md](./docs/harness.md) |
+| Add or change a tool | `tools/mod.rs` (the `AgentTool` trait) + the impl | `agents::build_tools`, `manager::manager_tools` | [tool-calls.md](./docs/tool-calls.md) |
+| Change a Manager tool or what needs approval | `manager.rs` (`manager_tools`, `dispatch_manager_tool`, `requires_confirmation`) | `useConfirm`, `ConfirmDialog.tsx` | [tool-calls.md](./docs/tool-calls.md) |
+| Change **where something the user says gets stored** | `routing.rs` (`ROUTING_RULES`, `route`, `triage`) | `tools/items.rs`, `tools/knowledge.rs`, `memory::store_rule` | [routing.md](./docs/routing.md) |
+| Fix a reminder not firing, or the wrong time | `reminders::reminder_loop` | `tz.rs`, `telegram::owner_target` / `default_owner` | [routing.md](./docs/routing.md), [lumin.md](./docs/lumin.md) |
+| Change what a turn is told about the user | `memory::memory_block` | `agent_memory::compile_context`, `retrieve::context_block` | [memory.md](./docs/memory.md) |
+| Change retrieval ranking or decay | `retrieve.rs` (`rank`, `decayable`, the query profiles) | `brain.rs` | [memory.md](./docs/memory.md) |
+| Add a media kind (audio, image, …) | `media.rs` (`prepare`) | `transcribe.rs`, `provider.rs` (the role), `ChatComposer.tsx` | [harness.md](./docs/harness.md) |
+| Add a table, column, or migration | `db.rs` (migrations) | the owning module's SQL | [data-model.md](./docs/data-model.md) |
+| Add a view, tab, or nav entry | `types.ts` (`View`), `useNavLabels.ts`, `Rail.tsx` | `App.tsx` (the pane) | [architecture.md](./docs/architecture.md) |
+| Add a frontend → backend call | `runtime.ts` (one wrapper per command) | `main.rs` (`invoke_handler`) | [architecture.md](./docs/architecture.md) |
+
+Deeper detail: [harness.md](./docs/harness.md), [tool-calls.md](./docs/tool-calls.md),
+[memory.md](./docs/memory.md), [routing.md](./docs/routing.md), [lumin.md](./docs/lumin.md),
+[data-model.md](./docs/data-model.md), [architecture.md](./docs/architecture.md). The doc map
+in [docs/README.md](./docs/README.md) covers the rest.

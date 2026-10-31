@@ -3,6 +3,12 @@
 Reference docs for the execution **harness** and the systems around it. Each file is
 scoped to one concern so a change lands in exactly one place.
 
+Two files sit at the repo root and are the fastest way in:
+[ORCHESTRATION.md](../ORCHESTRATION.md) — the pipeline map, plus a **Where to dive deep** table
+(concern → the file that decides → the doc); and [DEVLOG.md](../DEVLOG.md) — what changed in the
+last session and what is still open. Read the dev log first, the orchestration map when you need
+to find your way around.
+
 ## What this is
 
 A local-first desktop app for configurable AI agents. A React/Vite frontend talks to a
@@ -26,6 +32,7 @@ tool registry, workflow execution, memory, and the Telegram adapter.
 | [terminal.md](./terminal.md) | PTY terminal sessions: run a CLI in the panel and bridge it to a Telegram bot |
 | [lumin.md](./lumin.md) | **Lumin** (the second brain): the extractor anchor layer, items, habits, reminders + scheduler, and the bounded learning layer |
 | [memory.md](./memory.md) | Context assembly, the rolling window, summarization, long-term facts, chat sessions, day context, recall, and the built-in `agent-memory` (fox) connector |
+| [routing.md](./routing.md) | **Where a captured thing belongs**: memory vs knowledge base vs items, the deterministic + classifier reading, global rules, the timezone, and the re-file pass |
 | [webhooks.md](./webhooks.md) | Telegram tunnel + webhook receiver + long-poll, the OAuth loopback, health checks and logs |
 | [data-model.md](./data-model.md) | SQLite schema, migrations, record types, memory keys, ID conventions |
 
@@ -147,6 +154,7 @@ Find the row for what you're changing, update the listed code and doc together.
 | OAuth scopes, redirect port, or token exchange | `src-tauri/src/integrations.rs` | [integrations.md](./integrations.md), [webhooks.md](./webhooks.md) |
 | Telegram tunnel/webhook/polling/receiver | `src-tauri/src/telegram.rs`, `src-tauri/src/tg_markdown.rs` | [webhooks.md](./webhooks.md) |
 | Capture / Lumin: the extractor, an item kind, habits, the scheduler, or the learning layer | `src-tauri/src/capture.rs`, `src-tauri/src/reminders.rs`, `src-tauri/src/insights.rs`, `src/components/views/ItemsView.tsx` | [lumin.md](./lumin.md) |
+| Which store a captured thing goes to (memory / knowledge base / items), or the timezone | `src-tauri/src/routing.rs`, `src-tauri/src/tools/items.rs`, `src-tauri/src/tz.rs`, `src-tauri/src/refile.rs` | [routing.md](./routing.md) |
 | App settings (background, shell, shortcuts, autonomy, identity) | `src-tauri/src/app_settings.rs`, `src/components/views/SettingsView.tsx` | [architecture.md](./architecture.md) |
 | Memory, context assembly, or summarization | `src-tauri/src/memory.rs`, `src-tauri/src/chat.rs` | [memory.md](./memory.md) |
 | The memory connector (fox/`agent-memory`), its capture/active-context/distill/feedback loop, or the Memory view | `src-tauri/src/fox.rs`, `src-tauri/src/storage.rs` (`ensure_memory_server`), `src-tauri/src/chat.rs`, `src-tauri/src/memory.rs`, `src-tauri/src/mcp.rs` (`call_mcp_tool`), `src/components/views/MemoryView.tsx` | [memory.md](./memory.md) |
