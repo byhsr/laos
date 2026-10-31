@@ -22,12 +22,13 @@ const MODEL_PLACEHOLDER: Record<string, string> = {
   openrouter: 'anthropic/claude-3.5-haiku',
 };
 // What each model role is for, shown beside the picker in the order they matter.
-const ROLE_ORDER = ['classifier', 'embedding', 'reranker', 'vision', 'distillation'];
+const ROLE_ORDER = ['classifier', 'embedding', 'reranker', 'vision', 'transcriber', 'distillation'];
 const ROLE_HINT: Record<string, string> = {
   classifier: 'reads captures into structured data',
   embedding: 'vectorises text for semantic recall',
   reranker: 'reorders retrieved memory',
   vision: 'sees dropped images and screenshots',
+  transcriber: 'turns voice notes and audio into text',
   distillation: 'turns finished chats into memory',
 };
 const KEY_PLACEHOLDER: Record<string, string> = {
@@ -82,19 +83,23 @@ export function ModelsView({ models, onAdd, onEdit, onDelete }: {
         <b className="block font-mono text-[11px] text-foreground">model roles</b>
         <p className="mt-1 mb-3 font-mono text-[10px] leading-relaxed text-muted">
           One model need not do every job. Pin which model reads your captures, which vectorises text for recall, which reorders
-          retrieved memory, which describes dropped images, and which distils chats into memory. Models that can see are marked
-          vision; leave a role on auto and the app picks a default.
+          retrieved memory, which describes dropped images, which transcribes voice notes and audio, and which distils chats into
+          memory. Models that can see are marked vision, transcribing providers audio; leave a role on auto and the app picks a default.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           {ROLE_ORDER.filter((role) => role in roles).map((role) => {
-            // For vision the models that can actually see come first and are
-            // marked — pinning a text-only model there would describe nothing.
+            // Capability roles want a model that can actually do the job — a
+            // vision model for images, a transcribing provider for audio. Those
+            // come first and are marked, so pinning the wrong kind is obvious.
+            const can = (m: ModelConfig) => (role === 'vision' ? !!m.vision : role === 'transcriber' ? !!m.transcribes : false);
+            const off = role === 'vision' || role === 'transcriber';
             const options = [
-              { value: '', label: role === 'vision' ? 'off' : 'auto' },
+              { value: '', label: off ? 'off' : 'auto' },
               ...[...models]
-                .sort((a, b) => (role === 'vision' ? Number(b.vision ?? false) - Number(a.vision ?? false) : 0))
-                .map((m) => ({ value: m.id, label: `${m.label || `${m.provider}:${m.model}`}${m.vision ? ' · vision' : ''}` })),
+                .sort((a, b) => Number(can(b)) - Number(can(a)))
+                .map((m) => ({ value: m.id, label: `${m.label || `${m.provider}:${m.model}`}${role === 'vision' && m.vision ? ' · vision' : ''}${role === 'transcriber' && m.transcribes ? ' · audio' : ''}` })),
             ];
+            const offText = role === 'vision' ? 'off — images go straight to the chat model' : 'off — audio is left untranscribed';
             return (
               <div key={role}>
                 <label className={FIELD_LABEL_CLS}>{role}</label>
@@ -102,15 +107,15 @@ export function ModelsView({ models, onAdd, onEdit, onDelete }: {
                   value={roles[role]?.modelId ?? ''}
                   options={options}
                   onChange={(v) => void assign(role, v)}
-                  placeholder={role === 'vision' ? 'off' : 'auto'}
+                  placeholder={off ? 'off' : 'auto'}
                 />
                 <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
                   {ROLE_HINT[role] ?? ''}
                   {' — '}
                   {roles[role]?.resolved
                     ? `using ${roles[role]?.resolved}`
-                    : role === 'vision'
-                      ? 'off — images go straight to the chat model'
+                    : off
+                      ? offText
                       : (role === 'classifier' || role === 'embedding' ? 'no model available' : 'not set — off until you pick one')}
                 </p>
               </div>

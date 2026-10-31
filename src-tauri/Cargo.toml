@@ -16,9 +16,14 @@ tauri-plugin-updater = "2"
 tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# base64 decode for audio handed to the composer (the vision path never decodes).
+base64 = "0.23.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
 chrono = { version = "0.4", features = ["clock"] }
+# IANA timezones for the user's configured zone (default IST) — reminders, due
+# dates and the classifier's "right now it is…" all resolve against it.
+chrono-tz = "0.10"
 async-trait = "0.1.92"
 futures-util = "0.3"
 regex = "1"
@@ -44,7 +49,8 @@ features = ["sync-secret-service"]
 
 [target."cfg(windows)".dependencies]
 arboard = "3.6.1"
-base64 = "0.23.1"
 enigo = "0.6.1"
+# WebView2 COM bindings, for the microphone permission reset (ICoreWebView2Profile4).
+webview2-com = "0.39"
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Shutdown", "Win32_UI_Shell"] }
 xcap = "0.9.8"

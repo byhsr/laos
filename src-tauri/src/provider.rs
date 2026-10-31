@@ -271,9 +271,27 @@ pub(crate) fn embeddings_url(resolved: &Resolved) -> String {
   }
 }
 
-/// The roles a model can fill. `embedding` has a hard capability requirement
-/// (see `supports_embeddings`); the rest fall back to the generic default.
-pub(crate) const ROLES: [&str; 5] = ["classifier", "embedding", "reranker", "vision", "distillation"];
+/// The roles a model can fill. `embedding` and `transcriber` have hard capability
+/// requirements (see `supports_embeddings` / `supports_transcription`); the rest
+/// fall back to the generic default.
+pub(crate) const ROLES: [&str; 6] = ["classifier", "embedding", "reranker", "vision", "transcriber", "distillation"];
+
+/// Whether a provider exposes an OpenAI-compatible `/audio/transcriptions`
+/// endpoint. Kept conservative for the same reason as `supports_embeddings`: a
+/// role that claims a capability the provider lacks would fail at request time.
+pub(crate) fn supports_transcription(kind: Kind) -> bool {
+  matches!(kind, Kind::OpenAi | Kind::Groq)
+}
+
+/// The transcription endpoint for a resolved model: `/audio/transcriptions`
+/// beneath the same base as chat (strip the `/chat/completions` tail). OpenAI and
+/// Groq both publish it there — and a local whisper server speaking the same API
+/// can too.
+pub(crate) fn transcription_url(resolved: &Resolved) -> String {
+  let base = resolved.base.trim_end_matches('/');
+  let base = base.strip_suffix("/chat/completions").unwrap_or(base);
+  format!("{base}/audio/transcriptions")
+}
 
 /// Whether a provider can serve vision (image) input. Every chat provider here
 /// accepts image parts, so this only exists to exclude nothing today — kept
@@ -333,4 +351,29 @@ pub(crate) fn resolve_role(conn: &Connection, role: &str) -> Option<String> {
     "SELECT id FROM model_configs WHERE enabled=1 ORDER BY CASE WHEN provider='ollama' THEN 1 ELSE 0 END, id LIMIT 1",
     [], |r| r.get(0),
   ).ok()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn only_openai_compatible_providers_transcribe() {
+    assert!(supports_transcription(Kind::OpenAi));
+    assert!(supports_transcription(Kind::Groq));
+    assert!(!supports_transcription(Kind::Ollama));
+    assert!(!supports_transcription(Kind::Anthropic));
+    assert!(!supports_transcription(Kind::OpenRouter));
+    assert!(!supports_transcription(Kind::Google));
+  }
+
+  /// The transcription endpoint sits beside chat, with the `/chat/completions`
+  /// tail stripped — the same shape as `embeddings_url`.
+  #[test]
+  fn transcription_url_is_beside_chat() {
+    let openai = Resolved { kind: Kind::OpenAi, base: OPENAI_URL.to_string(), model: "whisper-1".into(), key: None, reasoning: Reasoning::Auto };
+    assert_eq!(transcription_url(&openai), "https://api.openai.com/v1/audio/transcriptions");
+    let groq = Resolved { kind: Kind::Groq, base: GROQ_URL.to_string(), model: "whisper-large-v3".into(), key: None, reasoning: Reasoning::Auto };
+    assert_eq!(transcription_url(&groq), "https://api.groq.com/openai/v1/audio/transcriptions");
+  }
 }

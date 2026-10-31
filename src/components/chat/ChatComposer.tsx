@@ -1,9 +1,9 @@
-import { useRef, useState } from 'react';
-import { CircleStop, FileText, Paperclip, Pause, Send, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AudioLines, CircleStop, FileText, Mic, Paperclip, Pause, Send, Square, Trash2, X } from 'lucide-react';
 import { IconButton } from '../ui/Button';
 import { ContextMenu } from '../ui/ContextMenu';
 import { ComposerSettings } from './ComposerSettings';
-import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { resetMicrophonePermission } from '../../runtime';
 import type { Attachment, Reasoning } from '../../types';
 
 // The chat composer, shared by the lead agent and every agent window so the two
@@ -16,12 +16,17 @@ import type { Attachment, Reasoning } from '../../types';
 // whatever arrives rides with the turn.
 const MAX_FILES = 4;
 const MAX_BYTES = 6 * 1024 * 1024;
+// A voice note is larger per second than a screenshot, so audio gets its own cap
+// (matching the backend's transcriber limit).
+const AUDIO_MAX_BYTES = 25 * 1024 * 1024;
+
+function limitFor(mime: string): number { return mime.startsWith('audio/') ? AUDIO_MAX_BYTES : MAX_BYTES; }
 
 // Reads a dropped, pasted or chosen file into the shape the backend wants: base64
 // without the `data:` prefix. Returns null when it is too big to send.
 function readAttachment(file: File): Promise<Attachment | null> {
   return new Promise((resolve) => {
-    if (file.size > MAX_BYTES) { resolve(null); return; }
+    if (file.size > limitFor(file.type)) { resolve(null); return; }
     const reader = new FileReader();
     reader.onload = () => {
       const url = String(reader.result ?? '');
@@ -52,6 +57,9 @@ export function ChatComposer({ placeholder, busy, modelId, reasoning, onSend, on
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [recording, setRecording] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
 
   // Auto-grow to the content, capped so a long message scrolls instead.
   const onChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -70,8 +78,57 @@ export function ChatComposer({ placeholder, busy, modelId, reasoning, onSend, on
     const read = (await Promise.all(considered.map(readAttachment))).filter((a): a is Attachment => a !== null);
     const skipped = considered.length - read.length;
     if (read.length > 0) setFiles((prev) => [...prev, ...read]);
-    setNotice(skipped > 0 ? `${skipped} file${skipped === 1 ? '' : 's'} skipped — over ${MAX_BYTES / 1024 / 1024} MB` : undefined);
+    setNotice(skipped > 0 ? `${skipped} file${skipped === 1 ? '' : 's'} skipped — too large` : undefined);
   };
+
+  // Asks for the microphone. The webview remembers a denied permission per
+  // origin, so a refusal is cleared once (restoring the prompt) and retried; a
+  // second refusal is reported instead of leaving the button dead.
+  const openMicrophone = async (): Promise<MediaStream | null> => {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      if ((e as DOMException)?.name !== 'NotAllowedError') { setNotice('microphone unavailable'); return null; }
+      await resetMicrophonePermission();
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch {
+        setNotice('microphone blocked — allow it in Windows Settings → Privacy → Microphone');
+        return null;
+      }
+    }
+  };
+
+  // A voice note is captured with MediaRecorder and attached like any file, so it
+  // flows through the same transcription path. The mic is released on unmount.
+  const startRecording = async () => {
+    if (busy || files.length >= MAX_FILES) return;
+    const stream = await openMicrophone();
+    if (!stream) return;
+    const recorder = new MediaRecorder(stream);
+    chunksRef.current = [];
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+    recorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+      if (blob.size > 0) void addFiles([new File([blob], 'voice-note.webm', { type: blob.type })]);
+    };
+    recorderRef.current = recorder;
+    recorder.start();
+    setRecording(true);
+  };
+
+  const stopRecording = () => {
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+    setRecording(false);
+  };
+
+  // Release the microphone if the composer goes away mid-recording.
+  useEffect(() => () => {
+    const rec = recorderRef.current;
+    if (rec) { rec.onstop = null; rec.stop(); }
+  }, []);
 
   const submit = async () => {
     const text = input.trim();
@@ -97,11 +154,6 @@ export function ChatComposer({ placeholder, busy, modelId, reasoning, onSend, on
       }}
     >
       <div className="relative mx-auto w-full max-w-[720px]">
-        {/* Confirmation sits where the user is looking — above what they're typing. */}
-        <div className="absolute right-0 bottom-[calc(100%+8px)] left-0 z-30">
-          <ConfirmDialog />
-        </div>
-
         <div className={`flex flex-col rounded-lg border bg-surface transition-colors ${dragging ? 'border-dashed border-foreground/60' : 'border-border focus-within:border-foreground/40'}`}>
           <input
             ref={fileRef}
@@ -117,7 +169,9 @@ export function ChatComposer({ placeholder, busy, modelId, reasoning, onSend, on
                 <span key={`${f.name}-${i}`} className="flex items-center gap-1.5 rounded border border-border bg-background py-1 pr-1 pl-1 font-mono text-[10px] text-muted">
                   {f.mime.startsWith('image/')
                     ? <img src={`data:${f.mime};base64,${f.data}`} alt="" className="h-5 w-5 shrink-0 rounded-sm object-cover" />
-                    : <FileText size={12} className="shrink-0" />}
+                    : f.mime.startsWith('audio/')
+                      ? <AudioLines size={12} className="shrink-0" />
+                      : <FileText size={12} className="shrink-0" />}
                   <span className="max-w-[150px] truncate">{f.name}</span>
                   <button
                     type="button"
@@ -160,7 +214,17 @@ export function ChatComposer({ placeholder, busy, modelId, reasoning, onSend, on
               >
                 <Paperclip size={13} />
               </IconButton>
-              <span className="truncate font-mono text-[10px] text-muted">{notice ?? (dragging ? 'drop to attach' : '')}</span>
+              <IconButton
+                label={recording ? 'stop recording' : 'record a voice note'}
+                className="h-[30px] w-[30px] shrink-0"
+                disabled={busy || files.length >= MAX_FILES}
+                onClick={recording ? stopRecording : () => void startRecording()}
+              >
+                {recording ? <Square size={13} /> : <Mic size={13} />}
+              </IconButton>
+              <span className="truncate font-mono text-[10px] text-muted">
+                {recording ? 'recording — press stop to attach' : (notice ?? (dragging ? 'drop to attach' : ''))}
+              </span>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <ComposerSettings modelId={modelId} reasoning={reasoning} onModelChange={onModelChange} onReasoningChange={onReasoningChange} />

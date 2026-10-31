@@ -160,6 +160,9 @@ pub fn list_model_configs(app: AppHandle) -> Result<Vec<ModelConfigRecord>, Stri
     let id: String = row.get(0)?;
     Ok(ModelConfigRecord {
       vision: crate::provider::looks_like_vision(&id),
+      // Whether the provider exposes a transcription endpoint — a provider-level
+      // fact, unlike the vision name heuristic.
+      transcribes: crate::provider::kind_of_id(&id).map(crate::provider::supports_transcription).unwrap_or(false),
       id, provider: row.get(1)?, label: row.get(2)?, model: row.get(3)?, host: row.get(4)?,
       has_key: stored.map(|s| !s.trim().is_empty()).unwrap_or(false),
       enabled: row.get::<_, i64>(6)? != 0, reasoning: row.get(7)?,
@@ -203,8 +206,9 @@ pub fn delete_model_config(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 // Model roles: which model fills `classifier` / `embedding` / `reranker` /
-// `vision` / `distillation`. An unset role means "use the deterministic default"
-// (see provider::resolve_role), so a fresh app needs no configuration.
+// `vision` / `transcriber` / `distillation`. An unset role means "use the
+// deterministic default" (see provider::resolve_role), so a fresh app needs no
+// configuration.
 
 #[tauri::command]
 pub fn list_model_roles(app: AppHandle) -> Result<serde_json::Value, String> {
@@ -213,8 +217,8 @@ pub fn list_model_roles(app: AppHandle) -> Result<serde_json::Value, String> {
   for role in crate::provider::ROLES {
     let explicit = crate::provider::explicit_role(&conn, role);
     // classifier/embedding always resolve to a default; the opt-in roles
-    // (reranker/vision/distillation) only take effect when pinned, so the UI can
-    // show them as off until chosen.
+    // (reranker/vision/transcriber/distillation) only take effect when pinned, so
+    // the UI can show them as off until chosen.
     let resolved = if matches!(role, "classifier" | "embedding") {
       crate::provider::resolve_role(&conn, role)
     } else {

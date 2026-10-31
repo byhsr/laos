@@ -491,6 +491,55 @@ async fn telegram_send_message(token: &str, chat_id: i64, text: &str) -> Result<
   Ok(())
 }
 
+// --- Voice notes ------------------------------------------------------------
+
+// The audio payload of a Telegram message, if it carries one: the file id, the
+// mime type and a filename. Voice notes (Opus/OGG), audio files and video notes
+// all arrive this way.
+fn audio_payload(message: &serde_json::Value) -> Option<(String, String, String)> {
+  for key in ["voice", "audio", "video_note"] {
+    let Some(a) = message.get(key) else { continue };
+    let Some(file_id) = a.get("file_id").and_then(|v| v.as_str()) else { continue };
+    let mime = a.get("mime_type").and_then(|v| v.as_str()).unwrap_or("audio/ogg").to_string();
+    let name = a.get("file_name").and_then(|v| v.as_str()).unwrap_or("voice.ogg").to_string();
+    return Some((file_id.to_string(), mime, name));
+  }
+  None
+}
+
+// Whether the message carried audio at all (so a failed transcribe can be named).
+fn has_audio(message: &serde_json::Value) -> bool { audio_payload(message).is_some() }
+
+// Downloads a file Telegram holds (the audio of a voice note) into memory. Two
+// hops: `getFile` resolves the file id to a path, then the file endpoint serves it.
+async fn telegram_download_file(token: &str, file_id: &str) -> Result<Vec<u8>, String> {
+  let client = http::client();
+  let meta_url = format!("https://api.telegram.org/bot{token}/getFile?file_id={file_id}");
+  let meta: serde_json::Value = client.get(&meta_url).send().await.map_err(|e| e.to_string())?
+    .json().await.map_err(|e| e.to_string())?;
+  let path = meta.get("result").and_then(|r| r.get("file_path")).and_then(|p| p.as_str())
+    .ok_or("Telegram did not return a file path")?;
+  let url = format!("https://api.telegram.org/file/bot{token}/{path}");
+  let bytes = client.get(&url).send().await.map_err(|e| e.to_string())?
+    .bytes().await.map_err(|e| e.to_string())?;
+  if bytes.is_empty() { return Err("the voice note was empty".into()); }
+  Ok(bytes.to_vec())
+}
+
+// The user's words for a message: its text, or a voice note transcribed through
+// the `transcriber` role. None when the message carries neither, or when there is
+// no transcriber model — the caller then says why rather than dropping it.
+async fn message_text(app: &AppHandle, token: &str, message: &serde_json::Value) -> Option<String> {
+  if let Some(t) = message.get("text").and_then(|t| t.as_str()) { return Some(t.to_string()); }
+  let (file_id, mime, name) = audio_payload(message)?;
+  let model = crate::db::db(app).ok().and_then(|c| crate::provider::explicit_role(&c, "transcriber"))?;
+  let bytes = telegram_download_file(token, &file_id).await.ok()?;
+  crate::transcribe::transcribe(app, &model, &name, &mime, &bytes).await.ok()
+}
+
+// Told to the user when a voice note arrives and could not be turned into text.
+const VOICE_FAILED: &str = "I couldn't transcribe that voice message — check the transcriber model in Settings → Models.";
+
 // A proactive send (the reminder scheduler), addressed by a string chat id.
 pub(crate) async fn notify(token: &str, chat_id: &str, text: &str) -> Result<(), String> {
   let chat: i64 = chat_id.trim().parse().map_err(|_| "bad chat id".to_string())?;
@@ -510,6 +559,24 @@ pub(crate) fn owner_target(conn: &Connection, bot_name: &str) -> Option<(String,
       Ok((resolve_bot_secret(&id, "token", &raw), r.get::<_, String>(2)?))
     }).ok()
     .filter(|(t, c)| !t.is_empty() && !c.is_empty())
+}
+
+// The fallback owner target: the first bot with a bound owner chat. Used when an
+// item's `source` names no bot — a reminder created by an agent or in the app has
+// no capturing bot, and without this it would only fire in-app.
+pub(crate) fn default_owner(conn: &Connection) -> Option<(String, String)> {
+  let mut stmt = conn
+    .prepare("SELECT id, token, owner_chat_id FROM telegram_bots WHERE owner_chat_id IS NOT NULL AND owner_chat_id != '' ORDER BY updated_at DESC")
+    .ok()?;
+  let mut rows = stmt.query([]).ok()?;
+  while let Ok(Some(row)) = rows.next() {
+    let id: String = row.get(0).ok()?;
+    let raw: String = row.get(1).ok()?;
+    let chat: String = row.get(2).ok()?;
+    let token = resolve_bot_secret(&id, "token", &raw);
+    if !token.is_empty() && !chat.is_empty() { return Some((token, chat)); }
+  }
+  None
 }
 
 // Remembers who to message unprompted: the first chat that reaches an authorized
@@ -1218,6 +1285,26 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
           let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK").await;
           return;
         }
+        // A voice note is transcribed through the `transcriber` role before routing,
+        // so the bot's agent sees the words like any typed message.
+        let text = match text {
+          Some(t) => Some(t),
+          None => match update.get("message") {
+            Some(m) => match message_text(&app, &token, m).await {
+              Some(t) => Some(t),
+              None => {
+                if has_audio(m) {
+                  if let Some(cid) = chat_id {
+                    let t2 = token.clone();
+                    tokio::spawn(async move { let _ = telegram_send_message(&t2, cid, VOICE_FAILED).await; });
+                  }
+                }
+                None
+              }
+            },
+            None => None,
+          },
+        };
         if let (Some(text), Some(chat_id)) = (text, chat_id) {
           // A pending "next message" input consumes this without routing it on.
           if resolve_text_input(&bot.id, chat_id, &text) {
@@ -1432,9 +1519,16 @@ async fn poll_bot(app: AppHandle, bot: TelegramBot) {
         }
         continue;
       }
-      let Some(text) = update.get("message").and_then(|m| m.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string()) else { continue };
-      let Some(chat_id) = update.get("message").and_then(|m| m.get("chat")).and_then(|c| c.get("id")).and_then(|c| c.as_i64()) else { continue };
-      let user_id = update.get("message").and_then(|m| m.get("from")).and_then(|f| f.get("id")).and_then(|i| i.as_i64());
+      let Some(message) = update.get("message") else { continue };
+      let Some(chat_id) = message.get("chat").and_then(|c| c.get("id")).and_then(|c| c.as_i64()) else { continue };
+      let user_id = message.get("from").and_then(|f| f.get("id")).and_then(|i| i.as_i64());
+      // The words: text, or a voice note transcribed through the `transcriber` role.
+      let Some(text) = message_text(&app, &current.token, message).await else {
+        if has_audio(message) {
+          let _ = telegram_send_message(&current.token, chat_id, VOICE_FAILED).await;
+        }
+        continue;
+      };
       // Anyone may learn their own id so it can be added to the allowlist.
       if matches!(text.trim(), "/id" | "/whoami") {
         let _ = telegram_send_message(&current.token, chat_id, &format!("Your Telegram user id is {}.", user_id.map(|u| u.to_string()).unwrap_or_default())).await;
@@ -1691,6 +1785,23 @@ mod tests {
     assert!(!d.first_time("bot-a", 5), "a redelivery of bot-a#5 must be dropped");
     assert!(d.first_time("bot-b", 5), "bot-b#5 is a different update and must be handled");
     assert!(d.first_time("bot-a", 6));
+  }
+
+  /// A voice note, an audio file and a video note all carry a `file_id`; a plain
+  /// text message carries none. This is what routes audio to the transcriber.
+  #[test]
+  fn audio_payload_reads_voice_audio_and_video_notes() {
+    let voice = serde_json::json!({ "voice": { "file_id": "v1", "mime_type": "audio/ogg" } });
+    assert_eq!(audio_payload(&voice), Some(("v1".into(), "audio/ogg".into(), "voice.ogg".into())));
+
+    let audio = serde_json::json!({ "audio": { "file_id": "a1", "mime_type": "audio/mpeg", "file_name": "song.mp3" } });
+    assert_eq!(audio_payload(&audio), Some(("a1".into(), "audio/mpeg".into(), "song.mp3".into())));
+
+    let video = serde_json::json!({ "video_note": { "file_id": "n1" } });
+    assert_eq!(audio_payload(&video), Some(("n1".into(), "audio/ogg".into(), "voice.ogg".into())));
+
+    assert_eq!(audio_payload(&serde_json::json!({ "text": "hello" })), None);
+    assert!(!has_audio(&serde_json::json!({ "text": "hello" })));
   }
 
   #[test]

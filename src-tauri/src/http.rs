@@ -71,8 +71,10 @@ fn strip_reasoning(body: &serde_json::Value) -> serde_json::Value {
   stripped
 }
 
-fn build_model_request(client: &reqwest::Client, resolved: &provider::Resolved, url: &str, body: &serde_json::Value) -> reqwest::RequestBuilder {
-  let mut req = client.post(url).json(body);
+/// Adds the provider's authentication (and any routing headers) to a request.
+/// Shared by the JSON chat path and the multipart transcription path, so neither
+/// call site has to remember the per-provider headers.
+pub(crate) fn auth_headers(mut req: reqwest::RequestBuilder, resolved: &provider::Resolved) -> reqwest::RequestBuilder {
   match resolved.kind {
     // Anthropic authenticates with a header key and a pinned API version.
     provider::Kind::Anthropic => {
@@ -90,6 +92,10 @@ fn build_model_request(client: &reqwest::Client, resolved: &provider::Resolved, 
     req = req.header("HTTP-Referer", "https://local-agent-os.app").header("X-Title", "Local Agent OS");
   }
   req
+}
+
+fn build_model_request(client: &reqwest::Client, resolved: &provider::Resolved, url: &str, body: &serde_json::Value) -> reqwest::RequestBuilder {
+  auth_headers(client.post(url).json(body), resolved)
 }
 
 /// The single send path for model calls, so no call site has to remember the

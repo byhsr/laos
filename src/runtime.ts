@@ -88,6 +88,12 @@ export async function confirmManagerTool(requestId: string, approved: boolean, t
   }
 }
 
+// Clears a remembered "blocked" microphone permission in the webview, so the
+// prompt returns. No-op on platforms without the API (and in browser preview).
+export async function resetMicrophonePermission(): Promise<void> {
+  try { await invoke('reset_microphone_permission'); } catch { /* unsupported */ }
+}
+
 // Telegram tunnel + webhook (one-click expose).
 export type TelegramLogEntry = { direction: string; chatId: string; text: string; reply: string; status: string; detail: string; createdAt: string };
 export async function listTelegramLogs(): Promise<TelegramLogEntry[]> {

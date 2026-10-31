@@ -1,19 +1,24 @@
-// Media dropped into a chat turn: screenshots, photos, pasted images.
+// Media dropped into a chat turn: screenshots, photos, pasted images, plus voice
+// notes and audio files.
 //
-// Which route a dropped file takes is the user's choice in Settings → Models:
+// Which route an image takes is the user's choice in Settings → Models:
 //   * a `vision` model is pinned — it looks at the images and the turn carries
 //     its written description, so any chat model can act on what is in them;
 //   * no vision model — the images ride along in the request itself, so a
 //     vision-capable chat model sees them directly.
-// Nothing is ever silently dropped: a file the model cannot see is named for it.
+// Audio takes a single route: a pinned `transcriber` model turns it into text,
+// which joins the turn like anything the user typed. Nothing is ever silently
+// dropped: a file the model cannot read is named for it.
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::json;
 use tauri::AppHandle;
 
 use crate::provider::{self, Kind};
 
-/// Up to this many files per turn, and this much per image. The cap exists so a
+/// Up to this many files per turn, and this much per file. The cap exists so a
 /// mis-drop cannot stall the IPC bridge or blow up a provider request.
 const MAX_ATTACHMENTS: usize = 4;
 const MAX_BYTES: usize = 6 * 1024 * 1024;
@@ -31,14 +36,21 @@ pub(crate) struct Attachment {
 
 impl Attachment {
   fn is_image(&self) -> bool { self.mime.starts_with("image/") && !self.data.is_empty() }
+  fn is_audio(&self) -> bool { self.mime.starts_with("audio/") && !self.data.is_empty() }
   /// Decoded size, estimated from the base64 length so nothing has to be decoded.
   fn bytes(&self) -> usize { self.data.len() / 4 * 3 }
   fn label(&self) -> String {
-    let name = if self.name.trim().is_empty() { "pasted image" } else { self.name.trim() };
+    let name = if self.name.trim().is_empty() { "attachment" } else { self.name.trim() };
     let mime = if self.mime.trim().is_empty() { "unknown type" } else { self.mime.trim() };
     format!("{name} ({mime})")
   }
   fn data_url(&self) -> String { format!("data:{};base64,{}", self.mime, self.data) }
+}
+
+/// Decodes an attachment's base64 payload to bytes (audio has to be uploaded as
+/// a file, unlike images which ride along as data URLs).
+fn decode_audio(data: &str) -> Result<Vec<u8>, String> {
+  BASE64.decode(data.trim()).map_err(|e| e.to_string())
 }
 
 /// What a turn should do with the media it was handed.
@@ -86,10 +98,31 @@ pub(crate) async fn prepare(app: &AppHandle, chat_model: &str, attachments: &[At
     }
   }
 
+  // Audio: transcribed into the turn text through the `transcriber` role. With no
+  // role pinned, or a failure, the file is named so the user knows why it is mute.
+  let transcriber = crate::db::db(app).ok().and_then(|c| provider::explicit_role(&c, "transcriber"));
+  for a in files.iter().copied().filter(|a| a.is_audio()) {
+    if a.bytes() > crate::transcribe::MAX_AUDIO_BYTES {
+      lines.push(format!("- {}: too large to transcribe (limit {} MB).", a.label(), crate::transcribe::MAX_AUDIO_BYTES / (1024 * 1024)));
+      continue;
+    }
+    let Some(model) = transcriber.clone() else {
+      lines.push(format!("- {}: audio attached, but no transcriber model is set — pick one under transcriber in Settings → Models.", a.label()));
+      continue;
+    };
+    match decode_audio(&a.data) {
+      Ok(bytes) => match crate::transcribe::transcribe(app, &model, &a.name, &a.mime, &bytes).await {
+        Ok(text) => lines.push(format!("- {}: “{text}”", a.label())),
+        Err(e) => lines.push(format!("- {}: could not be transcribed ({e}).", a.label())),
+      },
+      Err(e) => lines.push(format!("- {}: could not be read ({e}).", a.label())),
+    }
+  }
+
   for a in files.iter().copied().filter(|a| a.is_image() && a.bytes() > MAX_BYTES) {
     lines.push(format!("- {}: too large to send (limit {} MB).", a.label(), MAX_BYTES / (1024 * 1024)));
   }
-  for a in files.iter().copied().filter(|a| !a.is_image()) {
+  for a in files.iter().copied().filter(|a| !a.is_image() && !a.is_audio()) {
     lines.push(format!("- {}: attached, but it is not an image, so you cannot see its contents.", a.label()));
   }
 
@@ -158,6 +191,21 @@ mod tests {
     assert!(att("a.png", "image/png", "AAAA").is_image());
     assert!(!att("a.png", "image/png", "").is_image());
     assert!(!att("doc.pdf", "application/pdf", "AAAA").is_image());
+  }
+
+  #[test]
+  fn only_audio_with_payloads_counts_as_audio() {
+    assert!(att("a.ogg", "audio/ogg", "AAAA").is_audio());
+    assert!(!att("a.ogg", "audio/ogg", "").is_audio());
+    assert!(!att("a.png", "image/png", "AAAA").is_audio());
+    assert!(!att("doc.pdf", "application/pdf", "AAAA").is_audio());
+  }
+
+  #[test]
+  fn audio_decodes_from_base64_for_upload() {
+    // "AAAA" is three zero bytes.
+    assert_eq!(decode_audio("AAAA").unwrap(), vec![0u8, 0, 0]);
+    assert!(decode_audio("not base64 £").is_err());
   }
 
   #[test]
