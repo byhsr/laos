@@ -38,6 +38,10 @@ const fmtDate = (ms?: number | null) => {
 };
 const pct = (n?: number) => (typeof n === 'number' ? `${Math.round(n * 100)}%` : '');
 
+// A memory's scope, collapsed to a short badge. An agent's memory can now live in
+// its own scope, a project scope it chatted in, or global.
+const scopeBadge = (s: string) => (s === 'global' ? 'global' : s.startsWith('project:') ? 'project' : 'agent');
+
 export function MemoryView() {
   const agents = useAgentsStore((s) => s.agents);
   const [tab, setTab] = useState<Tab>('memories');
@@ -56,6 +60,7 @@ export function MemoryView() {
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [memScope, setMemScope] = useState<'all' | 'agent' | 'project' | 'global'>('all');
 
   // Default to the lead agent so the view has something to show immediately.
   useEffect(() => {
@@ -190,6 +195,8 @@ export function MemoryView() {
     .sort((a, b) => Number(!!b.isManager) - Number(!!a.isManager) || a.name.localeCompare(b.name))
     .map((a) => ({ value: a.id, label: a.name }));
 
+  const visibleMemories = memScope === 'all' ? memories : memories.filter((m) => scopeBadge(m.scope) === memScope);
+
   return (
     <div className="flex h-full flex-col">
       {/* Header: whose memory, what to search, which facet. */}
@@ -225,6 +232,21 @@ export function MemoryView() {
         </div>
 
         <div className="ml-auto flex items-center gap-1">
+          {tab === 'memories' && (
+            <div className="w-[130px]">
+              <Select
+                value={memScope}
+                options={[
+                  { value: 'all', label: 'all scopes' },
+                  { value: 'agent', label: 'this agent' },
+                  { value: 'project', label: 'projects' },
+                  { value: 'global', label: 'global' },
+                ]}
+                onChange={(v) => setMemScope(v as typeof memScope)}
+                placeholder="all scopes"
+              />
+            </div>
+          )}
           <IconButton label="export memory" className="h-[30px] w-[30px] shrink-0" onClick={() => void exportMemory()}><Download size={13} /></IconButton>
           <IconButton label="import memory" className="h-[30px] w-[30px] shrink-0" onClick={() => fileRef.current?.click()}><Upload size={13} /></IconButton>
           <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => void importMemory(e)} />
@@ -248,13 +270,13 @@ export function MemoryView() {
       )}
 
       <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'memories' ? '' : 'hidden'}`}>
-        {memories.length === 0 ? (
+        {visibleMemories.length === 0 ? (
           <p className="m-0 px-1 font-mono text-[11px] text-muted">
-            {loading ? 'loading…' : submitted ? 'no matches' : 'no memories yet — ask an agent to remember something'}
+            {loading ? 'loading…' : submitted ? 'no matches' : memScope !== 'all' && memories.length > 0 ? 'no memories in this scope' : 'no memories yet — memory from chats in a project is listed here too'}
           </p>
         ) : (
           <div className="grid gap-2">
-            {memories.map((m) => {
+            {visibleMemories.map((m) => {
               const open = openId === m.id;
               return (
                 <button
@@ -267,6 +289,7 @@ export function MemoryView() {
                     <ChevronRight size={12} className={`shrink-0 text-muted transition-transform duration-150 ${open ? 'rotate-90' : ''}`} />
                     <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{m.title}</span>
                     <span className="shrink-0 rounded bg-background px-1.5 py-0.5 font-mono text-[9.5px] text-muted">{m.kind}</span>
+                    <span title={m.scope} className="shrink-0 rounded bg-background px-1.5 py-0.5 font-mono text-[9.5px] text-muted">{scopeBadge(m.scope)}</span>
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-5 font-mono text-[10px] text-muted">
                     {m.tags?.length ? <span className="min-w-0 truncate">{m.tags.map((t) => `#${t}`).join(' ')}</span> : null}

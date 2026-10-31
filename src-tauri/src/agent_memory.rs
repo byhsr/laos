@@ -95,6 +95,19 @@ pub(crate) fn add_memory(conn: &Connection, agent_id: &str, scope: &str, kind: &
   Ok(id)
 }
 
+/// Stores a memory the user explicitly asked for, in the given scope. Skips an
+/// exact duplicate (same scope + content) and returns the existing id instead, so
+/// a repeated "remember this" doesn't pile up copies. Returns (id, was_created).
+pub(crate) fn remember_explicit(conn: &Connection, agent_id: &str, scope: &str, kind: &str, title: &str, content: &str, importance: f64) -> Result<(String, bool), String> {
+  let existing: Option<String> = conn.query_row(
+    "SELECT id FROM am_memories WHERE scope=?1 AND lower(trim(content))=lower(trim(?2)) LIMIT 1",
+    params![scope, content], |r| r.get(0),
+  ).ok();
+  if let Some(id) = existing { return Ok((id, false)); }
+  let id = add_memory(conn, agent_id, scope, kind, title, content, &json!([]), 0.9, importance)?;
+  Ok((id, true))
+}
+
 fn memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
   let tags: String = row.get("tags")?;
   Ok(json!({
@@ -116,6 +129,22 @@ pub(crate) fn list_memories(conn: &Connection, scope: &str, limit: usize) -> Vec
   let mut out = Vec::new();
   let Ok(mut stmt) = conn.prepare("SELECT * FROM am_memories WHERE scope IN (?1, ?2) AND status != 'archived' ORDER BY importance DESC, updated_at DESC LIMIT ?3") else { return out };
   if let Ok(rows) = stmt.query_map(params![scopes[0], scopes[1], limit as i64], memory_row) {
+    for r in rows { if let Ok(v) = r { out.push(v); } }
+  }
+  out
+}
+
+// Everything one agent can be said to "know": its own scope, anything it authored
+// (project scopes included — distillation files project chats under the project's
+// scope but always records the agent), and global. The Memory view reads this, so
+// an agent's learned memory is visible even when it chatted inside a project.
+pub(crate) fn list_memories_for_agent(conn: &Connection, agent_id: &str, limit: usize) -> Vec<Value> {
+  let scope = scope_key("agent", agent_id);
+  let mut out = Vec::new();
+  let Ok(mut stmt) = conn.prepare(
+    "SELECT * FROM am_memories WHERE status != 'archived' AND (scope IN (?1, 'global') OR agent_id = ?2) ORDER BY importance DESC, updated_at DESC LIMIT ?3",
+  ) else { return out };
+  if let Ok(rows) = stmt.query_map(params![scope, agent_id, limit as i64], memory_row) {
     for r in rows { if let Ok(v) = r { out.push(v); } }
   }
   out
@@ -147,17 +176,14 @@ pub(crate) fn forget_memory(conn: &Connection, id: &str) -> Result<(), String> {
   Ok(())
 }
 
-// Lexical + importance + recency blend (no embeddings).
-pub(crate) fn search(conn: &Connection, scope: &str, query: &str, limit: usize) -> Vec<Value> {
+// Lexical + importance + recency blend (no embeddings), shared by the scoped and
+// the per-agent search so the two can never drift apart.
+fn rank_hits(memories: impl Iterator<Item = Value>, query: &str, limit: usize) -> Vec<Value> {
   let q = query.trim().to_lowercase();
   let tokens: Vec<&str> = q.split_whitespace().filter(|t| !t.is_empty()).collect();
   let now = now_ms();
-  let scopes = scopes_for(scope);
   let mut out: Vec<Value> = Vec::new();
-  let Ok(mut stmt) = conn.prepare("SELECT * FROM am_memories WHERE scope IN (?1, ?2) AND status != 'archived'") else { return out };
-  let rows = match stmt.query_map(params![scopes[0], scopes[1]], memory_row) { Ok(r) => r, Err(_) => return out };
-  for r in rows {
-    let Ok(m) = r else { continue };
+  for m in memories {
     let hay = format!("{} {}", m["title"].as_str().unwrap_or(""), m["content"].as_str().unwrap_or("")).to_lowercase();
     let hits = tokens.iter().filter(|t| hay.contains(*t)).count() as f64;
     if hits == 0.0 && !q.is_empty() { continue; }
@@ -172,6 +198,34 @@ pub(crate) fn search(conn: &Connection, scope: &str, query: &str, limit: usize) 
   out.sort_by(|a, b| b["score"].as_f64().partial_cmp(&a["score"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));
   out.truncate(limit);
   out
+}
+
+fn read_memories<P: rusqlite::Params>(conn: &Connection, sql: &str, params: P) -> Vec<Value> {
+  let Ok(mut stmt) = conn.prepare(sql) else { return Vec::new() };
+  // Bind the rows before dropping `stmt` — the mapped-rows borrows the statement.
+  let out: Vec<Value> = match stmt.query_map(params, memory_row) {
+    Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+    Err(_) => Vec::new(),
+  };
+  out
+}
+
+pub(crate) fn search(conn: &Connection, scope: &str, query: &str, limit: usize) -> Vec<Value> {
+  let scopes = scopes_for(scope);
+  let mems = read_memories(conn, "SELECT * FROM am_memories WHERE scope IN (?1, ?2) AND status != 'archived'", params![scopes[0], scopes[1]]);
+  rank_hits(mems.into_iter(), query, limit)
+}
+
+// The per-agent search: the same ranking, over everything `list_memories_for_agent`
+// can see (its scope, anything it authored, and global).
+pub(crate) fn search_for_agent(conn: &Connection, agent_id: &str, query: &str, limit: usize) -> Vec<Value> {
+  let scope = scope_key("agent", agent_id);
+  let mems = read_memories(
+    conn,
+    "SELECT * FROM am_memories WHERE status != 'archived' AND (scope IN (?1, 'global') OR agent_id = ?2)",
+    params![scope, agent_id],
+  );
+  rank_hits(mems.into_iter(), query, limit)
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +279,17 @@ pub(crate) fn compile_context(conn: &Connection, agent_id: &str, scope: &str, to
     let mems: Vec<Value> = list_memories(conn, scope, 200).into_iter().filter(|m| m["kind"].as_str() == Some(kind)).take(6).collect();
     if mems.is_empty() { continue; }
     out.push_str(&format!("## {label}\n"));
-    for m in mems { out.push_str(&format!("- {}\n", m["title"].as_str().unwrap_or(""))); }
+    for m in mems {
+      let title = m["title"].as_str().unwrap_or("").trim();
+      // Carry a content snippet, not just the title: an explicit "remember this"
+      // is only useful later if the substance reaches the prompt.
+      let snippet: String = m["content"].as_str().unwrap_or("").trim().chars().take(200).collect();
+      if snippet.is_empty() || snippet == title {
+        out.push_str(&format!("- {title}\n"));
+      } else {
+        out.push_str(&format!("- {title}: {snippet}\n"));
+      }
+    }
   }
   if out.len() > char_budget { out.truncate(char_budget); out.push_str("\n…"); }
   out
@@ -364,13 +428,22 @@ fn scope_or_agent(agent_id: &str, scope: Option<String>) -> String {
 #[tauri::command]
 pub fn am_list_memories(app: AppHandle, agent_id: String, scope: Option<String>) -> Result<Vec<Value>, String> {
   let conn = db(&app)?;
-  Ok(list_memories(&conn, &scope_or_agent(&agent_id, scope), 200))
+  // An explicit scope narrows to it (plus global); otherwise show everything the
+  // agent can see, project-scoped memory included.
+  match scope.filter(|s| !s.trim().is_empty()) {
+    Some(s) => Ok(list_memories(&conn, &s, 200)),
+    None => Ok(list_memories_for_agent(&conn, &agent_id, 200)),
+  }
 }
 
 #[tauri::command]
 pub fn am_search(app: AppHandle, agent_id: String, scope: Option<String>, query: String, limit: Option<usize>) -> Result<Vec<Value>, String> {
   let conn = db(&app)?;
-  Ok(search(&conn, &scope_or_agent(&agent_id, scope), &query, limit.unwrap_or(30)))
+  let limit = limit.unwrap_or(30);
+  match scope.filter(|s| !s.trim().is_empty()) {
+    Some(s) => Ok(search(&conn, &s, &query, limit)),
+    None => Ok(search_for_agent(&conn, &agent_id, &query, limit)),
+  }
 }
 
 #[tauri::command]
@@ -433,3 +506,67 @@ pub fn am_create_namespace(app: AppHandle, scope: String, name: String, descript
 
 #[tauri::command]
 pub fn am_remove_namespace(app: AppHandle, scope: String) -> Result<(), String> { let conn = db(&app)?; remove_namespace(&conn, &scope) }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn conn() -> Connection {
+    let c = Connection::open_in_memory().unwrap();
+    ensure_schema(&c).unwrap();
+    c
+  }
+
+  fn titles(mems: &[Value]) -> Vec<String> {
+    mems.iter().map(|m| m["title"].as_str().unwrap_or("").to_string()).collect()
+  }
+
+  /// A rule must reach a project-scoped turn: chat injects
+  /// `compile_context(scope = "project:<pid>")`, and `scopes_for` (scope + global)
+  /// is what makes a global rule visible there. This is the reason rules like
+  /// "never use emoji" are stored globally rather than in the agent's own scope.
+  #[test]
+  fn a_global_rule_is_visible_from_a_project_scope() {
+    let c = conn();
+    add_memory(&c, "manager", "global", "policy", "no emoji", "never use emoji", &json!([]), 0.9, 0.9).unwrap();
+    add_memory(&c, "a1", "agent:a1", "semantic", "private", "private", &json!([]), 0.8, 0.5).unwrap();
+
+    let got = titles(&list_memories(&c, "project:p1", 50));
+    assert!(got.contains(&"no emoji".to_string()), "a global rule applies inside a project chat");
+    assert!(!got.contains(&"private".to_string()), "an agent-scoped memory stays out of the project scope");
+  }
+
+  /// An agent's own memory, the memory it authored while chatting in a project
+  /// (filed under `project:<pid>`), and global memory are all visible together —
+  /// and another agent's memory never leaks in. This is the case the Memory tab
+  /// used to miss: project sessions file under the project scope, so a scope-only
+  /// read showed nothing.
+  #[test]
+  fn an_agents_memories_span_its_scope_projects_and_global() {
+    let c = conn();
+    add_memory(&c, "a1", "agent:a1", "semantic", "own", "own", &json!([]), 0.8, 0.5).unwrap();
+    add_memory(&c, "a1", "project:p1", "semantic", "in project", "in project", &json!([]), 0.8, 0.5).unwrap();
+    add_memory(&c, "manager", "global", "policy", "global note", "global note", &json!([]), 0.8, 0.5).unwrap();
+    add_memory(&c, "a2", "agent:a2", "semantic", "other", "other", &json!([]), 0.8, 0.5).unwrap();
+    add_memory(&c, "a2", "project:p1", "semantic", "other project", "other project", &json!([]), 0.8, 0.5).unwrap();
+
+    let got = titles(&list_memories_for_agent(&c, "a1", 50));
+    assert!(got.contains(&"own".to_string()));
+    assert!(got.contains(&"in project".to_string()), "project memory the agent authored must show");
+    assert!(got.contains(&"global note".to_string()));
+    assert!(!got.contains(&"other".to_string()), "another agent's memory must not leak");
+    assert!(!got.contains(&"other project".to_string()), "another agent's project memory must not leak");
+  }
+
+  /// The per-agent search ranks over the same set the list reads.
+  #[test]
+  fn per_agent_search_finds_project_scoped_memory() {
+    let c = conn();
+    add_memory(&c, "a1", "project:p1", "semantic", "deploy steps", "run the release script", &json!([]), 0.8, 0.5).unwrap();
+    add_memory(&c, "a2", "project:p1", "semantic", "deploy steps", "someone else's", &json!([]), 0.8, 0.5).unwrap();
+
+    let hits = search_for_agent(&c, "a1", "release", 10);
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0]["memory"]["content"].as_str(), Some("run the release script"));
+  }
+}
