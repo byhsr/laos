@@ -17,14 +17,18 @@ mod fox;
 mod http;
 mod insights;
 mod integrations;
+mod knowledge;
 mod manager;
 mod mcp;
 mod media;
 mod memory;
+mod mic;
 mod models;
 mod provider;
+mod refile;
 mod reminders;
 mod retrieve;
+mod routing;
 mod storage;
 mod tasks;
 mod telegram;
@@ -32,6 +36,8 @@ mod terminal;
 mod tg_markdown;
 mod tools;
 mod tooltext;
+mod transcribe;
+mod tz;
 mod updater;
 mod vault;
 mod workflows;
@@ -131,6 +137,9 @@ fn main() {
       storage::get_knowledge_doc,
       storage::save_knowledge_doc,
       storage::delete_knowledge_doc,
+      // The knowledge base's re-file pass: docs that are really memories or todos.
+      refile::refile_knowledge_preview,
+      refile::refile_knowledge_apply,
       storage::list_skills,
       storage::save_skill,
       storage::delete_skill,
@@ -169,6 +178,8 @@ fn main() {
       browser::browser_set_theme,
       browser::browser_state,
       browser::browser_eval_result,
+      // Microphone permission (the webview remembers a denial per origin)
+      mic::reset_microphone_permission,
       // Agent + workflow execution
       agents::execute_agent,
       workflows::execute_workflow,

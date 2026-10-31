@@ -44,15 +44,13 @@ fn line(item: &Item) -> String {
 }
 
 pub(crate) fn due_summary(conn: &Connection) -> String {
-  let now = chrono::Local::now().fixed_offset();
+  let now = chrono::Utc::now().fixed_offset();
   let mut due: Vec<Item> = crate::capture::list(conn, None).into_iter().filter(|i| is_due(i, now)).collect();
   due.sort_by(|a, b| a.due_at.cmp(&b.due_at));
   if due.is_empty() { return "Nothing due right now.".into(); }
   due.iter().map(|i| {
     let title = if i.title.trim().is_empty() { &i.body } else { &i.title };
-    let when = i.due_at.as_deref().and_then(parse)
-      .map(|d| d.with_timezone(&chrono::Local).format("%b %d %H:%M").to_string())
-      .unwrap_or_default();
+    let when = i.due_at.as_deref().and_then(|d| parse(d).map(|_| crate::tz::format(conn, d))).unwrap_or_default();
     format!("• [{}] {title} · {when}", i.kind)
   }).collect::<Vec<_>>().join("\n")
 }
@@ -66,11 +64,15 @@ struct Fired {
 // Collects everything due. Takes a connection and returns owned data — the caller
 // must not hold the connection across the network awaits below.
 fn collect_due(conn: &Connection) -> Vec<Fired> {
-  let now = chrono::Local::now().fixed_offset();
+  let now = chrono::Utc::now().fixed_offset();
   crate::capture::list(conn, None).into_iter()
     .filter(|i| i.due_at.is_some() && is_due(i, now))
     .map(|item| {
-      let (token, chat_id) = crate::telegram::owner_target(conn, &item.source).unwrap_or_default();
+      // The bot that captured the item, falling back to the owner bot so a
+      // reminder created by an agent (or in the app) still reaches Telegram.
+      let (token, chat_id) = crate::telegram::owner_target(conn, &item.source)
+        .or_else(|| crate::telegram::default_owner(conn))
+        .unwrap_or_default();
       Fired { item, token, chat_id }
     })
     .collect()
@@ -105,7 +107,7 @@ pub(crate) async fn reminder_loop(app: AppHandle) {
         let ts = chrono::Utc::now().to_rfc3339();
         if failed {
           // Retry in five minutes rather than every tick.
-          let retry = chrono::Local::now() + chrono::Duration::minutes(5);
+          let retry = chrono::Utc::now() + chrono::Duration::minutes(5);
           let _ = conn.execute("UPDATE items SET due_at=?2, updated_at=?3 WHERE id=?1", params![f.item.id, retry.to_rfc3339(), ts]);
           continue;
         }
@@ -124,7 +126,7 @@ pub(crate) async fn reminder_loop(app: AppHandle) {
 #[tauri::command]
 pub fn item_due(app: AppHandle, upcoming: Option<bool>) -> Result<Vec<Item>, String> {
   let conn = db(&app)?;
-  let now = chrono::Local::now().fixed_offset();
+  let now = chrono::Utc::now().fixed_offset();
   let mut items: Vec<Item> = crate::capture::list(&conn, None).into_iter()
     .filter(|i| i.status == "active" && i.due_at.is_some())
     .filter(|i| if upcoming.unwrap_or(false) { !is_due(i, now) } else { is_due(i, now) })
@@ -136,7 +138,7 @@ pub fn item_due(app: AppHandle, upcoming: Option<bool>) -> Result<Vec<Item>, Str
 #[tauri::command]
 pub fn reminder_snooze(app: AppHandle, id: String, minutes: Option<i64>) -> Result<(), String> {
   let conn = db(&app)?;
-  let next = chrono::Local::now() + chrono::Duration::minutes(minutes.unwrap_or(10));
+  let next = chrono::Utc::now() + chrono::Duration::minutes(minutes.unwrap_or(10));
   conn.execute("UPDATE items SET due_at=?2, fired_at=NULL, updated_at=?3 WHERE id=?1",
     params![id, next.to_rfc3339(), chrono::Utc::now().to_rfc3339()]).map_err(|e| e.to_string())?;
   Ok(())

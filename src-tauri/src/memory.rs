@@ -312,7 +312,7 @@ async fn close_chat_session(app: &AppHandle, session_id: &str, agent_id: &str, m
   // Project sessions file under the project's scope, so project memory stays
   // together instead of leaking into the agent's own namespace.
   let scope = session_scope(&conn, session_id, agent_id);
-  distill_session(app, agent_id, &scope, model, &joined).await;
+  let _ = distill_session(app, agent_id, &scope, model, &joined).await;
 
   Ok(summary)
 }
@@ -327,14 +327,18 @@ fn session_scope(conn: &Connection, session_id: &str, agent_id: &str) -> String 
 
 const DISTILL_MAX_TOKENS: u64 = 1200;
 
-// Turns a finished chat into durable memory: asks the model for the agent's own
-// self-knowledge and know-how (not a recap), then writes it straight into the
-// memory connector. This is how the agent learns from a session on its own.
-async fn distill_session(app: &AppHandle, agent_id: &str, scope: &str, model: &str, transcript: &str) {
-  if transcript.trim().is_empty() { return; }
+// Turns a finished chat into durable memory: asks the model for the durable
+// knowledge worth keeping — the agent's own procedures/policies as well as facts,
+// preferences and decisions about the user and their work — then writes it into
+// the memory store. This is how the agent learns from a session on its own.
+//
+// Returns whether the model produced parseable JSON, so the caller can decide
+// whether to advance its watermark (see `distill_if_due`).
+async fn distill_session(app: &AppHandle, agent_id: &str, scope: &str, model: &str, transcript: &str) -> bool {
+  if transcript.trim().is_empty() { return true; }
   let transcript: String = transcript.chars().take(MAX_SUMMARY_INPUT_CHARS).collect();
   let prompt = format!(
-    "You are updating an AI agent's long-term memory after a chat. Capture only durable, reusable knowledge about the agent itself and how it works — its identity, values, goals, preferences, procedures and policies — not a recap of the conversation. Favour self-knowledge and know-how over facts about the user.\n\n\
+    "You are updating an AI agent's long-term memory after a chat. Capture durable, reusable knowledge that will help in future conversations: facts and preferences about the user, decisions and their reasons, details of their projects and people, and the agent's own procedures and policies. Do not write a recap of the conversation; skip small talk and one-off requests. Prefer a few high-signal items over many.\n\n\
      Return STRICT JSON only, with no prose and no code fences:\n\
      {{\"self\":[{{\"key\":\"identity|values|goals|current_focus|capabilities\",\"value\":\"...\"}}],\"memories\":[{{\"kind\":\"semantic|procedural|policy|preference|reflection\",\"title\":\"...\",\"content\":\"...\",\"tags\":[\"...\"],\"importance\":0.0,\"confidence\":0.0}}]}}\n\
      Only include items clearly supported by the chat. Empty arrays are fine.\n\nConversation:\n{transcript}"
@@ -344,12 +348,15 @@ async fn distill_session(app: &AppHandle, agent_id: &str, scope: &str, model: &s
   let model = db(app).ok()
     .and_then(|conn| crate::provider::explicit_role(&conn, "distillation"))
     .unwrap_or_else(|| model.to_string());
-  let Ok(reply) = one_shot_completion(app, &model, &prompt, DISTILL_MAX_TOKENS).await else { return; };
-  let Some(json) = extract_json(&reply) else { return; };
+  let Ok(reply) = one_shot_completion(app, &model, &prompt, DISTILL_MAX_TOKENS).await else { return false; };
+  // A reply that isn't JSON means the model ignored the format — report failure so
+  // the turn isn't marked as distilled and the batch is retried rather than lost.
+  let Some(json) = extract_json(&reply) else { return false; };
   let app = app.clone();
   let agent_id = agent_id.to_string();
   let scope = scope.to_string();
   let _ = tauri::async_runtime::spawn_blocking(move || { crate::fox::write_distilled(&app, &agent_id, &scope, &json); }).await;
+  true
 }
 
 // Pulls the first JSON object out of a model reply that may be wrapped in prose
@@ -361,9 +368,67 @@ pub(crate) fn extract_json(text: &str) -> Option<serde_json::Value> {
   serde_json::from_str(&text[start..=end]).ok()
 }
 
+// Phrases that mean the user is explicitly asking to remember something. Kept
+// deliberately literal — a false positive costs one extra memory row, a missed one
+// loses what the user asked to keep.
+const REMEMBER_CUES: &[&str] = &[
+  "remember this", "remember that", "remember my", "remember i ", "please remember",
+  "always remember", "remember to ", "keep track of", "don't forget", "dont forget",
+  "make a note", "take a note", "note this", "save this", "learn this", "jot this",
+  "memorize this", "commit this to memory",
+];
+
+/// Whether the user's message is an explicit request to remember something.
+pub(crate) fn is_explicit_remember(text: &str) -> bool {
+  let t = text.to_lowercase();
+  REMEMBER_CUES.iter().any(|c| t.contains(c))
+}
+
+/// The single write path for an explicit memory: stored in the agent's own scope
+/// (deliberately NOT shared globally), deduped, and indexed into the brain map so
+/// retrieval can surface it. Returns (id, was_created).
+pub(crate) fn store_remembered(app: &AppHandle, agent_id: &str, title: &str, content: &str, kind: &str) -> Result<(String, bool), String> {
+  let conn = db(app)?;
+  let scope = crate::agent_memory::scope_key("agent", agent_id);
+  let (id, created) = crate::agent_memory::remember_explicit(&conn, agent_id, &scope, kind, title, content, 0.9)?;
+  if created {
+    crate::brain::index_memory(app, &conn, &scope, &id, kind, title, content, 0.9, 0.9);
+  }
+  Ok((id, created))
+}
+
+/// A standing rule about the user, filed at GLOBAL scope. `agent_memory::scopes_for`
+/// inherits only `<scope> + global`, so an agent-scoped rule is invisible inside a
+/// project chat — a global one applies to every agent and every conversation.
+pub(crate) fn store_rule(app: &AppHandle, agent_id: &str, kind: &str, title: &str, content: &str) -> Result<(String, bool), String> {
+  let conn = db(app)?;
+  let kind = if kind == "policy" || kind == "preference" { kind } else { "preference" };
+  let (id, created) = crate::agent_memory::remember_explicit(&conn, agent_id, "global", kind, title, content, 0.9)?;
+  if created {
+    crate::brain::index_memory(app, &conn, "global", &id, kind, title, content, 0.9, 0.9);
+  }
+  Ok((id, created))
+}
+
+/// The deterministic fast path for an explicit "remember this": stores it the
+/// moment it's said, alongside the `remember` tool, so an explicit request is
+/// never lost to the periodic distillation pass. A standing rule goes to global
+/// scope as a policy/preference — typed `semantic` it would decay and would be
+/// invisible from a project chat.
+pub(crate) fn remember_explicit(app: &AppHandle, agent_id: &str, text: &str) {
+  let text = text.trim();
+  if text.is_empty() { return; }
+  let kind = crate::routing::rule_kind(text);
+  let title: String = text.chars().take(80).collect();
+  let _ = if kind == "semantic" {
+    store_remembered(app, agent_id, &title, text, kind)
+  } else {
+    store_rule(app, agent_id, kind, &title, text)
+  };
+}
+
 // How many new messages a session may accumulate before it is distilled again.
 const DISTILL_EVERY: i64 = 8;
-
 /// Distills a growing session in the background, once every `DISTILL_EVERY` new
 /// messages. Learning shouldn't wait for the user to close the chat — this is what
 /// makes memory accumulate during normal use. Re-distillation is safe because
@@ -378,9 +443,13 @@ pub(crate) async fn distill_if_due(app: &AppHandle, session_id: &str, agent_id: 
     let scope = session_scope(&conn, session_id, agent_id);
     (transcript, count, scope)
   };
-  distill_session(app, agent_id, &scope, model, &transcript).await;
-  if let Ok(conn) = db(app) {
-    let _ = conn.execute("UPDATE chat_sessions SET distilled_count=?2 WHERE id=?1", params![session_id, count]);
+  if distill_session(app, agent_id, &scope, model, &transcript).await {
+    // Only mark the batch distilled once the model actually produced memory. A
+    // failed pass (bad output / model error) leaves the watermark untouched, so
+    // the next turn retries instead of silently losing that stretch of chat.
+    if let Ok(conn) = db(app) {
+      let _ = conn.execute("UPDATE chat_sessions SET distilled_count=?2 WHERE id=?1", params![session_id, count]);
+    }
   }
 }
 

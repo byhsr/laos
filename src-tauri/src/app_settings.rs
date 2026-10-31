@@ -21,7 +21,8 @@ pub struct CliShortcut {
 }
 
 // Who the assistant is and who it's talking to (fren's userConfig). Per-machine,
-// so it lives in settings; `timezone` is informational — times use the system zone.
+// so it lives in settings. `timezone` is an IANA name (default IST) that every due
+// date, reminder and relative time is resolved in — see `tz.rs`.
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Identity {
@@ -34,7 +35,10 @@ pub struct Identity {
 }
 
 pub(crate) fn identity(conn: &Connection) -> Identity {
-  get(conn, "identity").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+  let mut identity: Identity = get(conn, "identity").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+  // An unset zone means IST, not whatever the machine happens to run.
+  if identity.timezone.trim().is_empty() { identity.timezone = crate::tz::DEFAULT_TZ.to_string(); }
+  identity
 }
 
 /// The identity lines appended to every system prompt (empty when unset).

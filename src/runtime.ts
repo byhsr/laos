@@ -196,6 +196,14 @@ export async function saveKnowledgeDoc(doc: KnowledgeDoc): Promise<void> {
 export async function deleteKnowledgeDoc(id: string): Promise<void> {
   await invoke('delete_knowledge_doc', { id });
 }
+// The re-file pass: docs in the knowledge base that are really memories or todos.
+export type RefileProposal = { docId: string; title: string; content: string; destination: 'memory' | 'items'; kind: string; dueAt: string | null };
+export async function refileKnowledgePreview(): Promise<RefileProposal[]> {
+  try { return await invoke<RefileProposal[]>('refile_knowledge_preview'); } catch { return []; }
+}
+export async function refileKnowledgeApply(proposals: RefileProposal[]): Promise<number> {
+  return await invoke<number>('refile_knowledge_apply', { proposals });
+}
 
 // Loads a persisted conversation (assistant+user turns) for an agent.
 export async function loadConversation(agentId: string): Promise<{ role: 'user' | 'assistant'; content: string }[]> {

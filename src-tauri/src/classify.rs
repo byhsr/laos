@@ -11,6 +11,7 @@
 
 use serde::Deserialize;
 use serde_json::json;
+use rusqlite::Connection;
 use tauri::AppHandle;
 
 use crate::db::db;
@@ -99,10 +100,11 @@ repetition) — NOT importance, usefulness or positivity. 0.0 = easy to ignore, 
 - should_act is true only when the message asks for an action to be taken now.\n\
 - Always fill every field; unknown -> null or empty string / empty array.";
 
-fn classifier_system() -> String {
-  let now = chrono::Local::now();
-  format!("{CLASSIFIER}\n\nRight now it is {} (local time, UTC offset {}). Resolve times against this.",
-    now.format("%Y-%m-%d %H:%M %A"), now.offset())
+fn classifier_system(conn: &Connection) -> String {
+  let z = crate::tz::zone(conn);
+  let now = chrono::Utc::now().with_timezone(&z);
+  format!("{CLASSIFIER}\n\nRight now it is {} ({}, UTC offset {}). Resolve every relative time against THIS zone and return due_at in it.",
+    now.format("%Y-%m-%d %H:%M %A"), z.name(), now.offset())
 }
 
 pub(crate) fn normalize(c: &mut Classification, raw: &str) {
@@ -145,7 +147,7 @@ async fn classify_inner(app: &AppHandle, text: &str) -> Result<Classification, S
     let mut body = json!({
       "model": resolved.model,
       "messages": [
-        { "role": "system", "content": classifier_system() },
+        { "role": "system", "content": classifier_system(&conn) },
         { "role": "user", "content": text }
       ],
       "temperature": 0.1,

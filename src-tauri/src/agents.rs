@@ -18,7 +18,7 @@ use crate::tools::{
 };
 use crate::tooltext::parse_text_tool_calls;
 
-pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::path::Path) -> Result<Vec<Box<dyn AgentTool>>, String> {
+pub(crate) fn build_tools(app: &AppHandle, conn: &Connection, agent: &AgentRequest, home: &std::path::Path) -> Result<Vec<Box<dyn AgentTool>>, String> {
   let mut tools: Vec<Box<dyn AgentTool>> = Vec::new();
   let has_network = agent.permissions.iter().any(|p| p == "network");
   let has_files = agent.permissions.iter().any(|p| p == "files");
@@ -114,6 +114,13 @@ pub(crate) fn build_tools(conn: &Connection, agent: &AgentRequest, home: &std::p
   if has_pc {
     tools.extend(desktop_tools());
   }
+  // Every agent gets the shared knowledge base (one store any agent can read and
+  // write), the remember tool (an explicit "remember this" becomes durable memory
+  // in the agent's own scope) and the items tool (todos/reminders — the store the
+  // knowledge base was standing in for).
+  tools.push(crate::tools::knowledge_tool(app));
+  tools.push(crate::tools::remember_tool(app, &agent.id));
+  tools.push(crate::tools::items_tool(app));
   Ok(tools)
 }
 
@@ -372,7 +379,7 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
     provider::Kind::Xai => "xAI",
     provider::Kind::Anthropic => "Anthropic",
   };
-  let tools = build_tools(&conn, agent, &home)?;
+  let tools = build_tools(app, &conn, agent, &home)?;
   events.push(ExecutionEvent {
     time: now(),
     kind: "thought".into(),

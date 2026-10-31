@@ -106,7 +106,9 @@ manager_tool!(ManagerListModels, "list_models", "List configured models.", serde
 manager_tool!(ManagerListTools, "list_tools", "List configured tools.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerWorkspaceStatus, "get_workspace_status", "Get a condensed workspace status: agents, integrations, active tasks, recent runs.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerRecallMemory, "recall_memory", "Recall what was discussed or done recently: long-term facts, the last chat summary, and today's/yesterday's condensed context. Call this when the user asks 'what have we done/talked about', to continue prior work, or to reference past decisions. Does NOT inject history into the conversation — it returns it as tool output.", serde_json::json!({}), serde_json::json!([]));
-manager_tool!(ManagerKnowledgeBase, "knowledge_base", "Read and write the shared knowledge base. Params: action ('list' | 'get' | 'search' | 'save'), title (string, for save/search), content (string, for save), id (string, for get/save). Use it to store durable reference material (company wiki, ICP notes, decisions) that any agent can consult later.", serde_json::json!({ "action": { "type": "string" }, "title": { "type": "string" }, "content": { "type": "string" }, "id": { "type": "string" } }), serde_json::json!(["action"]));
+manager_tool!(ManagerKnowledgeBase, "knowledge_base", "The shared knowledge base — durable REFERENCE material any agent may need later (company wiki, ICP, specs, policies, runbooks, product facts). Params: action ('list' | 'get' | 'search' | 'save'), title (string, for save/search), content (string, for save), id (string, for get/save). NOT for tasks, reminders or personal rules about the user — those go to 'items' and 'remember'.", serde_json::json!({ "action": { "type": "string" }, "title": { "type": "string" }, "content": { "type": "string" }, "id": { "type": "string" } }), serde_json::json!(["action"]));
+
+manager_tool!(ManagerTidyKnowledge, "tidy_knowledge", "Find knowledge-base docs that are really memories or todos and propose where each should move. Read-only: returns the proposals; the user approves them in the Knowledge tab (or here, if they say yes).", serde_json::json!({}), serde_json::json!([]));
 
 manager_tool!(ManagerAskUser, "ask_user", "Ask the user a question and wait for the answer. Over Telegram this shows buttons when options are given, or waits for their next message otherwise. Params: question (string), options (array of strings, optional).", serde_json::json!({ "question": { "type": "string" }, "options": { "type": "array", "items": { "type": "string" } } }), serde_json::json!(["question"]));
 
@@ -136,6 +138,7 @@ pub(crate) fn manager_tools() -> Vec<Box<dyn AgentTool>> {
     Box::new(ManagerWorkspaceStatus),
     Box::new(ManagerRecallMemory),
     Box::new(ManagerKnowledgeBase),
+    Box::new(ManagerTidyKnowledge),
     Box::new(ManagerAskUser),
     Box::new(SearchFilesTool),
     Box::new(ReadAnyFileTool),
@@ -170,6 +173,10 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
   for t in manager_tools() {
     tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
   }
+  // The remember and items tools are provided at runtime (not dispatch-by-name
+  // builtins), so list them explicitly here.
+  tool_list.push_str("- remember: Save a durable fact or standing rule about the user (\"never use emoji\", \"I prefer IST\") — kind 'policy' for a never/always rule, 'preference' for a taste, 'semantic' for a plain fact.\n");
+  tool_list.push_str("- items: The user's todos, reminders, promises, links and quick notes — anything with a when or a do. Reminders are scheduled and pushed to Telegram.\n");
   // Only the MCP tools the Manager was explicitly opted into are listed (and
   // offered) — attaching them in its config is the opt-in.
   for t in mcp_tools_for(conn, mcp_tool_ids) {
@@ -225,6 +232,10 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
   // Manager brings it in on demand via recall_memory (or any memory tool it
   // holds), so a new chat starts clean.
 
+  // Where captured things belong — the same contract every agent gets, so the
+  // Manager stops filing preferences and todos as knowledge-base docs.
+  let routing = crate::routing::ROUTING_RULES;
+
   Ok(format!(
     "You are {name}, the lead agent of a real, running agent workspace application. You are NOT a simulated or virtual entity â€” you have real tools and real effects on the user's machine.\n\n\
      You can actually do these things right now (do not claim you cannot):\n{tool_list}\n\
@@ -236,7 +247,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
      - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent â€” file access is just a permission value in the create_agent call.\n\
      - Never store secrets (API keys/tokens) without the user's explicit approval in the confirmation popup.\n\
      - Delegate domain work to agents rather than doing it inline.\n\n\
-     Workspace context:\n{context}\n\n{skills}{memory_note}{pc_note}{browser_note}{identity}\
+     Workspace context:\n{context}\n\n{skills}{memory_note}{pc_note}{browser_note}{identity}{routing}\
      Return a concise, helpful reply to the user."
   , identity = crate::app_settings::identity_prompt(conn)))
 }
@@ -305,10 +316,15 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   // Durable memory is injected, so the Manager starts each turn already knowing
   // what it has learned (recall_memory still works for a deeper pull).
   let pc_control = manager.permissions.iter().any(|p| p == "pc_control");
+  // Route the turn's content before the model sees it, exactly as the streaming
+  // chat path does — a standing rule or a timed reminder is filed, not described.
+  let triage = crate::routing::triage(app, &manager.id, message, None).await;
   let scope = crate::agent_memory::scope_key("agent", &manager.id);
   let memory = crate::memory::memory_block(app, &manager.id, &scope, message).await;
   let context = build_manager_system_prompt(&conn, &manager.name, &manager.tool_ids, pc_control)?;
   let prompt = format!("{context}{memory}\n\nUser message: {message}");
+  // Tell the model what was already filed, so it doesn't file it a second time.
+  let prompt = match &triage { Some(t) => format!("{prompt}{}", t.note), None => prompt };
 
   // The Manager's built-in tools plus only the MCP tools it was opted into.
   let tools: Vec<Box<dyn AgentTool>> = {
@@ -316,6 +332,10 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     if pc_control { t.extend(crate::tools::desktop_tools()); }
     t.extend(crate::tools::script_tools(&conn));
     t.extend(mcp_tools_for(&conn, &manager.tool_ids));
+    // An explicit "remember this" from any surface becomes durable memory, and a
+    // todo/reminder becomes an item rather than a knowledge-base doc.
+    t.push(crate::tools::remember_tool(app, &manager.id));
+    t.push(crate::tools::items_tool(app));
     t
   };
 
@@ -634,47 +654,16 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       let bundle = build_context_bundle(&conn, &manager_id).unwrap_or_default();
       Ok(if bundle.trim().is_empty() { "No stored memory yet.".to_string() } else { bundle })
     }
-    "knowledge_base" => {
-      let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list").to_string();
-      let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-      let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
-      let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-      match action.as_str() {
-        "list" => {
-          let mut stmt = conn.prepare("SELECT id, title, updated_at FROM knowledge_docs ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
-          let rows = stmt.query_map([], |row| Ok(format!("- {} (id: {})", row.get::<_, String>(1)?, row.get::<_, String>(0)?))).map_err(|e| e.to_string())?;
-          let mut out = Vec::new();
-          for r in rows { out.push(r.map_err(|e| e.to_string())?); }
-          Ok(if out.is_empty() { "Knowledge base is empty.".into() } else { out.join("\n") })
-        }
-        "search" => {
-          let like = format!("%{}%", title);
-          let mut stmt = conn.prepare("SELECT id, title, content FROM knowledge_docs WHERE title LIKE ?1 OR content LIKE ?1 ORDER BY updated_at DESC LIMIT 5").map_err(|e| e.to_string())?;
-          let rows = stmt.query_map(params![like], |row| Ok(format!("- {} (id: {}): {}", row.get::<_, String>(1)?, row.get::<_, String>(0)?, row.get::<_, String>(2)?.chars().take(150).collect::<String>()))).map_err(|e| e.to_string())?;
-          let mut out = Vec::new();
-          for r in rows { out.push(r.map_err(|e| e.to_string())?); }
-          Ok(if out.is_empty() { format!("No docs matching \"{title}\".") } else { out.join("\n") })
-        }
-        "get" => {
-          let mut stmt = conn.prepare("SELECT id, title, content FROM knowledge_docs WHERE id=?1 OR title=?1").map_err(|e| e.to_string())?;
-          let mut rows = stmt.query_map(params![if id.is_empty() { title.clone() } else { id.clone() }], |row| Ok(format!("# {}\n\n{}", row.get::<_, String>(1)?, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
-          match rows.next().transpose().map_err(|e| e.to_string())? {
-            Some(v) => Ok(v),
-            None => Ok(format!("No knowledge base doc found for \"{}\".", if id.is_empty() { title } else { id })),
-          }
-        }
-        "save" => {
-          if title.is_empty() { return Err("knowledge_base save requires a title.".into()); }
-          let doc_id = if id.is_empty() { format!("kb-{}", chrono::Utc::now().timestamp_millis()) } else { id };
-          conn.execute(
-            "INSERT INTO knowledge_docs (id, title, content, tags, updated_at) VALUES (?1,?2,?3,'[]',?4)
-             ON CONFLICT(id) DO UPDATE SET title=excluded.title, content=excluded.content, updated_at=excluded.updated_at",
-            params![doc_id, title, content, chrono::Utc::now().to_rfc3339()],
-          ).map_err(|e| e.to_string())?;
-          Ok(format!("Saved knowledge base doc \"{title}\" (id: {doc_id})."))
-        }
-        _ => Err(format!("Unknown knowledge_base action {action}.")),
-      }
+    // One shared implementation: the Manager's built-in tool and the
+    // knowledge_base tool every other agent holds both route here.
+    "knowledge_base" => crate::knowledge::run(&conn, args),
+    // Read-only: the user approves the moves in the Knowledge tab.
+    "tidy_knowledge" => {
+      let proposals = crate::refile::preview(app).await?;
+      if proposals.is_empty() { return Ok("Knowledge base looks clean — nothing to move.".into()); }
+      Ok(proposals.iter()
+        .map(|p| format!("- \"{}\" → {} as a {}", p.title, p.destination, p.kind))
+        .collect::<Vec<_>>().join("\n"))
     }
     "search_files" => SearchFilesTool.run(args).await,
     "read_file_any" => ReadAnyFileTool.run(args).await,

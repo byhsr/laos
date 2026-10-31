@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, Check, Search, Trash2 } from 'lucide-react';
-import { deleteKnowledgeDoc, listKnowledgeDocs, saveKnowledgeDoc, type KnowledgeDoc } from '../../runtime';
+import { BookOpen, Check, Search, Sparkles, Trash2 } from 'lucide-react';
+import { deleteKnowledgeDoc, listKnowledgeDocs, refileKnowledgeApply, refileKnowledgePreview, saveKnowledgeDoc, type KnowledgeDoc, type RefileProposal } from '../../runtime';
 import { toast } from '../../hooks/useToast';
 import { useAgentsStore } from '../../hooks/useAgents';
 import { Modal } from '../ui/Modal';
@@ -23,6 +23,10 @@ export function KnowledgeBaseView() {
   const [editing, setEditing] = useState<KnowledgeDoc | null>(null);
   const [draft, setDraft] = useState({ title: '', content: '', tags: '' });
   const [saving, setSaving] = useState(false);
+  // The re-file pass: docs that are really memories or todos, awaiting approval.
+  const [proposals, setProposals] = useState<RefileProposal[] | null>(null);
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [tidying, setTidying] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -69,6 +73,38 @@ export function KnowledgeBaseView() {
     await load();
   };
 
+  // Proposes where each stray doc should live; nothing moves until approved.
+  const openTidy = async () => {
+    setTidying(true);
+    const found = await refileKnowledgePreview();
+    setTidying(false);
+    if (found.length === 0) { toast('knowledge base looks clean — nothing to move', 'success'); return; }
+    setChosen(new Set(found.map((p) => p.docId)));
+    setProposals(found);
+  };
+
+  const applyTidy = async () => {
+    if (!proposals) return;
+    const selected = proposals.filter((p) => chosen.has(p.docId));
+    if (selected.length === 0) { setProposals(null); return; }
+    setTidying(true);
+    try {
+      const moved = await refileKnowledgeApply(selected);
+      toast(`moved ${moved} doc${moved === 1 ? '' : 's'}`, 'success');
+      setProposals(null);
+      await load();
+    } finally {
+      setTidying(false);
+    }
+  };
+
+  const toggleChosen = (docId: string) =>
+    setChosen((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId); else next.add(docId);
+      return next;
+    });
+
   const q = search.trim().toLowerCase();
   const filtered = q
     ? docs.filter((d) => d.title.toLowerCase().includes(q) || d.content.toLowerCase().includes(q) || d.tags.some((t) => t.toLowerCase().includes(q)))
@@ -87,6 +123,7 @@ export function KnowledgeBaseView() {
           />
         </div>
         <span className="shrink-0 font-mono text-[10px] text-muted">{filtered.length} doc{filtered.length === 1 ? '' : 's'}</span>
+        <Button className="shrink-0" icon={<Sparkles size={13} />} onClick={() => void openTidy()} disabled={tidying}>tidy</Button>
         <Button variant="primary" className="shrink-0" icon={<Check size={13} />} onClick={newDoc}>new doc</Button>
       </div>
 
@@ -141,6 +178,52 @@ export function KnowledgeBaseView() {
 
           <label className={`${FIELD_LABEL_CLS} mt-4`}>tags</label>
           <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="icp, wiki, decisions (comma separated)" className={INPUT_CLS} />
+        </Modal>
+      )}
+
+      {proposals && (
+        <Modal
+          title="tidy knowledge base"
+          onClose={() => setProposals(null)}
+          width="min(92vw, 640px)"
+          headerAction={
+            <div className="flex items-center gap-1.5">
+              <Button onClick={() => setProposals(null)}>cancel</Button>
+              <Button variant="primary" icon={<Check size={13} />} onClick={() => void applyTidy()} disabled={tidying || chosen.size === 0}>
+                {tidying ? 'moving…' : `move ${chosen.size}`}
+              </Button>
+            </div>
+          }
+        >
+          <p className="mt-0 mb-3 text-[12px] leading-relaxed text-muted">
+            These docs look like memories or todos, not shared reference material. Rules and facts about you move to
+            memory (global); things to do move to items. Nothing is changed until you approve.
+          </p>
+          <div className="grid gap-2">
+            {proposals.map((p) => (
+              <button
+                key={p.docId}
+                type="button"
+                className="flex w-full cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-surface p-3 text-left transition-colors duration-150 hover:bg-background"
+                onClick={() => toggleChosen(p.docId)}
+              >
+                <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border ${chosen.has(p.docId) ? 'border-foreground bg-foreground text-background' : 'border-border'}`}>
+                  {chosen.has(p.docId) && <Check size={11} />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <b className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground">{p.title || 'untitled'}</b>
+                    <span className="shrink-0 rounded bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted">
+                      {p.destination === 'memory' ? `memory · ${p.kind}` : `items · ${p.kind}`}
+                    </span>
+                  </span>
+                  <span className="mt-1 block line-clamp-2 text-[11px] leading-relaxed whitespace-pre-wrap text-muted">
+                    {p.content.slice(0, 160) || 'empty doc'}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
         </Modal>
       )}
     </>

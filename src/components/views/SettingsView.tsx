@@ -21,6 +21,15 @@ import { Slider } from '../ui/Slider';
 import { ColorField } from '../ui/ColorField';
 import { Section } from '../ui/Section';
 
+// The zone every reminder and due date is resolved in. IST leads because it's the
+// default; WebView2 exposes the full IANA set, and the fallback covers older engines.
+const TIMEZONE_FALLBACK = ['Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney', 'Europe/London', 'Europe/Berlin', 'Europe/Paris', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'UTC'];
+const TIMEZONES: string[] = (() => {
+  const supported = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.('timeZone');
+  const all = supported && supported.length ? supported : TIMEZONE_FALLBACK;
+  return ['Asia/Kolkata', ...all.filter((z) => z !== 'Asia/Kolkata')];
+})();
+
 type SettingsTab = 'general' | 'models';
 
 const TABS: { key: SettingsTab; label: string }[] = [
@@ -270,7 +279,13 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
               </label>
               <label className="flex items-center gap-3">
                 <span className={`${GROUP_LABEL_CLS} w-[92px] shrink-0`}>timezone</span>
-                <input value={who.timezone} onChange={(e) => setWho({ ...who, timezone: e.target.value })} placeholder="informational — times use the system zone" className={`${INPUT_CLS} min-w-0 flex-1`} />
+                <div className="w-[220px]">
+                  <Select
+                    value={who.timezone}
+                    options={TIMEZONES.map((z) => ({ value: z, label: z }))}
+                    onChange={(v) => setWho({ ...who, timezone: v })}
+                  />
+                </div>
               </label>
             </div>
             <div className="mt-4"><Button variant="primary" onClick={() => void saveWho()}>save</Button></div>

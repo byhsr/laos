@@ -64,7 +64,7 @@ pub(crate) fn list(conn: &Connection, kind: Option<&str>) -> Vec<Item> {
   out
 }
 
-fn find(conn: &Connection, query: &str) -> Option<Item> {
+pub(crate) fn find(conn: &Connection, query: &str) -> Option<Item> {
   let q = query.trim().to_lowercase();
   if q.is_empty() { return None; }
   list(conn, None).into_iter().find(|i| {
@@ -139,19 +139,19 @@ fn norm_cadence(c: &str) -> String {
   if CADENCES.contains(&c.as_str()) { c } else { String::new() }
 }
 
-fn title_from(text: &str) -> String {
+pub(crate) fn title_from(text: &str) -> String {
   let words: Vec<&str> = text.split_whitespace().collect();
   if words.len() > 7 { format!("{}…", words[..7].join(" ")) } else { text.trim().to_string() }
 }
 
-fn url_in(text: &str) -> String {
+pub(crate) fn url_in(text: &str) -> String {
   text.split_whitespace()
     .find(|w| w.starts_with("http://") || w.starts_with("https://"))
     .map(|w| w.trim_end_matches(['.', ',', ')']).to_string())
     .unwrap_or_default()
 }
 
-fn tags_in(text: &str) -> (Vec<String>, String) {
+pub(crate) fn tags_in(text: &str) -> (Vec<String>, String) {
   let tags: Vec<String> = text.split_whitespace()
     .filter(|w| w.starts_with('#') && w.len() > 1)
     .map(|w| w.trim_start_matches('#').to_string())
@@ -160,38 +160,29 @@ fn tags_in(text: &str) -> (Vec<String>, String) {
   (tags, collection)
 }
 
-// A leading `HH:MM` (or `YYYY-MM-DD HH:MM`) becomes an absolute local RFC3339 time;
-// if today's slot has passed it rolls to tomorrow. Returns (due_at, remaining text).
-fn parse_time_prefix(rest: &str) -> (Option<String>, String) {
+// A leading `HH:MM` (or `YYYY-MM-DD HH:MM`) becomes an absolute instant in the
+// user's configured zone; if today's slot has passed it rolls to tomorrow.
+// Returns (due_at, remaining text).
+fn parse_time_prefix(conn: &Connection, rest: &str) -> (Option<String>, String) {
   let tokens: Vec<&str> = rest.split_whitespace().collect();
   if tokens.is_empty() { return (None, String::new()); }
-  if let Some(dt) = hhmm_today(tokens[0]) {
-    return (Some(dt), tokens[1..].join(" "));
+  if let Some((h, m)) = hhmm(tokens[0]) {
+    if let Some(dt) = crate::tz::resolve_clock(conn, h, m, 0) {
+      return (Some(dt), tokens[1..].join(" "));
+    }
   }
   if tokens.len() >= 2 {
-    if let Some(dt) = date_time(tokens[0], tokens[1]) {
+    if let Some(dt) = crate::tz::resolve_date_time(conn, tokens[0], tokens[1]) {
       return (Some(dt), tokens[2..].join(" "));
     }
   }
   (None, rest.trim().to_string())
 }
 
-fn hhmm_today(token: &str) -> Option<String> {
+/// A bare `HH:MM` token, as (hour, minute).
+fn hhmm(token: &str) -> Option<(u32, u32)> {
   let (h, m) = token.split_once(':')?;
-  let h: u32 = h.trim().parse().ok()?;
-  let m: u32 = m.trim().parse().ok()?;
-  if h > 23 || m > 59 { return None; }
-  let now = chrono::Local::now();
-  let mut dt = now.date_naive().and_hms_opt(h, m, 0)?;
-  if dt <= now.naive_local() { dt += chrono::Duration::days(1); }
-  dt.and_local_timezone(chrono::Local).single().map(|d| d.to_rfc3339())
-}
-
-fn date_time(date: &str, time: &str) -> Option<String> {
-  let d = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
-  let (h, m) = time.split_once(':')?;
-  let dt = d.and_hms_opt(h.trim().parse().ok()?, m.trim().parse().ok()?, 0)?;
-  dt.and_local_timezone(chrono::Local).single().map(|x| x.to_rfc3339())
+  Some((h.trim().parse().ok()?, m.trim().parse().ok()?))
 }
 
 fn kind_for_command(cmd: &str) -> Option<&'static str> {
@@ -213,6 +204,19 @@ fn content_type_for(kind: &str) -> &'static str {
     "promise" => "goal",
     "habit" => "habit",
     _ => "note",
+  }
+}
+
+/// A reading for an item created deterministically — the fast paths and the items
+/// tool never call a model, so the brain map gets a synthesized shape instead.
+pub(crate) fn synthesized_class(kind: &str) -> crate::classify::Classification {
+  crate::classify::Classification {
+    content_type: content_type_for(kind).into(),
+    intent: "create".into(),
+    feature: kind.into(),
+    action: "create".into(),
+    confidence: 0.9,
+    ..Default::default()
   }
 }
 
@@ -260,16 +264,14 @@ fn summary(conn: &Connection, kind: Option<&str>) -> String {
   items.iter().take(20).enumerate().map(|(i, it)| {
     let mark = if it.status == "done" { "☑" } else { "☐" };
     let title = if it.title.trim().is_empty() { &it.body } else { &it.title };
-    let when = it.due_at.as_deref().map(short_time).map(|t| format!(" · {t}")).unwrap_or_default();
+    let when = it.due_at.as_deref().map(|t| crate::tz::format(conn, t)).map(|t| format!(" · {t}")).unwrap_or_default();
     let streak = if it.kind == "habit" && it.streak > 0 { format!(" · {}🔥", it.streak) } else { String::new() };
     format!("{}{}. [{}] {}{when}{streak}", mark, i + 1, it.kind, title)
   }).collect::<Vec<_>>().join("\n")
 }
 
-fn short_time(iso: &str) -> String {
-  chrono::DateTime::parse_from_rfc3339(iso)
-    .map(|d| d.with_timezone(&chrono::Local).format("%b %d %H:%M").to_string())
-    .unwrap_or_else(|_| iso.to_string())
+fn short_time(conn: &Connection, iso: &str) -> String {
+  crate::tz::format(conn, iso)
 }
 
 pub(crate) fn help() -> String {
@@ -303,22 +305,15 @@ pub(crate) fn command(app: &AppHandle, text: &str, source: &str) -> Option<Resul
 
   if let Some(kind) = kind_for_command(head) {
     if rest.is_empty() { return Some(Err(format!("Use {head} <text>."))); }
-    let (due_at, body) = if kind == "reminder" { parse_time_prefix(rest) } else { (None, rest.to_string()) };
+    let (due_at, body) = if kind == "reminder" { parse_time_prefix(&conn, rest) } else { (None, rest.to_string()) };
     let (tags, collection) = tags_in(&body);
     let cadence = if kind == "habit" {
       CADENCES.iter().find(|c| body.to_ascii_lowercase().contains(&format!(" {c}")) || body.to_ascii_lowercase().ends_with(**c)).copied().unwrap_or("daily")
     } else { "" };
     let title = title_from(&body);
     let url = url_in(&body);
-    // The fast path never calls a model, so the reading is synthesized, not inferred.
-    let class = crate::classify::Classification {
-      content_type: content_type_for(kind).into(),
-      intent: "create".into(),
-      feature: kind.into(),
-      action: "create".into(),
-      confidence: 0.9,
-      ..Default::default()
-    };
+    // The fast paths never call a model, so the reading is synthesized, not inferred.
+    let class = synthesized_class(kind);
     return Some(match add(&conn, NewItem {
       kind, title: &title, body: &body, url: &url, tags, collection: &collection,
       due_at, cadence, project_id: "", source,
@@ -328,7 +323,7 @@ pub(crate) fn command(app: &AppHandle, text: &str, source: &str) -> Option<Resul
         crate::brain::ingest_item(app, &conn, &item, &class, "life");
         // A capture bot with a destination sends the idea on (fire-and-forget).
         crate::destinations::auto_push(app, &item, source);
-        Ok(confirm(&item))
+        Ok(confirm(&conn, &item))
       }
       Err(e) => Err(e),
     });
@@ -362,9 +357,9 @@ pub(crate) fn command(app: &AppHandle, text: &str, source: &str) -> Option<Resul
   }
 }
 
-fn confirm(item: &Item) -> String {
+fn confirm(conn: &Connection, item: &Item) -> String {
   let title = if item.title.trim().is_empty() { &item.body } else { &item.title };
-  let when = item.due_at.as_deref().map(short_time).map(|t| format!(" · {t}")).unwrap_or_default();
+  let when = item.due_at.as_deref().map(|t| short_time(conn, t)).map(|t| format!(" · {t}")).unwrap_or_default();
   format!("Saved {} — {title}{when}", item.kind)
 }
 
@@ -466,7 +461,7 @@ fn apply(conn: &Connection, intent: &Intent, raw: &str, source: &str) -> Result<
         kind, title: &title, body: &body, url: &url, tags, collection: &collection,
         due_at: p.due_at.clone(), cadence: &p.cadence, project_id: "", source,
       })?;
-      Ok((confirm(&item), Some(item)))
+      Ok((confirm(conn, &item), Some(item)))
     }
   }
 }
@@ -546,6 +541,20 @@ mod tests {
        VALUES (?1,?2,'','','','[]','','active','',0,'','',?3,?3)",
       params![id, kind, created_at],
     ).unwrap();
+  }
+
+  /// The items tool's path: add → the item is listed → complete closes it.
+  #[test]
+  fn an_item_round_trips_through_complete() {
+    let conn = items_db();
+    let item = add(&conn, NewItem {
+      kind: "todo", title: "Renew the domain", body: "", url: "", tags: vec![],
+      collection: "", due_at: None, cadence: "", project_id: "", source: "app",
+    }).unwrap();
+    assert!(list(&conn, None).iter().any(|i| i.id == item.id), "a new item is listed");
+    complete(&conn, &item.id).unwrap();
+    let after = list(&conn, None).into_iter().find(|i| i.id == item.id).unwrap();
+    assert_eq!(after.status, "done");
   }
 
   /// Filing the same thought twice must keep one item, not two: the brain node is

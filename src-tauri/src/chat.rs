@@ -74,12 +74,13 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
 async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>, attachments: Vec<crate::media::Attachment>) -> Result<(), String> {
   let conn = db(&app)?;
 
-  // Anything dropped into the composer (screenshots, photos, pasted images) is
-  // resolved BEFORE the turn is built, so the user's first token of the reply
-  // already accounts for it. The note becomes part of the user turn, which is
-  // what makes a follow-up ("what's wrong with it?") work.
+  // Anything dropped into the composer (screenshots, photos, pasted images, voice
+  // notes) is resolved BEFORE the turn is built, so the user's first token of the
+  // reply already accounts for it. The note becomes part of the user turn, which
+  // is what makes a follow-up ("what's wrong with it?") work.
   if !attachments.is_empty() {
-    emit_status(&on_event, "vision", &format!("Looking at {} attachment{}…", attachments.len(), if attachments.len() == 1 { "" } else { "s" }));
+    let what = if attachments.iter().any(|a| a.mime.starts_with("audio/")) { "Transcribing" } else { "Looking at" };
+    emit_status(&on_event, "media", &format!("{what} {} attachment{}…", attachments.len(), if attachments.len() == 1 { "" } else { "s" }));
   }
   let media = crate::media::prepare(&app, &agent.model, &attachments).await;
   let turn_text = if media.note.is_empty() { input.clone() } else { format!("{input}\n\n{}", media.note) };
@@ -98,6 +99,13 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   // The session's project (if any) scopes this turn's memory: durable memory is
   // filed under the project so it accumulates across its conversations.
   let project_scope = session_id.as_deref().and_then(|sid| crate::memory::session_project(&conn, sid));
+
+  // Route the turn's content BEFORE the model is offered its tools: a standing
+  // rule ("never use emoji") or a timed reminder is filed the moment it's said, so
+  // it can't be lost to tool-choice drift. A turn with no clear reading is left to
+  // the model, which still holds every tool.
+  let triage = crate::routing::triage(&app, &agent.id, &input, project_scope.as_deref()).await;
+  if let Some(t) = &triage { emit_status(&on_event, "memory", &t.step); }
 
   // Fold older turns into memory in the background. It is an extra model call and
   // must never sit in front of the reply the user is waiting for.
@@ -134,9 +142,14 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     if has_browser { manager.extend(crate::tools::browser_tools()); }
     manager.extend(crate::tools::script_tools(&conn));
     manager.extend(mcp_tools_for(&conn, &agent.tool_ids));
+    // The knowledge base is already a Manager builtin; the remember and items
+    // tools are added here as real runtime tools (like the other non-dispatch
+    // tools it holds).
+    manager.push(crate::tools::remember_tool(&app, &agent.id));
+    manager.push(crate::tools::items_tool(&app));
     manager
   } else {
-    build_tools(&conn, &agent, &home)?
+    build_tools(&app, &conn, &agent, &home)?
   };
 
   let system = if is_manager {
@@ -144,6 +157,10 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   } else {
     // The conversation itself is the rolling window; no memory is injected.
     let tool_note = if tools.is_empty() { String::new() } else { "\nYou have tools available: call one when it helps, wait for the result, then continue.".to_string() };
+    // The knowledge base, remember and items tools are always available: tell the
+    // agent so it uses them rather than claiming it cannot remember — and so each
+    // thing lands in the store that fits it.
+    let builtin_note = crate::routing::ROUTING_RULES;
     // When the memory connector is attached, tell the agent which identity to file
     // memories under, so they land in the namespace the Memory view reads.
     let memory_note = if agent.tool_ids.iter().any(|t| t.starts_with("mcp:memory:")) {
@@ -170,7 +187,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     // Attached skills (instructions + reference + scripts) go into the live chat
     // prompt too, not just one-shot runs.
     let skills = skills_prompt(&conn, &agent.skill_ids);
-    format!("You are {}. Objective: {}\n{skills}\n{memory_note}{pc_note}{browser_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
+    format!("You are {}. Objective: {}\n{skills}\n{memory_note}{builtin_note}{pc_note}{browser_note}{tool_note}\nReturn a helpful, direct answer.", agent.name, agent.objective)
   };
 
   // Who the assistant is and who it's talking to (persona/tone are identity here,
@@ -186,6 +203,8 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   };
   let memory = crate::memory::memory_block(&app, &agent.id, &memory_scope, &input).await;
   let system = format!("{system}{memory}");
+  // Tell the model what the triage already filed, so it doesn't file it again.
+  let system = match &triage { Some(t) => format!("{system}{}", t.note), None => system };
 
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
   let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({ "role": "system", "content": system })];
@@ -399,6 +418,18 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   // Flush whatever the leak filter was still holding back.
   let tail = leak.finish();
   if !tail.is_empty() { delta.push_str(&tail); on_event.send(tail).map_err(|e| e.to_string())?; }
+
+  // Explicit "remember this": store it the moment it's said, in the agent's own
+  // scope — a deterministic fast path alongside the model-driven remember tool, so
+  // an explicit request never has to wait for the periodic distillation pass.
+  // Skipped when the triage already filed this turn, so a "never use emoji"-style
+  // rule isn't written twice.
+  if triage.is_none() && crate::memory::is_explicit_remember(&input) {
+    let app_rem = app.clone();
+    let id_rem = agent.id.clone();
+    let text_rem = input.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || crate::memory::remember_explicit(&app_rem, &id_rem, &text_rem));
+  }
 
   // Passive capture: this exchange becomes experience in the agent's durable
   // memory — no tool call, no instruction from the user.
