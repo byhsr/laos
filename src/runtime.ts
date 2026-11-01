@@ -625,14 +625,14 @@ export async function setCliShortcuts(shortcuts: CliShortcut[]): Promise<void> {
   await invoke('set_cli_shortcuts', { shortcuts });
 }
 
-// Capture / Lumin: notes, todos, reminders, promises, links and habits.
+// Capture / Lumin: notes, todos, reminders, goals, links and habits.
 export type Item = {
   id: string; kind: string; title: string; body: string; url: string; tags: string[];
   collection: string; status: string; due_at: string | null; cadence: string; streak: number;
   last_done_at: string | null; project_id: string; fired_at: string | null;
   source: string; created_at: string; updated_at: string;
 };
-export const ITEM_KINDS = ['note', 'todo', 'reminder', 'promise', 'link', 'habit'] as const;
+export const ITEM_KINDS = ['note', 'todo', 'reminder', 'goal', 'link', 'habit'] as const;
 export async function itemList(kind?: string): Promise<Item[]> {
   return await invoke<Item[]>('item_list', { kind: kind ?? null });
 }

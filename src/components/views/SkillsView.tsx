@@ -11,10 +11,10 @@ export function SkillsView({ skills, onAdd, onEdit, onDelete }: {
   skills: Skill[]; onAdd: () => void; onEdit: (s: Skill) => void; onDelete: (id: string) => Promise<void>;
 }) {
   const summary = (s: Skill) => {
-    const words = s.content.trim() ? `${s.content.trim().split(/\s+/).length} words` : 'no instructions';
+    const words = (s.content ?? '').trim() ? `${s.content.trim().split(/\s+/).length} words` : 'no instructions';
     const bits = [words];
-    if (s.docs.trim()) bits.push('reference');
-    if (s.scriptIds.length) bits.push(`${s.scriptIds.length} script${s.scriptIds.length === 1 ? '' : 's'}`);
+    if ((s.docs ?? '').trim()) bits.push('reference');
+    if ((s.scriptIds ?? []).length) bits.push(`${s.scriptIds.length} script${s.scriptIds.length === 1 ? '' : 's'}`);
     return bits.join(' · ');
   };
 

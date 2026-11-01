@@ -18,11 +18,12 @@ impl AgentTool for ItemsTool {
 
   fn description(&self) -> String {
     "The user's todo list, reminders and quick notes — anything with a when or a do. Use this (NOT the \
-knowledge base) for todos, reminders, promises, links, habits and throwaway notes; reminders are scheduled \
-and pushed to the user on Telegram. Params: action ('add' | 'list' | 'complete' | 'delete'), kind ('note' | \
-'todo' | 'reminder' | 'promise' | 'link' | 'habit', default 'note'), title (string), body (string, optional), \
-due (string — a time like 'tomorrow 9am' or an ISO-8601 instant; for reminders), cadence ('daily' | 'weekly' | \
-'monthly'; for habits), query (string — which item, for 'complete' / 'delete').".into()
+knowledge base) for notes, todos, reminders, goals, links and habits; reminders are scheduled \
+and pushed to the user on Telegram. Full CRUD: add, list, update, complete, delete. Params: action ('add' | \
+'list' | 'update' | 'complete' | 'delete'), kind ('note' | 'todo' | 'reminder' | 'goal' | 'link' | 'habit', \
+default 'note'), title (string), body (string, optional), due (string — a time like 'tomorrow 9am' or an \
+ISO-8601 instant; for reminders), cadence ('daily' | 'weekly' | 'monthly'; for habits), status ('active' | \
+'done', for 'update'), query (string — which item, for 'update' / 'complete' / 'delete').".into()
   }
 
   fn params_schema(&self) -> serde_json::Value {
@@ -33,6 +34,7 @@ due (string — a time like 'tomorrow 9am' or an ISO-8601 instant; for reminders
       "body": { "type": "string" },
       "due": { "type": "string" },
       "cadence": { "type": "string" },
+      "status": { "type": "string" },
       "query": { "type": "string" }
     }, "required": ["action"] })
   }
@@ -42,9 +44,10 @@ due (string — a time like 'tomorrow 9am' or an ISO-8601 instant; for reminders
     match str_arg(args, "action").unwrap_or_else(|| "list".into()).trim() {
       "add" => add(&self.app, &conn, args),
       "list" => Ok(list(&conn, str_arg(args, "kind").as_deref())),
-      "complete" => edit(&conn, args, true),
-      "delete" => edit(&conn, args, false),
-      other => Err(format!("Unknown items action \"{other}\". Use add | list | complete | delete.")),
+      "update" => update(&self.app, &conn, args),
+      "complete" => complete_item(&conn, args),
+      "delete" => delete(&conn, args),
+      other => Err(format!("Unknown items action \"{other}\". Use add | list | update | complete | delete.")),
     }
   }
 }
@@ -86,19 +89,48 @@ fn list(conn: &Connection, kind: Option<&str>) -> String {
   }).collect::<Vec<_>>().join("\n")
 }
 
-fn edit(conn: &Connection, args: &serde_json::Value, complete: bool) -> Result<String, String> {
-  let who = if complete { "complete" } else { "delete" };
+/// The item named by `query` / `title` — any text its title or body contains.
+fn locate(conn: &Connection, args: &serde_json::Value) -> Result<crate::capture::Item, String> {
   let query = str_arg(args, "query").or_else(|| str_arg(args, "title")).unwrap_or_default();
   let q = query.trim();
-  if q.is_empty() { return Err(format!("items {who} requires a 'query' naming the item.")); }
-  let Some(item) = crate::capture::find(conn, q) else { return Err(format!("No item matching \"{q}\".")); };
-  if complete {
-    let reply = crate::capture::complete(conn, &item.id)?;
-    Ok(format!("{reply} ({})", item.title))
-  } else {
-    conn.execute("DELETE FROM items WHERE id=?1", rusqlite::params![item.id]).map_err(|e| e.to_string())?;
-    Ok(format!("Removed \"{}\".", item.title))
+  if q.is_empty() { return Err("This action requires a 'query' naming the item.".into()); }
+  crate::capture::find(conn, q).ok_or_else(|| format!("No item matching \"{q}\"."))
+}
+
+fn complete_item(conn: &Connection, args: &serde_json::Value) -> Result<String, String> {
+  let item = locate(conn, args)?;
+  let reply = crate::capture::complete(conn, &item.id)?;
+  Ok(format!("{reply} ({})", item.title))
+}
+
+/// Delete one item. Goes through `capture::forget`, so the brain index node goes
+/// with it rather than being left orphaned.
+fn delete(conn: &Connection, args: &serde_json::Value) -> Result<String, String> {
+  let item = locate(conn, args)?;
+  crate::capture::forget(conn, &item.id)?;
+  Ok(format!("Removed \"{}\".", item.title))
+}
+
+/// Update one item in place. `query` names it; any of title / body / kind / due /
+/// cadence / status may be changed. The brain node is refreshed to match.
+fn update(app: &AppHandle, conn: &Connection, args: &serde_json::Value) -> Result<String, String> {
+  let query = str_arg(args, "query").unwrap_or_default();
+  let q = query.trim();
+  if q.is_empty() { return Err("items update requires a 'query' naming the item.".into()); }
+  let Some(mut item) = crate::capture::find(conn, q) else { return Err(format!("No item matching \"{q}\".")); };
+
+  if let Some(t) = str_arg(args, "title").filter(|t| !t.trim().is_empty()) { item.title = t; }
+  if let Some(b) = str_arg(args, "body").filter(|b| !b.trim().is_empty()) { item.body = b; }
+  if let Some(k) = str_arg(args, "kind") {
+    if crate::capture::KINDS.contains(&k.trim()) { item.kind = k.trim().to_string(); }
   }
+  if let Some(d) = str_arg(args, "due").and_then(|d| crate::routing::resolve_due(conn, &d)) { item.due_at = Some(d); }
+  if let Some(c) = str_arg(args, "cadence").filter(|c| !c.trim().is_empty()) { item.cadence = c.trim().to_string(); }
+  if let Some(s) = str_arg(args, "status").filter(|s| !s.trim().is_empty()) { item.status = s.trim().to_string(); }
+
+  crate::capture::upsert(conn, &item)?;
+  crate::brain::ingest_item(app, conn, &item, &crate::capture::synthesized_class(&item.kind), "life");
+  Ok(format!("Updated \"{}\" (id: {}).", item.title, item.id))
 }
 
 /// The items tool, held by every agent and the Manager.

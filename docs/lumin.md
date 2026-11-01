@@ -22,7 +22,7 @@ never call a model; free text is extracted.
 ```
 "remind me to call mom tonight"  →  { feature: "reminder", action: "create",
                                       params: { due_at: "…T21:00:00+05:00" } }
-"i'll start gym tomorrow"        →  { feature: "promise",  action: "create" }
+"i'll start gym tomorrow"        →  { feature: "goal",     action: "create" }
 "what are my todos?"             →  { feature: "todo",     action: "read" }
 "slept through it again"         →  { feature: null,       type: "chat" }
 ```
@@ -49,7 +49,7 @@ One `items` table for all six kinds:
 | `note` | An idea, thought, fact or snippet worth keeping. |
 | `todo` | Something to do (no time). |
 | `reminder` | A task **with** a time — the scheduler fires it. |
-| `promise` | An explicit commitment to future behaviour. |
+| `goal` | An explicit commitment to future behaviour. |
 | `link` | A URL / resource. |
 | `habit` | A recurring behaviour with a `cadence` and a `streak`. |
 
@@ -62,7 +62,7 @@ Commands work on **any** bot. A bot ticked **second brain** also files free text
 
 | Command | Effect |
 | --- | --- |
-| `/n <text>` | note · `/tdl` todo · `/p` promise · `/lib` link |
+| `/n <text>` | note · `/tdl` todo · `/p` goal · `/lib` link |
 | `/r <text>` | reminder · `/r 18:30 call mom` sets an explicit time |
 | `/habit <text>` | habit (cadence from "daily"/"weekly"/"monthly", default daily) |
 | `/items [kind]` | newest 20, numbered · `/due` what's due now |

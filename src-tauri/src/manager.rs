@@ -176,7 +176,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
   // The remember and items tools are provided at runtime (not dispatch-by-name
   // builtins), so list them explicitly here.
   tool_list.push_str("- remember: Save a durable fact or standing rule about the user (\"never use emoji\", \"I prefer IST\") — kind 'policy' for a never/always rule, 'preference' for a taste, 'semantic' for a plain fact.\n");
-  tool_list.push_str("- items: The user's todos, reminders, promises, links and quick notes — anything with a when or a do. Reminders are scheduled and pushed to Telegram.\n");
+  tool_list.push_str("- items: The user's notes, todos, reminders, goals, links and habits — anything with a when or a do. Full CRUD (add, list, update, complete, delete). Reminders are scheduled and pushed to Telegram.\n");
   // Only the MCP tools the Manager was explicitly opted into are listed (and
   // offered) — attaching them in its config is the opt-in.
   for t in mcp_tools_for(conn, mcp_tool_ids) {

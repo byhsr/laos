@@ -100,7 +100,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   const toolOptions = [
     ...enabledTools.filter((t) => t.kind !== 'mcp').map((t) => ({ value: t.id, label: t.name })),
     ...enabledTools.filter((t) => t.kind === 'mcp')
-      .map((t) => ({ value: t.id, label: t.name, group: `mcp · ${String(t.config.serverName ?? t.integrationId)}` }))
+      .map((t) => ({ value: t.id, label: t.name, group: `mcp · ${String(t.config?.serverName ?? t.integrationId)}` }))
       .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label)),
   ];
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -396,11 +396,11 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
           {panel === 'info' && (
             <div>
               <div className="mb-2"><span className={GROUP_LABEL_CLS}>tools</span></div>
-              <div className="flex flex-wrap gap-1.5">{agent.toolIds.map((t) => <span key={t} className="rounded bg-background px-2 py-1 font-mono text-[10px] text-muted">{toolName(t)}</span>)}</div>
+              <div className="flex flex-wrap gap-1.5">{(agent.toolIds ?? []).map((t) => <span key={t} className="rounded bg-background px-2 py-1 font-mono text-[10px] text-muted">{toolName(t)}</span>)}</div>
               <div className="mt-5 mb-2"><span className={GROUP_LABEL_CLS}>integrations</span></div>
-              <div className="flex flex-wrap gap-1.5">{agent.integrations.map((t) => <span key={t} className="rounded bg-background px-2 py-1 font-mono text-[10px] text-muted">{t}</span>)}</div>
+              <div className="flex flex-wrap gap-1.5">{(agent.integrations ?? []).map((t) => <span key={t} className="rounded bg-background px-2 py-1 font-mono text-[10px] text-muted">{t}</span>)}</div>
               <div className="mt-5 mb-2"><span className={GROUP_LABEL_CLS}>permissions</span></div>
-              <div className="rounded-lg bg-background p-2.5 font-mono text-[10px] text-muted">{agent.permissions.join(', ') || 'none'}</div>
+              <div className="rounded-lg bg-background p-2.5 font-mono text-[10px] text-muted">{(agent.permissions ?? []).join(', ') || 'none'}</div>
               <div className="mt-5 mb-2"><span className={GROUP_LABEL_CLS}>home</span></div>
               <div className="rounded-lg bg-background p-2.5 font-mono text-[10px] text-muted">{agent.homePath}</div>
               <div className="mt-5 mb-2"><span className={GROUP_LABEL_CLS}>model</span></div>
@@ -543,17 +543,17 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                     {integrations.filter((i) => i.connected).map((i) => (
                       <Checkbox
                         key={i.id}
-                        checked={draft.integrations.includes(i.id)}
-                        onChange={(next) => setDraft({ ...draft, integrations: next ? [...draft.integrations, i.id] : draft.integrations.filter((x) => x !== i.id) })}
+                        checked={(draft.integrations ?? []).includes(i.id)}
+                        onChange={(next) => setDraft({ ...draft, integrations: next ? [...(draft.integrations ?? []), i.id] : (draft.integrations ?? []).filter((x) => x !== i.id) })}
                         label={i.name}
-                        hint={`${i.actions.length} actions`}
+                        hint={`${(i.actions ?? []).length} actions`}
                       />
                     ))}
                   </div>
                 )}
               </Section>
 
-              <Section title="permissions" summary={draft.permissions.join(', ') || 'none'}>
+              <Section title="permissions" summary={(draft.permissions ?? []).join(', ') || 'none'}>
                 <div>
                   {PERMISSIONS.map((p) => (
                     <Checkbox

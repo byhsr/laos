@@ -215,18 +215,18 @@ export function Inspector({ node, agents, skills, tools, integrations, workflows
           <LinkSection
             title="agents in this workflow"
             empty="this workflow has no agent steps yet — add agents on the canvas"
-            linked={namedAgents.filter((a) => wfNode.nodes.some((n) => n.agentId === a.id))}
-            available={named(agents.filter((a) => !a.isManager && !wfNode.nodes.some((n) => n.agentId === a.id)))}
+            linked={namedAgents.filter((a) => (wfNode.nodes ?? []).some((n) => n.agentId === a.id))}
+            available={named(agents.filter((a) => !a.isManager && !(wfNode.nodes ?? []).some((n) => n.agentId === a.id)))}
             onAdd={(agentId) => {
               const a = agents.find((x) => x.id === agentId);
               if (!a) return;
-              const nodes = [...wfNode.nodes, { id: `node-${Date.now()}`, type: 'agent' as const, agentId, label: a.name, x: 80 + wfNode.nodes.length * 220, y: 120 }];
+              const nodes = [...(wfNode.nodes ?? []), { id: `node-${Date.now()}`, type: 'agent' as const, agentId, label: a.name, x: 80 + (wfNode.nodes ?? []).length * 220, y: 120 }];
               void onSaveWorkflow({ ...wfNode, nodes });
             }}
             onRemove={(agentId) => {
-              const nodes = wfNode.nodes.filter((n) => n.agentId !== agentId);
+              const nodes = (wfNode.nodes ?? []).filter((n) => n.agentId !== agentId);
               const kept = new Set(nodes.map((n) => n.id));
-              void onSaveWorkflow({ ...wfNode, nodes, edges: wfNode.edges.filter((e) => kept.has(e.from) && kept.has(e.to)) });
+              void onSaveWorkflow({ ...wfNode, nodes, edges: (wfNode.edges ?? []).filter((e) => kept.has(e.from) && kept.has(e.to)) });
             }}
           />
         )}

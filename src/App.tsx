@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Agent, CreateKind, DrawerForm, View } from './types';
 import { emptyModel, emptyProject, emptyScript, emptySkill, emptyTool } from './types';
 import { useAgentsStore } from './hooks/useAgents';
@@ -36,6 +36,7 @@ import { SkillFormDrawer } from './components/views/SkillsView';
 import { ScriptFormDrawer } from './components/views/ScriptsView';
 import { ProjectFormDrawer } from './components/views/ProjectsView';
 import { Toaster } from './components/ui/Toaster';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { ConfirmDialog } from './components/ui/ConfirmDialog';
 import { UpdatePrompt } from './components/ui/UpdatePrompt';
 import { BrowserPanel } from './components/BrowserPanel';
@@ -48,6 +49,13 @@ import { checkForUpdate, onBrainNotice, onBrowserEvent, onReminder, type UpdateI
 // scrolls, so there is never a double scrollbar or a page that jumps.
 const pane = (active: boolean) =>
   `h-full overflow-x-hidden overflow-y-auto p-4 ${active ? '' : 'hidden'}`;
+
+// Every view mounts at once, so a view that throws during render would blank the
+// whole window. Each pane carries its own boundary: the broken view shows its
+// error in place and the rest of the app keeps working.
+function Pane({ active, label, children }: { active: boolean; label: string; children: ReactNode }) {
+  return <div className={pane(active)}><ErrorBoundary label={label}>{children}</ErrorBoundary></div>;
+}
 
 export default function App() {
   const agents = useAgentsStore((s) => s.agents);
@@ -286,8 +294,8 @@ export default function App() {
         {/* Right section: free canvas — content is full-bleed */}
         <main className="app-no-drag min-h-0 min-w-0 flex-1 overflow-hidden">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
-          <div className={pane(view === 'home')}><HomeView agents={agents} tools={tools} workflows={workflows} runs={runs} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('builder'); setWorkflowToOpen(id); }} /></div>
-          <div className={pane(view === 'graph')}>
+          <Pane active={view === 'home'} label="home"><HomeView agents={agents} tools={tools} workflows={workflows} runs={runs} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('builder'); setWorkflowToOpen(id); }} /></Pane>
+          <Pane active={view === 'graph'} label="graph">
             <GraphView
               agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows} projects={projects}
               onOpenAgent={openAgent}
@@ -295,9 +303,9 @@ export default function App() {
               onSaveAgent={persistAgent}
               onSaveWorkflow={saveWorkflow}
             />
-          </div>
-          <div className={pane(view === 'agents')}><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('agent deleted', 'success'); }} /></div>
-          <div className={pane(view === 'workflows' || view === 'builder')}>
+          </Pane>
+          <Pane active={view === 'agents'} label="agents"><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('agent deleted', 'success'); }} /></Pane>
+          <Pane active={view === 'workflows' || view === 'builder'} label="workflows">
             <CanvasView
               agents={agents} tools={tools} workflows={workflows} integrations={integrations} models={models} scripts={scripts}
               initialWorkflowId={workflowToOpen}
@@ -308,23 +316,23 @@ export default function App() {
               onDeleteWorkflow={deleteWorkflow}
               onRunWorkflow={runWorkflow}
             />
-          </div>
-          <div className={pane(view === 'manager')}><ManagerView agents={agents} integrations={integrations} models={models} tools={tools} openConfigRequest={configRequest.id === leadAgent?.id ? configRequest.n : 0} /></div>
-          <div className={pane(view === 'memory')}><MemoryView /></div>
-          <div className={pane(view === 'knowledge')}><KnowledgeBaseView /></div>
-          <div className={pane(view === 'tasks')}><TasksView agents={agents} /></div>
-          <div className={pane(view === 'telegram')}><TelegramView /></div>
-          <div className={pane(view === 'terminal')}><TerminalView /></div>
-          <div className={pane(view === 'items')}><ItemsView /></div>
-          <div className={pane(view === 'runs')}>
+          </Pane>
+          <Pane active={view === 'manager'} label="manager"><ManagerView agents={agents} integrations={integrations} models={models} tools={tools} openConfigRequest={configRequest.id === leadAgent?.id ? configRequest.n : 0} /></Pane>
+          <Pane active={view === 'memory'} label="memory"><MemoryView /></Pane>
+          <Pane active={view === 'knowledge'} label="knowledge"><KnowledgeBaseView /></Pane>
+          <Pane active={view === 'tasks'} label="tasks"><TasksView agents={agents} /></Pane>
+          <Pane active={view === 'telegram'} label="telegram"><TelegramView /></Pane>
+          <Pane active={view === 'terminal'} label="terminal"><TerminalView /></Pane>
+          <Pane active={view === 'items'} label="items"><ItemsView /></Pane>
+          <Pane active={view === 'runs'} label="runs">
             <RunsConsole runs={runs} agents={agents} onOpenAgent={openAgent} onClear={clearRuns} />
-          </div>
-          <div className={pane(view === 'workshop')}>
+          </Pane>
+          <Pane active={view === 'workshop'} label="workshop">
             <WorkshopView
               skills={skills} scripts={scripts} projects={projects} activeProjectId={activeProjectId} tools={tools} integrations={integrations}
               onAddSkill={() => setDrawerForm({ kind: 'skill', editing: emptySkill(), isNew: true })}
               onEditSkill={(s) => setDrawerForm({ kind: 'skill', editing: s, isNew: false })}
-              onDeleteSkill={async (id) => { await deleteSkill(id); setAgents((prev) => prev.map((a) => ({ ...a, skillIds: a.skillIds.filter((s) => s !== id) }))); toast('skill deleted', 'success'); }}
+              onDeleteSkill={async (id) => { await deleteSkill(id); setAgents((prev) => prev.map((a) => ({ ...a, skillIds: (a.skillIds ?? []).filter((s) => s !== id) }))); toast('skill deleted', 'success'); }}
               onAddScript={() => setDrawerForm({ kind: 'script', editing: emptyScript(), isNew: true })}
               onEditScript={(s) => setDrawerForm({ kind: 'script', editing: s, isNew: false })}
               onDeleteScript={async (id) => { await deleteScript(id); toast('script deleted', 'success'); }}
@@ -334,10 +342,10 @@ export default function App() {
               onSetActiveProject={setActiveProject}
               onAddTool={() => setDrawerForm({ kind: 'tool', editing: emptyTool(), isNew: true })}
               onEditTool={(t) => setDrawerForm({ kind: 'tool', editing: t, isNew: false })}
-              onDeleteTool={async (id) => { await deleteTool(id); setTools((prev) => prev.filter((p) => p.id !== id)); setAgents((prev) => prev.map((a) => ({ ...a, toolIds: a.toolIds.filter((t) => t !== id) }))); toast('tool deleted', 'success'); }}
+              onDeleteTool={async (id) => { await deleteTool(id); setTools((prev) => prev.filter((p) => p.id !== id)); setAgents((prev) => prev.map((a) => ({ ...a, toolIds: (a.toolIds ?? []).filter((t) => t !== id) }))); toast('tool deleted', 'success'); }}
             />
-          </div>
-          <div className={pane(view === 'settings')}>
+          </Pane>
+          <Pane active={view === 'settings'} label="settings">
             <SettingsView
               models={models}
               onRerunOnboarding={() => setShowOnboarding(true)}
@@ -346,9 +354,9 @@ export default function App() {
               onDeleteModel={deleteModel}
               onNavigate={setView}
             />
-          </div>
+          </Pane>
           {selectedAgent && (
-            <div className={`h-full pb-4 ${view === 'agent' ? '' : 'hidden'}`}><AgentWindow key={selectedAgent.id} agent={selectedAgent} tools={tools} skills={skills} models={models} integrations={integrations} runs={runs} onSave={persistAgent} onDelete={async (id) => { await deleteAgent(id); setSelectedAgentId(null); setView('agents'); }} onRun={handleRun} tabRequest={{ tab: configRequest.tab, n: configRequest.id === selectedAgent.id ? configRequest.n : 0 }} /></div>
+            <div className={`h-full pb-4 ${view === 'agent' ? '' : 'hidden'}`}><ErrorBoundary label="agent"><AgentWindow key={selectedAgent.id} agent={selectedAgent} tools={tools} skills={skills} models={models} integrations={integrations} runs={runs} onSave={persistAgent} onDelete={async (id) => { await deleteAgent(id); setSelectedAgentId(null); setView('agents'); }} onRun={handleRun} tabRequest={{ tab: configRequest.tab, n: configRequest.id === selectedAgent.id ? configRequest.n : 0 }} /></ErrorBoundary></div>
           )}
         </main>
       </div>

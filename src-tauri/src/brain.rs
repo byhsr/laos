@@ -273,7 +273,7 @@ pub(crate) fn resolve_ambiguous(conn: &Connection, name: &str, kind_hint: &str, 
 fn item_kind_to_node(kind: &str) -> &'static str {
   match kind {
     "todo" | "reminder" => "task",
-    "promise" => "goal",
+    "goal" => "goal",
     "habit" => "habit",
     "link" => "note",
     _ => "note",

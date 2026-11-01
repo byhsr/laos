@@ -223,7 +223,7 @@ scopes its turn memory (`chat.rs` passes it to `fox::record_turn`).
 ### `items`
 
 Lumin's store ([lumin.md](./lumin.md)): `id` (PK), `kind` (`note` | `todo` | `reminder` |
-`promise` | `link` | `habit`), `title`, `body`, `url`, `tags` (JSON), `collection`,
+`goal` | `link` | `habit`), `title`, `body`, `url`, `tags` (JSON), `collection`,
 `status` (`active` | `done`), `due_at` (RFC3339; the scheduler fires on it), `cadence`
 (`''` | `daily` | `weekly` | `monthly`; recurring items roll forward), `streak` (habits),
 `last_done_at`, `project_id` (scopes an item to a project), `fired_at` (`NULL` = not yet

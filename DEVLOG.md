@@ -9,6 +9,55 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-01 — release 0.2.2
+
+Ships the items CRUD + `promise` → `goal` + classify-every-kind work, the blank-screen fix, and the
+workflow token-accounting fixes below. Version bumped `0.2.1` → `0.2.2` across `package.json`,
+`src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and `src-tauri/tauri.conf.json`; tag `v0.2.2` drives
+the release workflow.
+
+- **Token accounting — audit + two fixes.** The main paths are correct: agent runs and chat
+  (streaming and non-streaming) sum usage across tool rounds and the final stream, for every
+  provider including Anthropic (`usage.input_tokens`/`output_tokens`), and streaming requests ask
+  for usage (`stream_options.include_usage`, OpenRouter `usage.include`). Two workflow gaps fixed:
+  each node's real tokens now land in its `WorkflowStep` (they were hardcoded to `0`), and the
+  checker's LLM-judge call now contributes to the run totals (`run_checker`/`run_llm_judge` return
+  `(value, pt, ct)`).
+  Still uncounted (no `runs` row is written at all): delegated-task/sub-agent runs (`tasks.rs`),
+  Telegram agent turns, and the non-streaming Manager turn (`manager_turn`) — plus internal utility
+  calls (classifier, memory distillation, insights, media). Left out of scope; there is no run row
+  to hang a count on.
+
+## 2026-11-01 — items CRUD, `promise` → `goal`, classify all kinds
+
+- **Renamed the `promise` item kind to `goal`** everywhere: `capture::KINDS`, the `/p` command
+  (`/promise` kept as an alias), `capture::content_type_for`, the classifier's `feature` enum +
+  rules (`classify.rs`), `brain::item_kind_to_node`, the `items` tool description, the Manager
+  prompt, `ITEM_KINDS` in `runtime.ts`, and the docs (`lumin.md`, `data-model.md`, `routing.md`,
+  `ORCHESTRATION.md`).
+- **Classification now files every item kind, not just a task.** `routing::classifier_route`
+  maps `note` / `idea` / `goal` / `event` to items (alongside `task` / `reminder` / `habit`), and
+  `FILING_HINTS` gained goal / link / habit / note phrasing so those turns reach the classifier.
+- **The `items` agent tool is full CRUD.** Added an `update` action (title / body / kind / due /
+  cadence / status), kept `add` / `list` / `complete` / `delete`, and rewrote the tool description
+  + `ROUTING_RULES` + Manager prose to advertise all of them (they previously named only
+  add / list / complete, which is why the model looked write-only). Delete now goes through a new
+  `capture::forget`, which removes the brain index node with the item — `/forget`, the `delete`
+  intent and `item_delete` all share it, so no orphaned `ref_kind='item'` node is left behind.
+- **Fixed the blank screen ("renders for a second, then goes blank").** Root cause is a class, not one
+  line: `App.tsx` mounts **every** view at once (hidden with CSS) and there was **no error boundary
+  anywhere**, so one render-time throw in any view unmounted the tree and blanked the window — and
+  the views dereferenced backend fields with no guard, so it fired on the second render once data
+  arrived. Added `components/ui/ErrorBoundary.tsx` and a per-pane `Pane` wrapper in `App.tsx` (a
+  broken view now shows its error in place; the shell and other views keep working), and guarded the
+  unguarded accesses: `a.toolIds`, `w.nodes`/`w.edges`, `i.actions`, `d.tags`, `t.config`,
+  `draft.integrations`/`permissions`, `wfNode.nodes`/`edges`, `stats.*`/`n.counts`, and the
+  unvalidated `navLabels` localStorage shape.
+
+Not run this session (code + docs only, per the standing "I'll run the app myself"): no `cargo
+test` / `npm run build`. New-behaviour tests for the broadened `classifier_route` and the tool's
+`update` / `delete` are not added yet.
+
 ## 2026-10-31 — release 0.2.1
 
 The capture-routing session's work (below) landed as six feature commits, `83b8626` (voice)

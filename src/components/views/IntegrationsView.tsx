@@ -190,7 +190,7 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-background text-foreground">{LOGOS[i.id] ?? <Key size={16} className="text-muted" />}</span>
                   <div className="min-w-0">
                     <b className="block truncate font-mono text-[11px] text-foreground">{i.name}</b>
-                    <span className="mt-0.5 block truncate font-mono text-[10px] text-muted">{i.provider} · {i.actions.length} actions</span>
+                    <span className="mt-0.5 block truncate font-mono text-[10px] text-muted">{i.provider} · {(i.actions ?? []).length} actions</span>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -209,9 +209,9 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
                 </div>
               </div>
 
-              {i.connected && i.actions.length > 0 && (
+              {i.connected && (i.actions ?? []).length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
-                  {i.actions.map((a) => (
+                  {(i.actions ?? []).map((a) => (
                     <span key={a.name} className="rounded bg-background px-2 py-0.5 font-mono text-[10px] text-muted">{a.name}</span>
                   ))}
                 </div>

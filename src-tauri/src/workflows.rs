@@ -161,11 +161,13 @@ fn resolve_path(value: &serde_json::Value, path: &str) -> serde_json::Value {
 
 // Run the checker: evaluate the rule list against the envelope value, with an
 // optional LLM judge as the final rule. Returns the JSON verdict envelope.
-async fn run_checker(app: &AppHandle, config: &serde_json::Value, input_value: &serde_json::Value, api_key: Option<&str>) -> Result<serde_json::Value, String> {
+async fn run_checker(app: &AppHandle, config: &serde_json::Value, input_value: &serde_json::Value, api_key: Option<&str>) -> Result<(serde_json::Value, u64, u64), String> {
   let rules = config.get("rules").and_then(|v| v.as_array()).cloned().unwrap_or_default();
   let mode = config.get("mode").and_then(|v| v.as_str()).unwrap_or("all").to_string();
   let mut failed: Vec<String> = Vec::new();
   let mut judged = false;
+  let mut judge_prompt = 0u64;
+  let mut judge_completion = 0u64;
 
   // Deterministic rules first (LLM judge runs last).
   let mut llm_rule: Option<serde_json::Value> = None;
@@ -183,7 +185,8 @@ async fn run_checker(app: &AppHandle, config: &serde_json::Value, input_value: &
   let deterministic_passed = failed.is_empty();
   if let Some(lr) = llm_rule {
     if deterministic_passed {
-      let verdict = run_llm_judge(app, &lr, input_value, api_key).await?;
+      let (verdict, jp, jc) = run_llm_judge(app, &lr, input_value, api_key).await?;
+      judge_prompt += jp; judge_completion += jc;
       judged = true;
       if !verdict["pass"].as_bool().unwrap_or(false) {
         failed.push(verdict["reason"].as_str().unwrap_or("LLM judge rejected output").to_string());
@@ -192,17 +195,17 @@ async fn run_checker(app: &AppHandle, config: &serde_json::Value, input_value: &
   }
 
   let pass = failed.is_empty();
-  Ok(serde_json::json!({
+  Ok((serde_json::json!({
     "pass": pass,
     "failedRules": failed,
     "llmJudged": judged,
     "reason": if pass { "All checks passed".to_string() } else { format!("Failed: {}", failed.join(", ")) },
-  }))
+  }), judge_prompt, judge_completion))
 }
 
 // One LLM call that returns { pass: bool, reason: string }. Retries once if the
 // response isn't parseable.
-async fn run_llm_judge(app: &AppHandle, rule: &serde_json::Value, input_value: &serde_json::Value, api_key: Option<&str>) -> Result<serde_json::Value, String> {
+async fn run_llm_judge(app: &AppHandle, rule: &serde_json::Value, input_value: &serde_json::Value, api_key: Option<&str>) -> Result<(serde_json::Value, u64, u64), String> {
   let conn = db(app)?;
   let model = rule.get("model").and_then(|v| v.as_str()).unwrap_or("groq:llama-3.3-70b-versatile").to_string();
   let prompt = rule.get("prompt").and_then(|v| v.as_str()).unwrap_or("Is this output acceptable? Reply with only JSON {\"pass\":true/false,\"reason\":\"...\"}").to_string();
@@ -222,6 +225,8 @@ async fn run_llm_judge(app: &AppHandle, rule: &serde_json::Value, input_value: &
   let url = resolved.chat_url();
 
   let mut last_err = "LLM judge returned no text".to_string();
+  let mut judge_prompt = 0u64;
+  let mut judge_completion = 0u64;
   for attempt in 0..2 {
     let messages = serde_json::json!([
       { "role": "system", "content": system },
@@ -245,6 +250,8 @@ async fn run_llm_judge(app: &AppHandle, rule: &serde_json::Value, input_value: &
       .map_err(|e| format!("LLM judge: {e}"))?;
     let mut json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
     if is_anthropic { json = crate::anthropic::normalize_response(&json); }
+    judge_prompt += if is_ollama { json["prompt_eval_count"].as_u64() } else { json["usage"]["prompt_tokens"].as_u64() }.unwrap_or(0);
+    judge_completion += if is_ollama { json["eval_count"].as_u64() } else { json["usage"]["completion_tokens"].as_u64() }.unwrap_or(0);
     let result = if is_ollama {
       json["message"]["content"].as_str().unwrap_or("").to_string()
     } else {
@@ -260,12 +267,12 @@ async fn run_llm_judge(app: &AppHandle, rule: &serde_json::Value, input_value: &
       } else { None }
     } else { None };
     if let Some(v) = parsed {
-      return Ok(v);
+      return Ok((v, judge_prompt, judge_completion));
     }
     last_err = format!("LLM judge: could not parse response (attempt {}): {}", attempt + 1, result.chars().take(120).collect::<String>());
   }
   // Unparseable after retries: fail closed.
-  Ok(serde_json::json!({ "pass": false, "reason": last_err }))
+  Ok((serde_json::json!({ "pass": false, "reason": last_err }), judge_prompt, judge_completion))
 }
 
 fn strip_code_fences(s: &str) -> String {
@@ -527,6 +534,8 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
     let label = node.get("label").and_then(|v| v.as_str()).unwrap_or(&node_id).to_string();
     let config = node.get("config").cloned().unwrap_or(serde_json::json!({}));
     let mut events = Vec::new();
+    let mut node_prompt = 0u64;
+    let mut node_completion = 0u64;
     let output = match ntype.as_str() {
       "agent" | "subagent" => {
         let agent_id = node.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -555,6 +564,7 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
             None => (current_input.clone(), 0, 0),
           };
           total_prompt += pt; total_completion += ct;
+          node_prompt = pt; node_completion = ct;
           out
         }
       }
@@ -562,7 +572,9 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
         // Try to parse the incoming text as JSON; if it is, rules run against
         // the parsed object, otherwise against the raw string.
         let value: serde_json::Value = serde_json::from_str(&current_input).unwrap_or(serde_json::Value::String(current_input.clone()));
-        let verdict = run_checker(app, &config, &value, api_key.as_deref()).await?;
+        let (verdict, pt, ct) = run_checker(app, &config, &value, api_key.as_deref()).await?;
+        total_prompt += pt; total_completion += ct;
+        node_prompt = pt; node_completion = ct;
         // The verdict envelope becomes the input for downstream nodes.
         serde_json::to_string(&verdict).unwrap_or_else(|_| r#"{"pass":false,"reason":"serialize error"}"#.to_string())
       }
@@ -609,7 +621,7 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
         // A single, plain model call (config: model, prompt). The accumulated
         // output is available to the prompt as {input}.
         match run_llm_node(app, &config, &current_input, api_key.as_deref()).await {
-          Ok((text, pt, ct)) => { total_prompt += pt; total_completion += ct; text }
+          Ok((text, pt, ct)) => { total_prompt += pt; total_completion += ct; node_prompt = pt; node_completion = ct; text }
           Err(e) => serde_json::json!({ "error": e }).to_string(),
         }
       }
@@ -622,7 +634,7 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
         if let Some(app_script) = saved.clone().filter(|s| s.kind == "prompt") {
           let cfg = serde_json::json!({ "model": app_script.model, "prompt": app_script.prompt });
           match run_llm_node(app, &cfg, &current_input, api_key.as_deref()).await {
-            Ok((text, pt, ct)) => { total_prompt += pt; total_completion += ct; text }
+            Ok((text, pt, ct)) => { total_prompt += pt; total_completion += ct; node_prompt = pt; node_completion = ct; text }
             Err(e) => serde_json::json!({ "error": e }).to_string(),
           }
         } else {
@@ -657,7 +669,7 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
       }
       _ => current_input.clone(), // trigger/loop: pass through for now
     };
-    steps.push(WorkflowStep { node_id: node_id.clone(), node_label: label, output: output.clone(), prompt_tokens: 0, completion_tokens: 0 });
+    steps.push(WorkflowStep { node_id: node_id.clone(), node_label: label, output: output.clone(), prompt_tokens: node_prompt, completion_tokens: node_completion });
     current_input = output;
   }
 

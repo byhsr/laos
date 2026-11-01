@@ -107,7 +107,7 @@ export function KnowledgeBaseView() {
 
   const q = search.trim().toLowerCase();
   const filtered = q
-    ? docs.filter((d) => d.title.toLowerCase().includes(q) || d.content.toLowerCase().includes(q) || d.tags.some((t) => t.toLowerCase().includes(q)))
+    ? docs.filter((d) => (d.title ?? '').toLowerCase().includes(q) || (d.content ?? '').toLowerCase().includes(q) || (d.tags ?? []).some((t) => t.toLowerCase().includes(q)))
     : docs;
 
   return (
@@ -147,9 +147,9 @@ export function KnowledgeBaseView() {
                 </span>
               </div>
               <p className="mt-2 mb-0 line-clamp-3 min-h-[42px] text-[12px] leading-relaxed whitespace-pre-wrap text-muted">{d.content || 'empty doc'}</p>
-              {d.tags.length > 0 && (
+              {(d.tags ?? []).length > 0 && (
                 <div className="mt-2.5 flex flex-wrap gap-1">
-                  {d.tags.map((t) => <span key={t} className="rounded bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted">{t}</span>)}
+                  {(d.tags ?? []).map((t) => <span key={t} className="rounded bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted">{t}</span>)}
                 </div>
               )}
               <span className="mt-2.5 block font-mono text-[10px] text-muted">updated {fmtDate(d.updatedAt)}</span>

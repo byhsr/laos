@@ -25,7 +25,12 @@ export const NAV_SECTIONS: { key: NavKey; label: string }[] = [
 const STORAGE_KEY = 'laos.navLabels';
 
 const read = (): Record<string, string> => {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') as Record<string, string>; } catch { return {}; }
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    // JSON.parse only rejects malformed text — a valid `null`/array/string would
+    // otherwise return as-is and crash the first `labels[key]` lookup.
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, string> : {};
+  } catch { return {}; }
 };
 
 const write = (labels: Record<string, string>) => {

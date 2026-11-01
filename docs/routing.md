@@ -18,7 +18,7 @@ Related: [memory.md](./memory.md) (the memory tiers), [lumin.md](./lumin.md) (it
 
 | Store | Holds | Scope | In the prompt? |
 | --- | --- | --- | --- |
-| `items` | anything with a **when or a do** — todos, reminders, promises, links, habits, quick notes | global + `project_id` | no (the scheduler reads it) |
+| `items` | anything with a **when or a do** — notes, todos, reminders, goals, links, habits | global + `project_id` | no (the scheduler reads it) |
 | `remember` | durable **facts and standing rules about the user** ("never use emoji", "prefers IST", "my name is Ranas") | rules: `global`; facts: `agent:<id>` | **yes** — injected every turn |
 | `knowledge_base` | shared **reference material** any agent may need later — wiki, ICP, specs, policies, runbooks, product facts | global, shared | no — pull-only |
 
@@ -36,8 +36,9 @@ and `manager.rs::manager_turn` — and files the turn when the reading is clear:
    its time — "remind me what we decided" is a message, not a schedule.
 2. **Classifier second**: a turn with no cue is only sent to the `classifier` role when it looks
    like content wanting to be filed (`FILING_HINTS`), so an ordinary chat turn costs no extra
-   model call. Only `task` / `reminder` / `habit` / `preference` are filed; a `note` or
-   `decision` is left to the model.
+   model call. Every item kind is filed — `task`, `reminder`, `habit`, `goal`, `note`, `idea`
+   and `event` land in items, `preference` in memory; `project`, `decision` and `person` are
+   left to the model.
 3. **Otherwise nothing is filed** and the model's own tools decide.
 
 When the triage does file, the prompt says so ("This message was already filed as a reminder for

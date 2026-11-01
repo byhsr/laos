@@ -81,7 +81,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
   const toolOptions = [
     ...enabledTools.filter((t) => t.kind !== 'mcp').map((t) => ({ value: t.id, label: t.name })),
     ...enabledTools.filter((t) => t.kind === 'mcp')
-      .map((t) => ({ value: t.id, label: t.name, group: `mcp · ${String(t.config.serverName ?? t.integrationId)}` }))
+      .map((t) => ({ value: t.id, label: t.name, group: `mcp · ${String(t.config?.serverName ?? t.integrationId)}` }))
       .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label)),
   ];
 

@@ -14,8 +14,8 @@ use tauri::AppHandle;
 
 /// The contract, injected into every agent and Manager prompt.
 pub(crate) const ROUTING_RULES: &str = "\nWhere things go (do not mix these up):\n\
-- items — anything with a when or a do: todos, reminders, promises, links, habits and quick notes. \
-Use the items tool ('add' to record, 'list' to show, 'complete' to tick off). Reminders are scheduled and pushed to Telegram.\n\
+- items — anything with a when or a do: notes, todos, reminders, goals, links and habits. \
+Use the items tool ('add' to record, 'list' to show, 'update' to change, 'complete' to tick off, 'delete' to remove). Reminders are scheduled and pushed to Telegram.\n\
 - remember — durable facts and standing RULES about the user (\"never use emoji or em dashes\", \
 \"prefers IST\", \"my name is Ranas\"). kind='policy' for a never/always rule, 'preference' for a taste, \
 'semantic' for a plain fact. These are injected into every future prompt.\n\
@@ -56,6 +56,9 @@ const TODO_CUE: &[&str] = &[
 const FILING_HINTS: &[&str] = &[
   "remind", "remember", "don't forget", "dont forget", "keep track", "task", "todo", "to-do",
   "deadline", "due ", "never ", "always ", "from now on", "note that",
+  // The other item kinds, so a goal / link / habit / note reaches the classifier too.
+  "my goal", "goal is", "i promise", "i commit", "save this link", "save the link",
+  "bookmark", "make a note", "jot down", "every day", "every week", "every morning", "habit",
 ];
 /// A first-person habit ("I never use Spotify") is a fact about the user, not an
 /// instruction to the assistant — it must not become a policy.
@@ -194,16 +197,21 @@ pub(crate) async fn classify_text(app: &AppHandle, text: &str) -> Option<(Destin
 async fn classifier_route(app: &AppHandle, text: &str) -> Option<(Destination, String, Option<String>)> {
   let class = crate::classify::classify(app, text, "").await;
   let destination = match class.content_type.as_str() {
-    "task" | "reminder" | "habit" => Destination::Items,
+    // Every item kind lands in items — not just a task: a captured note, idea,
+    // goal or dated event belongs there too, so it isn't lost to chat.
+    "task" | "reminder" | "habit" | "goal" | "note" | "idea" | "event" => Destination::Items,
     "preference" => Destination::Memory,
     _ => return None,
   };
   let kind = if crate::capture::KINDS.contains(&class.feature.trim()) {
     class.feature.trim().to_string()
-  } else if class.content_type == "preference" {
-    "preference".to_string()
   } else {
-    "note".to_string()
+    match class.content_type.as_str() {
+      "goal" => "goal".to_string(),
+      "event" | "reminder" => "reminder".to_string(),
+      "preference" => "preference".to_string(),
+      _ => "note".to_string(),
+    }
   };
   let due = class.params.due_at.filter(|d| !d.trim().is_empty());
   Some((destination, kind, due))

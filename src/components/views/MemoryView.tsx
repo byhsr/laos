@@ -259,7 +259,7 @@ export function MemoryView() {
       {/* Global counts — the whole store, across agents. */}
       {stats && (
         <div className="mb-3 shrink-0 font-mono text-[10px] text-muted">
-          {stats.events.toLocaleString()} events · {stats.memories.toLocaleString()} memories · {stats.selfModelEntries.toLocaleString()} self-model
+          {(stats.events ?? 0).toLocaleString()} events · {(stats.memories ?? 0).toLocaleString()} memories · {(stats.selfModelEntries ?? 0).toLocaleString()} self-model
         </div>
       )}
 
@@ -338,7 +338,7 @@ export function MemoryView() {
                 </div>
                 {n.namespace.description && <p className="mt-1 mb-0 font-mono text-[10px] text-muted">{n.namespace.description}</p>}
                 <div className="mt-1 font-mono text-[10px] text-muted">
-                  {n.counts.memories.toLocaleString()} memories · {n.counts.events.toLocaleString()} events · {n.counts.selfModelEntries.toLocaleString()} self-model
+                  {(n.counts?.memories ?? 0).toLocaleString()} memories · {(n.counts?.events ?? 0).toLocaleString()} events · {(n.counts?.selfModelEntries ?? 0).toLocaleString()} self-model
                 </div>
               </div>
             ))}

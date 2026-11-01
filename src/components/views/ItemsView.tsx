@@ -19,7 +19,7 @@ const fmtDue = (iso: string | null) => {
   return `${late ? '⚠ ' : ''}${d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
 };
 
-// The Lumin inbox: everything captured — notes, todos, reminders, promises, links
+// The Lumin inbox: everything captured — notes, todos, reminders, goals, links
 // and habits — plus the insights the learning layer proposes.
 export function ItemsView() {
   const [items, setItems] = useState<Item[]>([]);
@@ -86,7 +86,7 @@ export function ItemsView() {
   // Search across title, body and tags — a captured list gets long fast.
   const q = query.trim().toLowerCase();
   const visible = q
-    ? items.filter((it) => [it.title, it.body, ...it.tags].join(' ').toLowerCase().includes(q))
+    ? items.filter((it) => [it.title ?? '', it.body ?? '', ...(it.tags ?? [])].join(' ').toLowerCase().includes(q))
     : items;
 
   return (
@@ -179,7 +179,7 @@ export function ItemsView() {
                     <span className={`block truncate font-mono text-[11px] ${it.status === 'done' ? 'text-muted line-through' : 'text-foreground'}`}>{it.title || it.body}</span>
                     {/* The title is capped at 7 words; show the body's opening so a
                         note is readable at a glance without opening it. */}
-                    {it.title.trim() && it.body.trim() && it.body.trim() !== it.title.trim() && (
+                    {(it.title ?? '').trim() && (it.body ?? '').trim() && it.body.trim() !== it.title.trim() && (
                       <span className="block truncate font-mono text-[10px] text-muted">{it.body}</span>
                     )}
                   </div>
@@ -188,7 +188,7 @@ export function ItemsView() {
                   {/* The title keeps the row; the rest appears on hover so a row
                       with tags and a destination can't crush it. */}
                   <div className="flex shrink-0 items-center gap-2 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-                    {it.tags.slice(0, 3).map((t) => <span key={t} className="font-mono text-[10px] text-muted">#{t}</span>)}
+                    {(it.tags ?? []).slice(0, 3).map((t) => <span key={t} className="font-mono text-[10px] text-muted">#{t}</span>)}
                     {it.url && <a href={it.url} target="_blank" rel="noreferrer" className="font-mono text-[10px] text-muted hover:text-foreground">link</a>}
                     {it.kind === 'reminder' && it.due_at && (
                       <button className="cursor-pointer font-mono text-[10px] text-muted hover:text-foreground" onClick={() => void reminderSnooze(it.id).then(load)}>snooze</button>

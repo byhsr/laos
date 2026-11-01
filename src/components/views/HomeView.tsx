@@ -111,7 +111,7 @@ export function HomeView({ agents, tools, workflows, runs, onOpen, onCreate, onO
             <AgentAvatar agent={a} size={38} playing={hoveredAgentId === a.id} />
             <div className="min-w-0">
               <b className="block truncate font-mono text-[11px] text-foreground">{a.name}</b>
-              <em className="block truncate font-mono text-[10px] text-muted not-italic">{a.toolIds.map(toolName).join(' · ') || 'no tools'}</em>
+              <em className="block truncate font-mono text-[10px] text-muted not-italic">{(a.toolIds ?? []).map(toolName).join(' · ') || 'no tools'}</em>
             </div>
           </button>
         ))}
@@ -127,7 +127,7 @@ export function HomeView({ agents, tools, workflows, runs, onOpen, onCreate, onO
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-background text-muted"><WorkflowIcon size={15} /></span>
             <div className="min-w-0">
               <b className="block truncate font-mono text-[11px] text-foreground">{w.name}</b>
-              <em className="block truncate font-mono text-[10px] text-muted not-italic">{w.nodes.length} nodes · {w.edges.length} connections</em>
+              <em className="block truncate font-mono text-[10px] text-muted not-italic">{(w.nodes ?? []).length} nodes · {(w.edges ?? []).length} connections</em>
             </div>
           </button>
         ))}

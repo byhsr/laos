@@ -21,25 +21,26 @@ export type GraphInput = {
 export function buildGraph({ agents, skills, tools, integrations, workflows, projects, scopes, brain }: GraphInput): { nodes: GNode[]; edges: GEdge[] } {
   const nodes: GNode[] = [];
   skills.forEach((s) => nodes.push({ id: `skill:${s.id}`, kind: 'skill', label: s.name, sub: 'instructions' }));
-  tools.forEach((t) => nodes.push({ id: `tool:${t.id}`, kind: 'tool', label: t.name, sub: t.kind.replace('_', ' ') }));
-  integrations.filter((i) => i.connected).forEach((i) => nodes.push({ id: `int:${i.id}`, kind: 'integration', label: i.name, sub: `${i.actions.length} actions` }));
+  tools.forEach((t) => nodes.push({ id: `tool:${t.id}`, kind: 'tool', label: t.name, sub: (t.kind ?? '').replace('_', ' ') }));
+  integrations.filter((i) => i.connected).forEach((i) => nodes.push({ id: `int:${i.id}`, kind: 'integration', label: i.name, sub: `${(i.actions ?? []).length} actions` }));
   agents.forEach((a) => nodes.push({
     id: `agent:${a.id}`, kind: a.isManager ? 'manager' : 'agent', label: a.name,
     sub: a.isManager ? 'system agent' : `${(a.toolIds ?? []).length} tools · ${(a.skillIds ?? []).length} skills`,
   }));
-  workflows.forEach((w) => nodes.push({ id: `wf:${w.id}`, kind: 'workflow', label: w.name, sub: `${w.nodes.length} nodes` }));
+  workflows.forEach((w) => nodes.push({ id: `wf:${w.id}`, kind: 'workflow', label: w.name, sub: `${(w.nodes ?? []).length} nodes` }));
   projects.forEach((p) => nodes.push({ id: `project:${p.id}`, kind: 'project', label: p.name, sub: p.description || 'project' }));
   // Accumulated memory, one glob per scope, sized by how much it holds.
   scopes.forEach((s) => {
-    const c = s.counts;
+    const ns = s.namespace ?? { key: '', type: '', id: null, name: '' };
+    const c = s.counts ?? { events: 0, memories: 0, selfModelEntries: 0 };
     nodes.push({
-      id: `mem:${s.namespace.key}`, kind: 'memory',
-      label: s.namespace.name || s.namespace.key,
+      id: `mem:${ns.key}`, kind: 'memory',
+      label: ns.name || ns.key,
       sub: `${c.memories} memories · ${c.events} events`,
       weight: c.memories + c.events + c.selfModelEntries,
       // Carried so the scope filter can hide memory globs too, not just brain
       // nodes (it used to leave every memory node on screen).
-      scope: s.namespace.key,
+      scope: ns.key,
     });
   });
 
@@ -77,11 +78,11 @@ export function buildGraph({ agents, skills, tools, integrations, workflows, pro
   }));
   // A generic API tool declares the integration it calls through.
   tools.forEach((t) => { if (t.integrationId) link(`tool:${t.id}`, `int:${t.integrationId}`, 'derives'); });
-  workflows.forEach((w) => w.nodes.forEach((n) => { if (n.agentId) link(`agent:${n.agentId}`, `wf:${w.id}`, 'flow'); }));
+  workflows.forEach((w) => (w.nodes ?? []).forEach((n) => { if (n.agentId) link(`agent:${n.agentId}`, `wf:${w.id}`, 'flow'); }));
   // A memory scope attaches to its owner; a global scope floats free at the centre.
-  const hasGlobal = scopes.some((s) => s.namespace.key === 'global');
+  const hasGlobal = scopes.some((s) => s.namespace?.key === 'global');
   scopes.forEach((s) => {
-    const key = s.namespace.key;
+    const key = s.namespace?.key ?? '';
     if (key.startsWith('agent:')) link(`agent:${key.slice('agent:'.length)}`, `mem:${key}`, 'derives');
     else if (key.startsWith('project:')) link(`project:${key.slice('project:'.length)}`, `mem:${key}`, 'derives');
     // Every scope is read together with global (memory inherits through it), so

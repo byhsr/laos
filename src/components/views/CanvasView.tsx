@@ -827,7 +827,7 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
               })()}
             </div>
 
-            {current.nodes.length === 0 && (
+            {(current.nodes ?? []).length === 0 && (
               <div className="pointer-events-none absolute inset-0 z-0 grid place-items-center">
                 <div className="max-w-[360px] px-4 text-center text-muted">
                   <WorkflowIcon size={24} className="mx-auto mb-2 opacity-50" />
@@ -1105,7 +1105,7 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
                     <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-background text-muted"><WorkflowIcon size={15} /></span>
                     <div className="min-w-0">
                       <b className="block truncate font-mono text-[11px] text-foreground">{w.name}</b>
-                      <span className="mt-0.5 block font-mono text-[10px] text-muted">{w.nodes.length} nodes · {w.edges.length} connections</span>
+                      <span className="mt-0.5 block font-mono text-[10px] text-muted">{(w.nodes ?? []).length} nodes · {(w.edges ?? []).length} connections</span>
                     </div>
                   </div>
                   <span className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100">

@@ -9,7 +9,7 @@ use tauri::AppHandle;
 
 use crate::db::db;
 
-pub(crate) const KINDS: [&str; 6] = ["note", "todo", "reminder", "promise", "link", "habit"];
+pub(crate) const KINDS: [&str; 6] = ["note", "todo", "reminder", "goal", "link", "habit"];
 const CADENCES: [&str; 3] = ["daily", "weekly", "monthly"];
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -190,7 +190,7 @@ fn kind_for_command(cmd: &str) -> Option<&'static str> {
     "/n" | "/note" => Some("note"),
     "/tdl" | "/todo" => Some("todo"),
     "/r" | "/remind" | "/reminder" => Some("reminder"),
-    "/p" | "/promise" => Some("promise"),
+    "/p" | "/promise" | "/goal" => Some("goal"),
     "/lib" | "/link" => Some("link"),
     "/habit" => Some("habit"),
     _ => None,
@@ -201,7 +201,7 @@ fn kind_for_command(cmd: &str) -> Option<&'static str> {
 fn content_type_for(kind: &str) -> &'static str {
   match kind {
     "todo" | "reminder" => "task",
-    "promise" => "goal",
+    "goal" => "goal",
     "habit" => "habit",
     _ => "note",
   }
@@ -275,7 +275,7 @@ fn short_time(conn: &Connection, iso: &str) -> String {
 }
 
 pub(crate) fn help() -> String {
-  "lumin: /n note · /tdl todo · /r [HH:MM] reminder · /p promise · /lib url · /habit text [daily|weekly|monthly] · /items [kind] · /done n · /forget n".into()
+  "lumin: /n note · /tdl todo · /r [HH:MM] reminder · /p goal · /lib url · /habit text [daily|weekly|monthly] · /items [kind] · /done n · /forget n".into()
 }
 
 /// Marks an item done (toggling it back if it was already done). Completing a
@@ -294,6 +294,15 @@ pub(crate) fn complete(conn: &Connection, id: &str) -> Result<String, String> {
     params![id, streak, now(), next],
   ).map_err(|e| e.to_string())?;
   Ok(if item.kind == "habit" { format!("Done — {} day streak.", streak) } else { "Done.".into() })
+}
+
+/// Deletes an item and its brain index node, so deleting never leaves an orphan
+/// node pointing at an id that no longer exists.
+pub(crate) fn forget(conn: &Connection, id: &str) -> Result<(), String> {
+  if let Ok(node) = conn.query_row("SELECT id FROM brain_nodes WHERE ref_kind='item' AND ref_id=?1", params![id], |r| r.get::<_, String>(0)) {
+    let _ = crate::brain::forget_node(conn, &node);
+  }
+  conn.execute("DELETE FROM items WHERE id=?1", params![id]).map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// Handles an explicit capture command. Returns None when `text` isn't one, so
@@ -349,7 +358,7 @@ pub(crate) fn command(app: &AppHandle, text: &str, source: &str) -> Option<Resul
       let Some(id) = listed_item_id(&conn, source, n) else {
         return Some(Err("Usage: /forget <number> from /items.".into()));
       };
-      Some(conn.execute("DELETE FROM items WHERE id=?1", params![id]).map(|_| "Removed.".to_string()).map_err(|e| e.to_string()))
+      Some(forget(&conn, &id).map(|_| "Removed.".to_string()))
     }
     "/insights" => Some(Ok(crate::insights::summary(&conn))),
     "/accept" => Some(crate::insights::accept(&conn, rest)),
@@ -435,7 +444,7 @@ fn apply(conn: &Connection, intent: &Intent, raw: &str, source: &str) -> Result<
     }
     "delete" => {
       if let Some(item) = find(conn, &title) {
-        conn.execute("DELETE FROM items WHERE id=?1", params![item.id]).map_err(|e| e.to_string())?;
+        forget(conn, &item.id)?;
         Ok((format!("Removed — {}", item.title), None))
       } else { Err(format!("Couldn't find anything matching “{title}”.")) }
     }
@@ -492,8 +501,7 @@ pub fn item_save(app: AppHandle, item: Item) -> Result<Item, String> {
 #[tauri::command]
 pub fn item_delete(app: AppHandle, id: String) -> Result<(), String> {
   let conn = db(&app)?;
-  conn.execute("DELETE FROM items WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
-  Ok(())
+  forget(&conn, &id)
 }
 
 #[tauri::command]

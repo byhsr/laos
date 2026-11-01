@@ -120,7 +120,7 @@ Three stores, not interchangeable. `routing.rs` owns the contract *and* the read
 
 | Store | Holds | Scope | In the prompt? |
 | --- | --- | --- | --- |
-| `items` | anything with a when or a do — todos, reminders, promises, links, habits | global + `project_id` | no (the scheduler reads it) |
+| `items` | anything with a when or a do — notes, todos, reminders, goals, links, habits | global + `project_id` | no (the scheduler reads it) |
 | `remember` | facts and **standing rules about the user** | rules: `global`; facts: `agent:<id>` | **yes**, every turn |
 | `knowledge_base` | shared *reference* — wiki, ICP, specs, runbooks | global, shared | no, pull-only |
 
