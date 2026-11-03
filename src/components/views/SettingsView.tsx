@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { RefreshCw, RotateCcw, Sparkles } from 'lucide-react';
 import type { ModelConfig, View } from '../../types';
 import { ModelsView } from './ModelsView';
+import { ProvidersView } from './ProvidersView';
 import { UpdatePrompt } from '../ui/UpdatePrompt';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -9,8 +10,11 @@ import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { tabCls } from '../ui/tabs';
 import { toast } from '../../hooks/useToast';
-import { appVersion, checkForUpdate, getAppSettings, getIdentity, setIdentity, setRunInBackground, setLaunchAtLogin, setAutonomy, type Identity, type UpdateInfo } from '../../runtime';
+import { appVersion, checkForUpdate, getAppSettings, getIdentity, setIdentity, setRunInBackground, setLaunchAtLogin, setAutonomy, setDesktopNotifications, setVoiceHotkey, setVoiceTtsMode, type Identity, type UpdateInfo } from '../../runtime';
 import { Checkbox } from '../ui/Checkbox';
+import { HotkeyField, prettyAccelerator } from '../ui/HotkeyField';
+import { saveTtsPrefs, ttsPrefs } from '../../voice/tts';
+import { useVoice } from '../../hooks/useVoice';
 import { NAV_SECTIONS, navLabel, useNavLabels } from '../../hooks/useNavLabels';
 import { useSidebarTabs } from '../../hooks/useSidebarTabs';
 import { RAIL_KEYS } from '../Rail';
@@ -30,11 +34,12 @@ const TIMEZONES: string[] = (() => {
   return ['Asia/Kolkata', ...all.filter((z) => z !== 'Asia/Kolkata')];
 })();
 
-type SettingsTab = 'general' | 'models';
+type SettingsTab = 'general' | 'models' | 'providers';
 
 const TABS: { key: SettingsTab; label: string }[] = [
   { key: 'general', label: 'general' },
   { key: 'models', label: 'models' },
+  { key: 'providers', label: 'providers' },
 ];
 
 // Only the sections that actually live in the rail can be hidden from it.
@@ -53,6 +58,12 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
   const [bg, setBg] = useState(true);
   const [login, setLogin] = useState(false);
   const [autonomy, setAutonomyOn] = useState(true);
+  const [notify, setNotify] = useState(true);
+  const [hotkey, setHotkey] = useState('CommandOrControl+Shift+Space');
+  const [ttsMode, setTtsModeState] = useState<'auto' | 'system' | 'provider'>('auto');
+  const [sysVoices, setSysVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [ttsVoice, setTtsVoice] = useState(ttsPrefs().voice);
+  const [ttsRate, setTtsRate] = useState(ttsPrefs().rate);
   const [who, setWho] = useState<Identity>({ userName: '', botName: '', persona: '', tone: '', timezone: '', verbosity: 0 });
   const glassImage = useGlass((s) => s.image);
   const glassBlur = useGlass((s) => s.blur);
@@ -76,8 +87,23 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
   const showAllTabs = useSidebarTabs((s) => s.showAll);
 
   useEffect(() => { appVersion().then(setVersion); }, []);
-  useEffect(() => { getAppSettings().then((s) => { setBg(s.runInBackground); setLogin(s.launchAtLogin); setAutonomyOn(s.autonomy); }); }, []);
+  useEffect(() => {
+    getAppSettings().then((s) => {
+      setBg(s.runInBackground); setLogin(s.launchAtLogin); setAutonomyOn(s.autonomy);
+      setNotify(s.desktopNotifications); setHotkey(s.voiceHotkey);
+      setTtsModeState((s.voiceTtsMode as 'auto' | 'system' | 'provider') ?? 'auto');
+    });
+  }, []);
   useEffect(() => { getIdentity().then(setWho); }, []);
+
+  // The list of installed system voices arrives asynchronously in WebView2.
+  useEffect(() => {
+    if (typeof speechSynthesis === 'undefined') return;
+    const load = () => setSysVoices(speechSynthesis.getVoices());
+    load();
+    speechSynthesis.addEventListener('voiceschanged', load);
+    return () => speechSynthesis.removeEventListener('voiceschanged', load);
+  }, []);
 
   const saveWho = async () => {
     try { await setIdentity(who); toast('saved', 'success'); }
@@ -107,6 +133,36 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
       toast(next ? 'autonomous — no per-action approval' : 'will ask before state-changing actions', 'success');
     } catch (e) { setAutonomyOn(!next); toast(typeof e === 'string' ? e : 'could not save', 'error'); }
   };
+
+  const toggleNotify = async (next: boolean) => {
+    setNotify(next);
+    try {
+      await setDesktopNotifications(next);
+      toast(next ? 'desktop notifications on' : 'desktop notifications off', 'success');
+    } catch (e) { setNotify(!next); toast(typeof e === 'string' ? e : 'could not save', 'error'); }
+  };
+
+  // The backend parses and registers the accelerator; a clash comes back as an
+  // error and the previous shortcut is restored.
+  const saveHotkey = async (next: string) => {
+    const prev = hotkey;
+    setHotkey(next);
+    try {
+      await setVoiceHotkey(next);
+      toast(next ? `voice hotkey · ${prettyAccelerator(next)}` : 'voice hotkey disabled', 'success');
+    } catch (e) { setHotkey(prev); toast(typeof e === 'string' ? e : 'could not set the hotkey', 'error'); }
+  };
+
+  const pickTtsMode = async (mode: 'auto' | 'system' | 'provider') => {
+    const prev = ttsMode;
+    setTtsModeState(mode);
+    useVoice.getState().setTtsMode(mode);
+    try { await setVoiceTtsMode(mode); }
+    catch { setTtsModeState(prev); useVoice.getState().setTtsMode(prev); toast('could not save', 'error'); }
+  };
+
+  const pickSystemVoice = (name: string) => { setTtsVoice(name); saveTtsPrefs({ voice: name }); };
+  const pickRate = (rate: number) => { setTtsRate(rate); saveTtsPrefs({ rate }); };
 
   const pickTheme = (key: ThemeKey) => {
     applyTheme(key);
@@ -300,6 +356,78 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
           </Card>
 
           <Card className="hover:bg-surface">
+            <h3 className="m-0 font-mono text-xs lowercase text-foreground">voice</h3>
+            <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">
+              Hands-free conversation: press the hotkey, speak, and the reply is spoken back. It works anywhere —
+              even when the window is hidden in the tray.
+            </p>
+            <div className="grid gap-3">
+              <div>
+                <span className={FIELD_LABEL_CLS}>hotkey</span>
+                <HotkeyField value={hotkey} onChange={(v) => void saveHotkey(v)} />
+                <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+                  Click and press the chord. Disable it to use only the microphone button in the topbar.
+                </p>
+              </div>
+
+              <div>
+                <span className={FIELD_LABEL_CLS}>speak replies with</span>
+                <div className="max-w-[280px]">
+                  <Select
+                    value={ttsMode}
+                    options={[
+                      { value: 'auto', label: 'auto — provider if set, else system' },
+                      { value: 'system', label: 'system voices' },
+                      { value: 'provider', label: 'provider tts model' },
+                    ]}
+                    onChange={(v) => void pickTtsMode(v as 'auto' | 'system' | 'provider')}
+                  />
+                </div>
+              </div>
+
+              {ttsMode !== 'provider' && (
+                <>
+                  <div>
+                    <span className={FIELD_LABEL_CLS}>system voice</span>
+                    <div className="max-w-[320px]">
+                      <Select
+                        value={ttsVoice}
+                        options={[{ value: '', label: 'default' }, ...sysVoices.map((v) => ({ value: v.name, label: `${v.name} (${v.lang})` }))]}
+                        onChange={pickSystemVoice}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <span className={FIELD_LABEL_CLS}>rate</span>
+                    <div className="max-w-[320px]">
+                      <Slider percent value={Math.round(ttsRate * 100)} ariaLabel="speech rate" onChange={(v) => pickRate(v / 100)} />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <p className="m-0 font-mono text-[10px] leading-relaxed text-muted">
+                {(() => {
+                  const stt = models.find((m) => m.enabled && (m.kind === 'stt' || /whisper|transcribe/i.test(m.model)));
+                  const tts = models.find((m) => m.enabled && m.kind === 'tts');
+                  const hear = stt ? `hears through ${stt.label || stt.model}` : 'no speech-to-text model — add an OpenAI/Groq whisper model (type stt) in the models tab';
+                  const talk = tts ? `speaks through ${tts.label || tts.model}` : 'no tts model, so system voices are used';
+                  return `${hear}; ${talk}.`;
+                })()}
+              </p>
+            </div>
+          </Card>
+
+          <Card className="hover:bg-surface">
+            <h3 className="m-0 font-mono text-xs lowercase text-foreground">notifications</h3>
+            <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">
+              OS toasts for reminders and habits, new insights, and agent or task completions — shown when the app
+              isn't in front.
+            </p>
+            <Checkbox checked={notify} onChange={toggleNotify} label="desktop notifications" />
+          </Card>
+
+          <Card className="hover:bg-surface">
             <h3 className="m-0 font-mono text-xs lowercase text-foreground">background</h3>
             <p className="mt-1 mb-3.5 text-[12px] leading-[1.65] text-muted">
               Keep the app running in the system tray so the Telegram bots keep polling when the window is closed.
@@ -374,6 +502,10 @@ export function SettingsView({ models, onRerunOnboarding, onAddModel, onEditMode
 
       <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'models' ? '' : 'hidden'}`}>
         <ModelsView models={models} onAdd={onAddModel} onEdit={onEditModel} onDelete={onDeleteModel} />
+      </div>
+
+      <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'providers' ? '' : 'hidden'}`}>
+        <ProvidersView />
       </div>
 
       {found && <UpdatePrompt info={found} onDismiss={() => setFound(null)} />}

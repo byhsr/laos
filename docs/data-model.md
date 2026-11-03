@@ -135,16 +135,40 @@ A model record also reports two computed flags so the role picker can mark suita
 
 ### `model_configs`
 
-`id` (PK, e.g. `groq:llama-3.3-70b-versatile`), `provider`, `label`, `model`, `host`,
-`api_key`, `enabled`, `reasoning`.
+`id` (PK, e.g. `groq:llama-3.3-70b-versatile`), `provider`, `label`, `model`, `kind`, `voice`,
+`host`, `api_key`, `enabled`, `reasoning`.
+
+`kind` says what the model is for — `llm` (the default for existing rows), `vision`, `image`,
+`video`, `media`, `multimedia`, `stt`, `tts`. It is distinct from `provider` (who serves it) and
+drives grouping in the chat model picker and capability sorting in the role pickers; it is not
+enforced at request time, so a turn still resolves through `provider::resolve`.
 
 `api_key` holds the vault sentinel, never the key — the value lives under `model/<id>` (see
 [Vault](#vault)). `list_model_configs` returns `hasKey` rather than the key; `save_model_config`
 takes a write-only `apiKey` plus `clearKey`.
 
+`voice` is the provider voice id for a `tts` model (voices are model-specific, e.g. OpenRouter's
+`Kore` / `en-US-Harper:MAI-Voice-2.1`); empty falls back to the global `tts_voice` setting.
+
 `host` overrides the endpoint root for `ollama:` models (default `http://127.0.0.1:11434`).
 `reasoning` is one of `auto` / `off` / `low` / `medium` / `high` and controls the provider's
 reasoning parameter — see [harness.md](./harness.md#reasoning-control).
+
+### `providers`
+
+Custom provider adapters (Settings → Providers). Built-ins are code
+(`provider::builtins()`); this table holds only user-added OpenAI-compatible endpoints.
+
+`id` (PK — the `<provider>:` prefix, e.g. `deepseek`), `label`, `base_url` (the API root, e.g.
+`https://api.deepseek.com/v1`), `auth` (`bearer` | `x-api-key` | `none`), `auth_header`,
+`extra_headers` (JSON object), `requires_key`, `reasoning` (`none` | `openai` | `openrouter`),
+`provider_routing` (OpenRouter's throughput hint), `caps` (JSON: `chat` / `vision` / `embeddings` /
+`transcription` / `speech`), `api_key` (vault sentinel; the value lives under `provider/<id>`),
+`created_at`.
+
+`provider::find_provider` checks the built-ins first and then this table, so adding a provider needs
+no code and deleting one makes its `<id>:…` models fail loudly rather than silently routing
+elsewhere. A model's own key overrides the provider's shared key.
 
 ### `tools`
 
@@ -205,7 +229,8 @@ scopes its turn memory (`chat.rs` passes it to `fox::record_turn`).
 
 ### `chat_messages`
 
-`id` (INTEGER PK AUTOINCREMENT), `session_id`, `role`, `content`, `time`. Ordered by `id`.
+`id` (INTEGER PK AUTOINCREMENT), `session_id`, `role`, `content`, `time` (`%H:%M:%S` local,
+stamped on write). Ordered by `id`.
 
 ### `day_contexts`
 
@@ -224,7 +249,8 @@ scopes its turn memory (`chat.rs` passes it to `fox::record_turn`).
 
 Lumin's store ([lumin.md](./lumin.md)): `id` (PK), `kind` (`note` | `todo` | `reminder` |
 `goal` | `link` | `habit`), `title`, `body`, `url`, `tags` (JSON), `collection`,
-`status` (`active` | `done`), `due_at` (RFC3339; the scheduler fires on it), `cadence`
+`status` (`active` | `done`), `due_at` (RFC3339 — with or without an offset; the scheduler fires on
+it), `cadence`
 (`''` | `daily` | `weekly` | `monthly`; recurring items roll forward), `streak` (habits),
 `last_done_at`, `project_id` (scopes an item to a project), `fired_at` (`NULL` = not yet
 fired), `source` (bot name, `app` or `insight`), `created_at`, `updated_at`.
@@ -247,7 +273,8 @@ Where captured items are pushed ([mcp.md](./mcp.md)): `id` (PK, `dst-<ms>`), `na
 PTY session, or `''`), `allowed_users` (JSON array of Telegram user ids; empty = open),
 `capture` (added by migration; ticked = free text is filed as an item, see
 [lumin.md](./lumin.md)), `owner_chat_id` (added by migration; the chat the scheduler messages
-unprompted, filled from the first authorized sender), `destination_id` (added by migration; the
+unprompted — settable in the Telegram view, else filled from the first authorized sender),
+`destination_id` (added by migration; the
 destination captured items are pushed to, or `''`), `poll_offset` (added by migration; the
 persisted long-poll offset, so a restart can't replay old updates), `enabled`, `webhook_secret`,
 `webhook_registered`, `updated_at`. One

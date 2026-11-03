@@ -61,7 +61,7 @@ pub(crate) async fn transcribe(app: &AppHandle, model_id: &str, name: &str, mime
     let conn = crate::db::db(app)?;
     provider::resolve(&conn, model_id, None)?
   };
-  if !provider::supports_transcription(resolved.kind) {
+  if !resolved.caps().transcription {
     return Err("that provider cannot transcribe audio".into());
   }
   let url = provider::transcription_url(&resolved);

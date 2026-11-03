@@ -153,19 +153,20 @@ pub fn delete_knowledge_doc(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn list_model_configs(app: AppHandle) -> Result<Vec<ModelConfigRecord>, String> {
   let conn = db(&app)?;
-  let mut stmt = conn.prepare("SELECT id, provider, label, model, host, api_key, enabled, reasoning FROM model_configs ORDER BY id").map_err(|e| e.to_string())?;
+  let mut stmt = conn.prepare("SELECT id, provider, label, model, host, api_key, enabled, reasoning, kind, voice FROM model_configs ORDER BY id").map_err(|e| e.to_string())?;
   let rows = stmt.query_map([], |row| {
     // The key itself never leaves the backend — only whether one is stored.
     let stored: Option<String> = row.get(5)?;
     let id: String = row.get(0)?;
     Ok(ModelConfigRecord {
       vision: crate::provider::looks_like_vision(&id),
-      // Whether the provider exposes a transcription endpoint — a provider-level
-      // fact, unlike the vision name heuristic.
-      transcribes: crate::provider::kind_of_id(&id).map(crate::provider::supports_transcription).unwrap_or(false),
+      // Whether the provider exposes a transcription endpoint — an adapter fact,
+      // unlike the vision name heuristic.
+      transcribes: crate::provider::find_provider(&conn, crate::provider::provider_id_of(&id))
+        .map(|d| d.caps.transcription).unwrap_or(false),
       id, provider: row.get(1)?, label: row.get(2)?, model: row.get(3)?, host: row.get(4)?,
       has_key: stored.map(|s| !s.trim().is_empty()).unwrap_or(false),
-      enabled: row.get::<_, i64>(6)? != 0, reasoning: row.get(7)?,
+      enabled: row.get::<_, i64>(6)? != 0, reasoning: row.get(7)?, kind: row.get(8)?, voice: row.get(9)?,
     })
   }).map_err(|e| e.to_string())?;
   let mut out = Vec::new();
@@ -190,10 +191,86 @@ pub fn save_model_config(app: AppHandle, config: ModelConfigInput) -> Result<(),
     conn.query_row("SELECT api_key FROM model_configs WHERE id=?1", params![config.id], |r| r.get::<_, Option<String>>(0)).ok().flatten()
   };
   conn.execute(
-    "INSERT INTO model_configs (id, provider, label, model, host, api_key, enabled, reasoning) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
-     ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, label=excluded.label, model=excluded.model, host=excluded.host, api_key=excluded.api_key, enabled=excluded.enabled, reasoning=excluded.reasoning",
-    params![config.id, config.provider, config.label, config.model, config.host, api_key, if config.enabled { 1 } else { 0 }, config.reasoning],
+    "INSERT INTO model_configs (id, provider, label, model, host, api_key, enabled, reasoning, kind, voice) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+     ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, label=excluded.label, model=excluded.model, host=excluded.host, api_key=excluded.api_key, enabled=excluded.enabled, reasoning=excluded.reasoning, kind=excluded.kind, voice=excluded.voice",
+    params![config.id, config.provider, config.label, config.model, config.host, api_key, if config.enabled { 1 } else { 0 }, config.reasoning, config.kind, config.voice],
   ).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Provider adapters (Settings → Providers)
+//
+// Built-ins come from `provider::builtins()` and are read-only; custom
+// OpenAI-compatible providers live in the `providers` table. A provider's key is
+// write-only, stored in the vault under `provider/<id>` with the REF sentinel in
+// the row — exactly like a model key.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_providers(app: AppHandle) -> Result<Vec<ProviderRecord>, String> {
+  let conn = db(&app)?;
+  let has_key = |id: &str| crate::vault::get(&format!("provider/{id}")).is_some();
+  let mut out: Vec<ProviderRecord> = crate::provider::builtins().iter()
+    .map(|d| crate::provider::def_to_record(d, has_key(&d.id)))
+    .collect();
+  let mut stmt = conn.prepare("SELECT id FROM providers ORDER BY id").map_err(|e| e.to_string())?;
+  let ids: Vec<String> = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?
+    .filter_map(|r| r.ok()).collect();
+  drop(stmt);
+  for id in ids {
+    if let Some(def) = crate::provider::find_provider(&conn, &id) {
+      out.push(crate::provider::def_to_record(&def, has_key(&id)));
+    }
+  }
+  Ok(out)
+}
+
+#[tauri::command]
+pub fn save_provider(app: AppHandle, provider: ProviderInput) -> Result<(), String> {
+  let conn = db(&app)?;
+  let id = provider.id.trim().to_string();
+  if id.is_empty() { return Err("Provider needs an id.".into()); }
+  if id.contains(':') { return Err("Provider id cannot contain ':'.".into()); }
+  if crate::provider::builtins().iter().any(|d| d.id == id) {
+    return Err("That id belongs to a built-in provider.".into());
+  }
+  let account = format!("provider/{id}");
+  let submitted = provider.api_key.as_deref().map(str::trim).filter(|k| !k.is_empty());
+  let api_key = if provider.clear_key {
+    crate::vault::delete(&account)?;
+    None
+  } else if let Some(key) = submitted {
+    crate::vault::put(&account, key)?;
+    Some(crate::vault::REF.to_string())
+  } else {
+    conn.query_row("SELECT api_key FROM providers WHERE id=?1", params![id], |r| r.get::<_, Option<String>>(0)).ok().flatten()
+  };
+  let caps = provider.caps.to_string();
+  let headers = provider.extra_headers.to_string();
+  conn.execute(
+    "INSERT INTO providers (id, label, base_url, auth, auth_header, extra_headers, requires_key, reasoning, provider_routing, caps, api_key, created_at) \
+     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) \
+     ON CONFLICT(id) DO UPDATE SET label=excluded.label, base_url=excluded.base_url, auth=excluded.auth, auth_header=excluded.auth_header, \
+       extra_headers=excluded.extra_headers, requires_key=excluded.requires_key, reasoning=excluded.reasoning, \
+       provider_routing=excluded.provider_routing, caps=excluded.caps, api_key=excluded.api_key",
+    params![
+      id, provider.label, provider.base_url.trim().trim_end_matches('/'), provider.auth, provider.auth_header,
+      headers, if provider.requires_key { 1 } else { 0 }, provider.reasoning,
+      if provider.provider_routing { 1 } else { 0 }, caps, api_key, chrono::Local::now().to_rfc3339()
+    ],
+  ).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+#[tauri::command]
+pub fn delete_provider(app: AppHandle, id: String) -> Result<(), String> {
+  if crate::provider::builtins().iter().any(|d| d.id == id) {
+    return Err("Built-in providers cannot be deleted.".into());
+  }
+  let conn = db(&app)?;
+  conn.execute("DELETE FROM providers WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+  let _ = crate::vault::delete(&format!("provider/{id}"));
   Ok(())
 }
 

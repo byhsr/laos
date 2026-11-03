@@ -1,30 +1,250 @@
-// Single source of truth for provider dispatch: which endpoint a stored model id
-// maps to, how its API key resolves, and how the per-model reasoning setting is
-// translated into each provider's request parameter.
+// Single source of truth for provider dispatch.
 //
-// This used to be re-implemented in five places (chat, agents, manager, memory,
-// workflows), which is how the Manager path drifted into passing `!is_groq` as
-// its "is OpenRouter" flag. Everything model-facing goes through here now.
+// A provider is data, not a match arm: a `ProviderDef` describes its endpoint
+// root, wire dialect, auth, capabilities and reasoning style. Built-ins are
+// defined below; custom ones live in the `providers` table (Settings →
+// Providers). Everything model-facing — chat, agents, manager, memory, media,
+// classification, embeddings, transcription, speech — goes through `resolve`,
+// so adding a provider no longer means touching every call path.
 
 use rusqlite::{params, Connection};
+use serde_json::{json, Value};
 
-use crate::models::default_reasoning;
+use crate::models::{default_reasoning, ProviderRecord};
 
 pub(crate) const OLLAMA_DEFAULT_HOST: &str = "http://127.0.0.1:11434";
-const GROQ_URL: &str = "https://api.groq.com/openai/v1/chat/completions";
-const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
-const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
-// Google's OpenAI-compatibility endpoint (tools included) rather than generateContent.
-const GOOGLE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
-const XAI_URL: &str = "https://api.x.ai/v1/chat/completions";
-const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
+
+// API roots (the part before `/chat/completions`), so endpoints are composed
+// rather than stripped back out of a full URL.
+const GROQ_BASE: &str = "https://api.groq.com/openai/v1";
+const OPENROUTER_BASE: &str = "https://openrouter.ai/api/v1";
+const OPENAI_BASE: &str = "https://api.openai.com/v1";
+const GOOGLE_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/openai";
+const XAI_BASE: &str = "https://api.x.ai/v1";
+const ANTHROPIC_BASE: &str = "https://api.anthropic.com/v1";
 
 // Ollama unloads an idle model after a few minutes, so without this every turn
 // after a pause pays a multi-second reload.
 pub(crate) const OLLAMA_KEEP_ALIVE: &str = "30m";
 
+/// How a provider speaks on the wire. Everything except Ollama and Anthropic is
+/// OpenAI-compatible.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Kind { Ollama, Groq, OpenRouter, OpenAi, Google, Xai, Anthropic }
+pub(crate) enum Dialect { Ollama, OpenAiCompat, Anthropic }
+
+/// Which request parameter carries the reasoning setting.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReasoningStyle { None, OpenAiEffort, OpenRouterEffort, OllamaThink, AnthropicThinking }
+
+/// How the API key travels on a request.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Auth { Bearer, XApiKey, None }
+
+/// What a provider can do. Kept explicit (not inferred) so a role that needs a
+/// capability can be gated before the request is made.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Caps { pub chat: bool, pub vision: bool, pub embeddings: bool, pub transcription: bool, pub speech: bool }
+
+/// The adapter. `base` is the API root; URLs are composed from it.
+#[derive(Clone)]
+pub(crate) struct ProviderDef {
+  pub id: String,
+  pub label: String,
+  pub dialect: Dialect,
+  pub base: String,
+  pub auth: Auth,
+  /// Header name used by `Auth::XApiKey` (default `x-api-key`).
+  pub auth_header: String,
+  pub extra_headers: Vec<(String, String)>,
+  pub requires_key: bool,
+  pub reasoning: ReasoningStyle,
+  pub provider_routing: bool,
+  pub caps: Caps,
+  pub builtin: bool,
+}
+
+/// The built-in providers. Order is the order the UI lists them.
+pub(crate) fn builtins() -> Vec<ProviderDef> {
+  let ext = |name: &str| name.to_string();
+  vec![
+    ProviderDef {
+      id: "ollama".into(), label: "Ollama".into(), dialect: Dialect::Ollama,
+      base: OLLAMA_DEFAULT_HOST.into(), auth: Auth::None, auth_header: String::new(),
+      extra_headers: vec![], requires_key: false, reasoning: ReasoningStyle::OllamaThink,
+      provider_routing: false, builtin: true,
+      caps: Caps { chat: true, vision: true, embeddings: true, transcription: false, speech: false },
+    },
+    ProviderDef {
+      id: "openai".into(), label: "OpenAI".into(), dialect: Dialect::OpenAiCompat,
+      base: OPENAI_BASE.into(), auth: Auth::Bearer, auth_header: String::new(),
+      extra_headers: vec![], requires_key: true, reasoning: ReasoningStyle::OpenAiEffort,
+      provider_routing: false, builtin: true,
+      caps: Caps { chat: true, vision: true, embeddings: true, transcription: true, speech: true },
+    },
+    ProviderDef {
+      id: "anthropic".into(), label: "Anthropic".into(), dialect: Dialect::Anthropic,
+      base: ANTHROPIC_BASE.into(), auth: Auth::XApiKey, auth_header: ext("x-api-key"),
+      extra_headers: vec![], requires_key: true, reasoning: ReasoningStyle::AnthropicThinking,
+      provider_routing: false, builtin: true,
+      caps: Caps { chat: true, vision: true, embeddings: false, transcription: false, speech: false },
+    },
+    ProviderDef {
+      id: "google".into(), label: "Google (Gemini)".into(), dialect: Dialect::OpenAiCompat,
+      base: GOOGLE_BASE.into(), auth: Auth::Bearer, auth_header: String::new(),
+      extra_headers: vec![], requires_key: true, reasoning: ReasoningStyle::OpenAiEffort,
+      provider_routing: false, builtin: true,
+      caps: Caps { chat: true, vision: true, embeddings: true, transcription: false, speech: false },
+    },
+    ProviderDef {
+      id: "groq".into(), label: "Groq".into(), dialect: Dialect::OpenAiCompat,
+      base: GROQ_BASE.into(), auth: Auth::Bearer, auth_header: String::new(),
+      extra_headers: vec![], requires_key: true, reasoning: ReasoningStyle::OpenAiEffort,
+      provider_routing: false, builtin: true,
+      // Groq serves whisper transcription but no speech synthesis.
+      caps: Caps { chat: true, vision: true, embeddings: false, transcription: true, speech: false },
+    },
+    ProviderDef {
+      id: "openrouter".into(), label: "OpenRouter".into(), dialect: Dialect::OpenAiCompat,
+      base: OPENROUTER_BASE.into(), auth: Auth::Bearer, auth_header: String::new(),
+      extra_headers: vec![
+        ("HTTP-Referer".into(), "https://local-agent-os.app".into()),
+        ("X-Title".into(), "Local Agent OS".into()),
+      ],
+      requires_key: true, reasoning: ReasoningStyle::OpenRouterEffort,
+      provider_routing: true, builtin: true,
+      // OpenRouter now exposes OpenAI-compatible transcription and speech.
+      caps: Caps { chat: true, vision: true, embeddings: false, transcription: true, speech: true },
+    },
+    ProviderDef {
+      id: "xai".into(), label: "xAI (Grok)".into(), dialect: Dialect::OpenAiCompat,
+      base: XAI_BASE.into(), auth: Auth::Bearer, auth_header: String::new(),
+      extra_headers: vec![], requires_key: true, reasoning: ReasoningStyle::OpenAiEffort,
+      provider_routing: false, builtin: true,
+      caps: Caps { chat: true, vision: true, embeddings: true, transcription: false, speech: false },
+    },
+  ]
+}
+
+/// The provider id in a stored `"<provider>:<model>"` id.
+pub(crate) fn provider_id_of(model_id: &str) -> &str {
+  model_id.split(':').next().unwrap_or("")
+}
+
+/// The bare model name the provider expects (our prefix stripped).
+fn model_of(model_id: &str) -> String {
+  model_id.split_once(':').map(|(_, m)| m.to_string()).unwrap_or_default()
+}
+
+/// A built-in or custom provider by id.
+pub(crate) fn find_provider(conn: &Connection, id: &str) -> Option<ProviderDef> {
+  if let Some(def) = builtins().into_iter().find(|d| d.id == id) {
+    return Some(def);
+  }
+  load_custom(conn, id)
+}
+
+fn load_custom(conn: &Connection, id: &str) -> Option<ProviderDef> {
+  conn.query_row(
+    "SELECT label, base_url, auth, auth_header, extra_headers, requires_key, reasoning, provider_routing, caps FROM providers WHERE id=?1",
+    params![id],
+    |row| Ok((
+      row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?,
+      row.get::<_, String>(4)?, row.get::<_, i64>(5)?, row.get::<_, String>(6)?, row.get::<_, i64>(7)?, row.get::<_, String>(8)?,
+    )),
+  ).ok().map(|(label, base, auth, auth_header, extra, requires_key, reasoning, routing, caps)| {
+    ProviderDef {
+      id: id.to_string(),
+      label: if label.trim().is_empty() { id.to_string() } else { label },
+      // Custom providers are OpenAI-compatible only.
+      dialect: Dialect::OpenAiCompat,
+      base: base.trim().trim_end_matches('/').to_string(),
+      auth: parse_auth(&auth),
+      auth_header,
+      extra_headers: parse_headers(&extra),
+      requires_key: requires_key != 0,
+      reasoning: parse_reasoning_style(&reasoning),
+      provider_routing: routing != 0,
+      caps: parse_caps(&caps),
+      builtin: false,
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Encoding (DB JSON <-> adapter) and the UI record
+// ---------------------------------------------------------------------------
+
+fn parse_auth(s: &str) -> Auth {
+  match s.trim().to_ascii_lowercase().as_str() {
+    "none" => Auth::None,
+    "x-api-key" | "xapikey" => Auth::XApiKey,
+    _ => Auth::Bearer,
+  }
+}
+
+pub(crate) fn auth_str(a: Auth) -> &'static str {
+  match a { Auth::None => "none", Auth::XApiKey => "x-api-key", Auth::Bearer => "bearer" }
+}
+
+fn parse_reasoning_style(s: &str) -> ReasoningStyle {
+  match s.trim().to_ascii_lowercase().as_str() {
+    "none" => ReasoningStyle::None,
+    "openrouter" => ReasoningStyle::OpenRouterEffort,
+    _ => ReasoningStyle::OpenAiEffort,
+  }
+}
+
+pub(crate) fn reasoning_style_str(s: ReasoningStyle) -> &'static str {
+  match s {
+    ReasoningStyle::None => "none",
+    ReasoningStyle::OpenAiEffort => "openai",
+    ReasoningStyle::OpenRouterEffort => "openrouter",
+    ReasoningStyle::OllamaThink => "ollama",
+    ReasoningStyle::AnthropicThinking => "anthropic",
+  }
+}
+
+fn parse_caps(raw: &str) -> Caps {
+  let v: Value = serde_json::from_str(raw).unwrap_or(json!({}));
+  Caps {
+    chat: v["chat"].as_bool().unwrap_or(true),
+    vision: v["vision"].as_bool().unwrap_or(false),
+    embeddings: v["embeddings"].as_bool().unwrap_or(false),
+    transcription: v["transcription"].as_bool().unwrap_or(false),
+    speech: v["speech"].as_bool().unwrap_or(false),
+  }
+}
+
+pub(crate) fn caps_json(c: Caps) -> Value {
+  json!({ "chat": c.chat, "vision": c.vision, "embeddings": c.embeddings, "transcription": c.transcription, "speech": c.speech })
+}
+
+fn parse_headers(raw: &str) -> Vec<(String, String)> {
+  let v: Value = serde_json::from_str(raw).unwrap_or(json!({}));
+  v.as_object().map(|o| o.iter().filter_map(|(k, val)| val.as_str().map(|s| (k.clone(), s.to_string()))).collect()).unwrap_or_default()
+}
+
+pub(crate) fn headers_json(headers: &[(String, String)]) -> Value {
+  let mut map = serde_json::Map::new();
+  for (k, v) in headers { map.insert(k.clone(), Value::String(v.clone())); }
+  Value::Object(map)
+}
+
+/// The record the UI reads. Mirrors the shape of `ProviderRecord` in models.rs.
+pub(crate) fn def_to_record(def: &ProviderDef, has_key: bool) -> ProviderRecord {
+  ProviderRecord {
+    id: def.id.clone(), label: def.label.clone(), base_url: def.base.clone(),
+    auth: auth_str(def.auth).to_string(), auth_header: def.auth_header.clone(),
+    extra_headers: headers_json(&def.extra_headers), requires_key: def.requires_key,
+    reasoning: reasoning_style_str(def.reasoning).to_string(),
+    provider_routing: def.provider_routing, caps: caps_json(def.caps),
+    has_key, builtin: def.builtin,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Resolution
+// ---------------------------------------------------------------------------
 
 // Maps to the stored `model_configs.reasoning` value.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -59,8 +279,8 @@ impl Reasoning {
 
 #[derive(Clone)]
 pub(crate) struct Resolved {
-  pub(crate) kind: Kind,
-  /// Provider root: the stored host for Ollama, the completions URL otherwise.
+  pub(crate) def: ProviderDef,
+  /// Provider root: the model's `host` for Ollama, otherwise the adapter's base.
   pub(crate) base: String,
   /// The bare model name the provider expects; our prefix is stripped.
   pub(crate) model: String,
@@ -69,59 +289,58 @@ pub(crate) struct Resolved {
 }
 
 impl Resolved {
+  pub(crate) fn dialect(&self) -> Dialect { self.def.dialect }
+  pub(crate) fn is_ollama(&self) -> bool { self.def.dialect == Dialect::Ollama }
+  pub(crate) fn is_anthropic(&self) -> bool { self.def.dialect == Dialect::Anthropic }
+  pub(crate) fn provider_routing(&self) -> bool { self.def.provider_routing }
+  pub(crate) fn caps(&self) -> Caps { self.def.caps }
+  pub(crate) fn label(&self) -> String { self.def.label.clone() }
+
   pub(crate) fn chat_url(&self) -> String {
-    match self.kind {
-      Kind::Ollama => format!("{}/api/chat", self.base),
-      _ => self.base.clone(),
+    match self.def.dialect {
+      Dialect::Ollama => format!("{}/api/chat", self.base),
+      Dialect::Anthropic => format!("{}/messages", self.base),
+      Dialect::OpenAiCompat => format!("{}/chat/completions", self.base),
     }
   }
 
   /// Ollama's single-prompt endpoint. Cloud providers have no equivalent.
-  pub(crate) fn generate_url(&self) -> String {
-    format!("{}/api/generate", self.base)
+  pub(crate) fn generate_url(&self) -> String { format!("{}/api/generate", self.base) }
+
+  pub(crate) fn embeddings_url(&self) -> String {
+    match self.def.dialect {
+      Dialect::Ollama => format!("{}/api/embeddings", self.base),
+      _ => format!("{}/embeddings", self.base),
+    }
   }
+
+  pub(crate) fn transcription_url(&self) -> String { format!("{}/audio/transcriptions", self.base) }
+  pub(crate) fn speech_url(&self) -> String { format!("{}/audio/speech", self.base) }
 }
 
 /// Resolves a stored `"<provider>:<model>"` id into everything a request needs.
 ///
 /// `override_key` is a caller-supplied API key (the browser preview passes one);
-/// it wins over the stored key when present.
+/// it wins over the stored key. Keys, in order: override → the model's own key →
+/// the provider's shared key.
 pub(crate) fn resolve(conn: &Connection, model_id: &str, override_key: Option<&str>) -> Result<Resolved, String> {
+  let id = provider_id_of(model_id);
+  let def = find_provider(conn, id)
+    .ok_or_else(|| format!("Unknown model provider \"{id}\". Add it in Settings → Providers."))?;
   let (host, stored_key, reasoning) = model_settings(conn, model_id)?;
-  let key = override_key.filter(|k| !k.trim().is_empty()).map(|k| k.to_string()).or(stored_key);
-
-  if let Some(model) = model_id.strip_prefix("ollama:") {
-    // The host field is editable in the UI, so honour it rather than assuming
-    // the default port — people run Ollama on other hosts and ports. Ollama
-    // takes no auth, so any supplied key is ignored.
-    let base = host.filter(|h| !h.trim().is_empty()).unwrap_or_else(|| OLLAMA_DEFAULT_HOST.to_string());
-    return Ok(Resolved { kind: Kind::Ollama, base: base.trim_end_matches('/').to_string(), model: model.to_string(), key: None, reasoning });
+  let key = override_key.filter(|k| !k.trim().is_empty()).map(|k| k.to_string())
+    .or(stored_key)
+    .or_else(|| crate::vault::get(&format!("provider/{}", def.id)));
+  if def.requires_key && key.is_none() {
+    return Err(format!("{} requires an API key. Add one in Settings → Providers.", def.label));
   }
-  if let Some(model) = model_id.strip_prefix("groq:") {
-    let key = key.ok_or("Groq requires an API key. Add one in Settings → Models.")?;
-    return Ok(Resolved { kind: Kind::Groq, base: GROQ_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
-  }
-  if let Some(model) = model_id.strip_prefix("openrouter:") {
-    let key = key.ok_or("OpenRouter requires an API key. Add one in Settings → Models.")?;
-    return Ok(Resolved { kind: Kind::OpenRouter, base: OPENROUTER_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
-  }
-  if let Some(model) = model_id.strip_prefix("openai:") {
-    let key = key.ok_or("OpenAI requires an API key. Add one in Settings → Models.")?;
-    return Ok(Resolved { kind: Kind::OpenAi, base: OPENAI_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
-  }
-  if let Some(model) = model_id.strip_prefix("google:") {
-    let key = key.ok_or("Google AI Studio requires an API key. Add one in Settings → Models.")?;
-    return Ok(Resolved { kind: Kind::Google, base: GOOGLE_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
-  }
-  if let Some(model) = model_id.strip_prefix("xai:") {
-    let key = key.ok_or("xAI requires an API key. Add one in Settings → Models.")?;
-    return Ok(Resolved { kind: Kind::Xai, base: XAI_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
-  }
-  if let Some(model) = model_id.strip_prefix("anthropic:") {
-    let key = key.ok_or("Anthropic requires an API key. Add one in Settings → Models.")?;
-    return Ok(Resolved { kind: Kind::Anthropic, base: ANTHROPIC_URL.to_string(), model: model.to_string(), key: Some(key), reasoning });
-  }
-  Err(format!("Unknown model provider for \"{model_id}\"."))
+  // Ollama honours the editable host; everything else uses the adapter's base.
+  let base = if def.dialect == Dialect::Ollama {
+    host.filter(|h| !h.trim().is_empty()).unwrap_or_else(|| def.base.clone()).trim_end_matches('/').to_string()
+  } else {
+    def.base.clone()
+  };
+  Ok(Resolved { def, base, model: model_of(model_id), key, reasoning })
 }
 
 /// Applies an agent's own reasoning setting over the model's default. An empty
@@ -176,27 +395,29 @@ pub(crate) fn apply_reasoning(body: &mut serde_json::Value, resolved: &Resolved,
     return base_max_tokens;
   }
 
-  match resolved.kind {
-    Kind::Ollama => {
+  match resolved.def.reasoning {
+    // A provider with no reasoning dialect never receives the setting at all.
+    ReasoningStyle::None => return base_max_tokens,
+    ReasoningStyle::OllamaThink => {
       // Accepts booleans, or levels for models like GPT-OSS that ignore booleans.
       body["think"] = match reasoning.level() {
         Some(level) => serde_json::json!(level),
         None => serde_json::json!(false),
       };
     }
-    Kind::OpenRouter => {
+    ReasoningStyle::OpenRouterEffort => {
       body["reasoning"] = match reasoning.level() {
         Some(level) => serde_json::json!({ "effort": level, "exclude": true }),
         None => serde_json::json!({ "enabled": false }),
       };
     }
-    Kind::Groq | Kind::OpenAi | Kind::Google | Kind::Xai => {
+    ReasoningStyle::OpenAiEffort => {
       body["reasoning_effort"] = match reasoning.level() {
         Some(level) => serde_json::json!(level),
         None => serde_json::json!("none"),
       };
     }
-    Kind::Anthropic => {
+    ReasoningStyle::AnthropicThinking => {
       // Extended thinking. `max_tokens` must exceed `budget_tokens`, so an
       // enabled level returns a budget large enough to hold the trace plus the
       // answer (apply_openai_defaults writes that into max_tokens).
@@ -228,6 +449,11 @@ pub(crate) fn apply_ollama_options(body: &mut serde_json::Value, max_tokens: u64
   body["options"] = serde_json::json!({ "num_predict": max_tokens });
 }
 
+// Endpoint helpers kept as free functions so existing call sites read unchanged.
+pub(crate) fn embeddings_url(resolved: &Resolved) -> String { resolved.embeddings_url() }
+pub(crate) fn transcription_url(resolved: &Resolved) -> String { resolved.transcription_url() }
+pub(crate) fn speech_url(resolved: &Resolved) -> String { resolved.speech_url() }
+
 // ---------------------------------------------------------------------------
 // Model roles
 //
@@ -237,66 +463,40 @@ pub(crate) fn apply_ollama_options(body: &mut serde_json::Value, max_tokens: u64
 // so an app that never configured roles behaves exactly as before.
 // ---------------------------------------------------------------------------
 
-/// The provider kind of a stored `"<provider>:<model>"` id, if recognised.
-pub(crate) fn kind_of_id(id: &str) -> Option<Kind> {
-  Some(match id.split(':').next().unwrap_or("") {
-    "ollama" => Kind::Ollama,
-    "groq" => Kind::Groq,
-    "openrouter" => Kind::OpenRouter,
-    "openai" => Kind::OpenAi,
-    "google" => Kind::Google,
-    "xai" => Kind::Xai,
-    "anthropic" => Kind::Anthropic,
-    _ => return None,
-  })
-}
-
-/// Whether a provider can serve embeddings. Kept deliberately conservative — a
-/// role that claims a capability the provider lacks would fail at request time.
-pub(crate) fn supports_embeddings(kind: Kind) -> bool {
-  matches!(kind, Kind::Ollama | Kind::OpenAi | Kind::Google | Kind::Xai)
-}
-
-/// The embeddings endpoint for a resolved model. Ollama exposes it under
-/// `/api/embeddings`; OpenAI-compatible providers under `/embeddings` beneath the
-/// same base as chat (strip the `/chat/completions` tail).
-pub(crate) fn embeddings_url(resolved: &Resolved) -> String {
-  match resolved.kind {
-    Kind::Ollama => format!("{}/api/embeddings", resolved.base),
-    _ => {
-      let base = resolved.base.trim_end_matches('/');
-      let base = base.strip_suffix("/chat/completions").unwrap_or(base);
-      format!("{base}/embeddings")
-    }
-  }
-}
-
-/// The roles a model can fill. `embedding` and `transcriber` have hard capability
-/// requirements (see `supports_embeddings` / `supports_transcription`); the rest
-/// fall back to the generic default.
+/// The roles a model can fill. The capability roles have hard requirements (see
+/// `caps`); the rest fall back to the generic default.
 pub(crate) const ROLES: [&str; 6] = ["classifier", "embedding", "reranker", "vision", "transcriber", "distillation"];
 
-/// Whether a provider exposes an OpenAI-compatible `/audio/transcriptions`
-/// endpoint. Kept conservative for the same reason as `supports_embeddings`: a
-/// role that claims a capability the provider lacks would fail at request time.
-pub(crate) fn supports_transcription(kind: Kind) -> bool {
-  matches!(kind, Kind::OpenAi | Kind::Groq)
+/// Whether a model id is likely to be a speech-to-text model. Used to find a
+/// usable transcriber without making the user pin one, while refusing to send a
+/// clip to an arbitrary chat model (a Groq llama model cannot transcribe).
+pub(crate) fn looks_like_transcriber(model_id: &str) -> bool {
+  let name = model_id.split_once(':').map(|(_, m)| m).unwrap_or(model_id).to_ascii_lowercase();
+  const MARKERS: &[&str] = &["whisper", "transcribe", "speech-to-text", "distil-whisper"];
+  MARKERS.iter().any(|m| name.contains(m))
 }
 
-/// The transcription endpoint for a resolved model: `/audio/transcriptions`
-/// beneath the same base as chat (strip the `/chat/completions` tail). OpenAI and
-/// Groq both publish it there — and a local whisper server speaking the same API
-/// can too.
-pub(crate) fn transcription_url(resolved: &Resolved) -> String {
-  let base = resolved.base.trim_end_matches('/');
-  let base = base.strip_suffix("/chat/completions").unwrap_or(base);
-  format!("{base}/audio/transcriptions")
+/// The model to transcribe with when the caller hasn't named one: an explicitly
+/// pinned `transcriber` role wins, then a model typed `stt`, then a whisper-like
+/// id. `None` when nothing suitable is configured.
+pub(crate) fn resolve_transcriber(conn: &Connection) -> Option<String> {
+  if let Some(explicit) = explicit_role(conn, "transcriber") {
+    return Some(explicit);
+  }
+  if let Ok(id) = conn.query_row(
+    "SELECT id FROM model_configs WHERE enabled=1 AND kind='stt' ORDER BY id LIMIT 1",
+    [], |r| r.get::<_, String>(0),
+  ) {
+    let id = id.trim().to_string();
+    if !id.is_empty() { return Some(id); }
+  }
+  let mut stmt = conn.prepare("SELECT id FROM model_configs WHERE enabled=1 ORDER BY id").ok()?;
+  let rows = stmt.query_map([], |r| r.get::<_, String>(0)).ok()?;
+  for row in rows.flatten() {
+    if looks_like_transcriber(&row) { return Some(row); }
+  }
+  None
 }
-
-/// Whether a provider can serve vision (image) input. Every chat provider here
-/// accepts image parts, so this only exists to exclude nothing today — kept
-/// explicit so a future text-only provider is filtered at resolution.
-pub(crate) fn supports_vision(_kind: Kind) -> bool { true }
 
 /// Whether a model id is likely to accept images. Providers here publish no
 /// capability list, so this is a name read used to decide whether to hand a
@@ -340,9 +540,9 @@ pub(crate) fn resolve_role(conn: &Connection, role: &str) -> Option<String> {
   if role == "embedding" {
     let mut stmt = conn.prepare("SELECT id FROM model_configs WHERE enabled=1 ORDER BY CASE WHEN provider='ollama' THEN 0 ELSE 1 END, id").ok()?;
     let rows = stmt.query_map([], |r| r.get::<_, String>(0)).ok()?;
-    for r in rows {
-      if let Ok(id) = r {
-        if kind_of_id(&id).map(supports_embeddings).unwrap_or(false) { return Some(id); }
+    for r in rows.flatten() {
+      if find_provider(conn, provider_id_of(&r)).map(|d| d.caps.embeddings).unwrap_or(false) {
+        return Some(r);
       }
     }
     return None;
@@ -357,23 +557,46 @@ pub(crate) fn resolve_role(conn: &Connection, role: &str) -> Option<String> {
 mod tests {
   use super::*;
 
-  #[test]
-  fn only_openai_compatible_providers_transcribe() {
-    assert!(supports_transcription(Kind::OpenAi));
-    assert!(supports_transcription(Kind::Groq));
-    assert!(!supports_transcription(Kind::Ollama));
-    assert!(!supports_transcription(Kind::Anthropic));
-    assert!(!supports_transcription(Kind::OpenRouter));
-    assert!(!supports_transcription(Kind::Google));
+  fn def(id: &str) -> ProviderDef { builtins().into_iter().find(|d| d.id == id).unwrap() }
+
+  fn resolved(id: &str, model: &str) -> Resolved {
+    let def = def(id);
+    Resolved { base: def.base.clone(), def, model: model.into(), key: None, reasoning: Reasoning::Auto }
   }
 
-  /// The transcription endpoint sits beside chat, with the `/chat/completions`
-  /// tail stripped — the same shape as `embeddings_url`.
   #[test]
-  fn transcription_url_is_beside_chat() {
-    let openai = Resolved { kind: Kind::OpenAi, base: OPENAI_URL.to_string(), model: "whisper-1".into(), key: None, reasoning: Reasoning::Auto };
-    assert_eq!(transcription_url(&openai), "https://api.openai.com/v1/audio/transcriptions");
-    let groq = Resolved { kind: Kind::Groq, base: GROQ_URL.to_string(), model: "whisper-large-v3".into(), key: None, reasoning: Reasoning::Auto };
-    assert_eq!(transcription_url(&groq), "https://api.groq.com/openai/v1/audio/transcriptions");
+  fn only_audio_capable_providers_transcribe() {
+    let caps = |id: &str| def(id).caps;
+    assert!(caps("openai").transcription);
+    assert!(caps("groq").transcription);
+    assert!(caps("openrouter").transcription, "OpenRouter added a transcription endpoint");
+    assert!(!caps("ollama").transcription);
+    assert!(!caps("anthropic").transcription);
+    assert!(!caps("google").transcription);
+  }
+
+  #[test]
+  fn openrouter_speaks() {
+    assert!(def("openrouter").caps.speech);
+    assert!(def("openai").caps.speech);
+    assert!(!def("groq").caps.speech);
+  }
+
+  /// Endpoints compose from the adapter's base, not by stripping a chat URL.
+  #[test]
+  fn endpoints_compose_from_the_base() {
+    assert_eq!(resolved("openai", "whisper-1").transcription_url(), "https://api.openai.com/v1/audio/transcriptions");
+    assert_eq!(resolved("groq", "whisper-large-v3").transcription_url(), "https://api.groq.com/openai/v1/audio/transcriptions");
+    assert_eq!(resolved("openrouter", "openai/whisper-1").transcription_url(), "https://openrouter.ai/api/v1/audio/transcriptions");
+    assert_eq!(resolved("openrouter", "openai/gpt-4o-mini-tts").speech_url(), "https://openrouter.ai/api/v1/audio/speech");
+    assert_eq!(resolved("openai", "gpt-4o-mini").chat_url(), "https://api.openai.com/v1/chat/completions");
+    assert_eq!(resolved("anthropic", "claude").chat_url(), "https://api.anthropic.com/v1/messages");
+  }
+
+  #[test]
+  fn provider_id_is_the_prefix() {
+    assert_eq!(provider_id_of("openrouter:openai/whisper-1"), "openrouter");
+    assert_eq!(provider_id_of("ollama:qwen3:8b"), "ollama");
+    assert_eq!(provider_id_of("bare-model"), "bare-model");
   }
 }

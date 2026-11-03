@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tauri::AppHandle;
 
-use crate::provider::{self, Kind};
+use crate::provider;
 
 /// Up to this many files per turn, and this much per file. The cap exists so a
 /// mis-drop cannot stall the IPC bridge or blow up a provider request.
@@ -49,7 +49,7 @@ impl Attachment {
 
 /// Decodes an attachment's base64 payload to bytes (audio has to be uploaded as
 /// a file, unlike images which ride along as data URLs).
-fn decode_audio(data: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn decode_audio(data: &str) -> Result<Vec<u8>, String> {
   BASE64.decode(data.trim()).map_err(|e| e.to_string())
 }
 
@@ -137,14 +137,14 @@ async fn describe(app: &AppHandle, model_id: &str, images: &[&Attachment]) -> Re
     let conn = crate::db::db(app)?;
     provider::resolve(&conn, model_id, None)?
   };
-  if !provider::supports_vision(resolved.kind) {
+  if !resolved.caps().vision {
     return Err("that provider cannot take images".into());
   }
   let prompt = "Look at the attached image(s) and describe them for another model that cannot see them. \
     Give any text, code, error message, label or UI state verbatim where it matters, then the salient details, \
     then a one-line summary of what the image is. Be concrete and do not speculate about anything not visible.";
 
-  let mut body = if resolved.kind == Kind::Ollama {
+  let mut body = if resolved.is_ollama() {
     json!({
       "model": resolved.model,
       "messages": [{ "role": "user", "content": prompt, "images": images.iter().map(|a| a.data.clone()).collect::<Vec<_>>() }],
@@ -157,17 +157,17 @@ async fn describe(app: &AppHandle, model_id: &str, images: &[&Attachment]) -> Re
   };
 
   let budget = provider::apply_reasoning(&mut body, &resolved, VISION_MAX_TOKENS);
-  if resolved.kind == Kind::Ollama {
+  if resolved.is_ollama() {
     provider::apply_ollama_options(&mut body, budget);
   } else {
-    crate::http::apply_openai_defaults(&mut body, resolved.kind == Kind::OpenRouter, budget);
+    crate::http::apply_openai_defaults(&mut body, resolved.provider_routing(), budget);
   }
-  if resolved.kind == Kind::Anthropic { body = crate::anthropic::to_wire(&body); }
+  if resolved.is_anthropic() { body = crate::anthropic::to_wire(&body); }
 
   let client = crate::http::client();
   let response = crate::http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, crate::http::MODEL_ATTEMPTS).await?;
   let mut parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-  if resolved.kind == Kind::Anthropic { parsed = crate::anthropic::normalize_response(&parsed); }
+  if resolved.is_anthropic() { parsed = crate::anthropic::normalize_response(&parsed); }
   // OpenAI-compatible nest the reply under choices[0]; Ollama puts it at the top.
   let text = parsed["choices"][0]["message"]["content"].as_str()
     .or_else(|| parsed["message"]["content"].as_str())

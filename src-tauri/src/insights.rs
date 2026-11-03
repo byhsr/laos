@@ -161,14 +161,14 @@ pub(crate) async fn reflect(app: &AppHandle) -> Result<usize, String> {
       "temperature": 0.3,
       "stream": false
     });
-    crate::http::apply_openai_defaults(&mut body, resolved.kind == crate::provider::Kind::OpenRouter, 700);
+    crate::http::apply_openai_defaults(&mut body, resolved.provider_routing(), 700);
     crate::provider::apply_reasoning(&mut body, &resolved, 700);
-    if resolved.kind == crate::provider::Kind::Anthropic { body = crate::anthropic::to_wire(&body); }
+    if resolved.is_anthropic() { body = crate::anthropic::to_wire(&body); }
 
     let client = crate::http::client();
     let resp = crate::http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, crate::http::MODEL_ATTEMPTS).await?;
     let mut reply: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    if resolved.kind == crate::provider::Kind::Anthropic { reply = crate::anthropic::normalize_response(&reply); }
+    if resolved.is_anthropic() { reply = crate::anthropic::normalize_response(&reply); }
     let text = reply["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
     let _ = &model_id;
     (aggregates, model_id, text)
@@ -225,6 +225,7 @@ pub(crate) async fn reflect(app: &AppHandle) -> Result<usize, String> {
   if drafted > 0 {
     let _ = phrase_observations(app).await;
     let _ = app.emit("brain-notice", json!({ "kind": "observation", "count": drafted, "title": "New observation to review" }));
+    crate::notify::desktop(app, "new insight", "A new observation is ready to review.");
   }
 
   Ok(written)

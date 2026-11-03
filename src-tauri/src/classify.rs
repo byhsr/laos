@@ -153,13 +153,13 @@ async fn classify_inner(app: &AppHandle, text: &str) -> Result<Classification, S
       "temperature": 0.1,
       "stream": false
     });
-    crate::http::apply_openai_defaults(&mut body, resolved.kind == crate::provider::Kind::OpenRouter, 500);
+    crate::http::apply_openai_defaults(&mut body, resolved.provider_routing(), 500);
     crate::provider::apply_reasoning(&mut body, &resolved, 500);
-    if resolved.kind == crate::provider::Kind::Anthropic { body = crate::anthropic::to_wire(&body); }
+    if resolved.is_anthropic() { body = crate::anthropic::to_wire(&body); }
     let client = crate::http::client();
     let resp = crate::http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, crate::http::MODEL_ATTEMPTS).await?;
     let mut reply: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    if resolved.kind == crate::provider::Kind::Anthropic { reply = crate::anthropic::normalize_response(&reply); }
+    if resolved.is_anthropic() { reply = crate::anthropic::normalize_response(&reply); }
     reply["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string()
   };
   Ok(parse(&reply))

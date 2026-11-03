@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
-import type { ModelConfig, ModelRoles, Provider, Reasoning } from '../../types';
+import type { ModelConfig, ModelRoles, ModelType, Reasoning } from '../../types';
+import { MODEL_TYPES } from '../../modelTypes';
 import { listModelRoles, setModelRole } from '../../runtime';
+import { useProvidersStore } from '../../hooks/useProviders';
+import { ModelLogo } from '../ui/ModelLogo';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
@@ -31,6 +34,16 @@ const ROLE_HINT: Record<string, string> = {
   transcriber: 'turns voice notes and audio into text',
   distillation: 'turns finished chats into memory',
 };
+// Shown before the provider list has loaded (or in the browser preview).
+const FALLBACK_PROVIDERS = [
+  { value: 'ollama', label: 'Ollama (local)' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'google', label: 'Google (Gemini)' },
+  { value: 'xai', label: 'xAI (Grok)' },
+  { value: 'groq', label: 'Groq' },
+  { value: 'openrouter', label: 'OpenRouter' },
+];
 const KEY_PLACEHOLDER: Record<string, string> = {
   openai: 'sk-…',
   google: 'AIza…',
@@ -60,11 +73,16 @@ export function ModelsView({ models, onAdd, onEdit, onDelete }: {
       <div className="grid gap-2">
         {models.map((m) => (
           <Card key={m.id} className="flex items-center justify-between gap-4 hover:bg-surface">
-            <div className="min-w-0">
-              <b className="block truncate font-mono text-[11px] text-foreground">{m.label}</b>
-              <span className="block truncate font-mono text-[10px] text-muted">
-                {m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.hasKey ? ' · key set' : ''}{m.vision ? ' · vision' : ''}{m.reasoning !== 'auto' ? ` · reasoning: ${m.reasoning}` : ''}
-              </span>
+            <div className="flex min-w-0 items-center gap-2.5">
+              <ModelLogo model={m} size={16} />
+              <div className="min-w-0">
+                <b className="block truncate font-mono text-[11px] text-foreground">
+                  {m.label} <span className="font-normal text-muted">· {m.kind ?? 'llm'}</span>
+                </b>
+                <span className="block truncate font-mono text-[10px] text-muted">
+                  {m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.hasKey ? ' · key set' : ''}{m.reasoning !== 'auto' ? ` · reasoning: ${m.reasoning}` : ''}
+                </span>
+              </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <span className="flex items-center gap-1.5 font-mono text-[10px] text-muted">
@@ -91,13 +109,23 @@ export function ModelsView({ models, onAdd, onEdit, onDelete }: {
             // Capability roles want a model that can actually do the job — a
             // vision model for images, a transcribing provider for audio. Those
             // come first and are marked, so pinning the wrong kind is obvious.
-            const can = (m: ModelConfig) => (role === 'vision' ? !!m.vision : role === 'transcriber' ? !!m.transcribes : false);
+            const can = (m: ModelConfig) => {
+              const kind = m.kind ?? 'llm';
+              return role === 'vision'
+                ? !!m.vision || kind === 'vision' || kind === 'multimedia'
+                : role === 'transcriber'
+                  ? !!m.transcribes || kind === 'stt'
+                  : false;
+            };
             const off = role === 'vision' || role === 'transcriber';
             const options = [
               { value: '', label: off ? 'off' : 'auto' },
               ...[...models]
                 .sort((a, b) => Number(can(b)) - Number(can(a)))
-                .map((m) => ({ value: m.id, label: `${m.label || `${m.provider}:${m.model}`}${role === 'vision' && m.vision ? ' · vision' : ''}${role === 'transcriber' && m.transcribes ? ' · audio' : ''}` })),
+                .map((m) => {
+                  const suffix = can(m) ? (role === 'vision' ? ' · vision' : ' · audio') : '';
+                  return { value: m.id, label: `${m.label || `${m.provider}:${m.model}`}${suffix}` };
+                }),
             ];
             const offText = role === 'vision' ? 'off — images go straight to the chat model' : 'off — audio is left untranscribed';
             return (
@@ -131,6 +159,10 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
   editing: ModelConfig; isNew: boolean; onClose: () => void; onSave: (m: ModelConfig) => Promise<void>;
 }) {
   const [form, setForm] = useState<ModelConfig>(editing);
+  const providers = useProvidersStore((s) => s.providers);
+  const providerOptions = providers.length
+    ? providers.map((p) => ({ value: p.id, label: p.label + (p.builtin ? '' : ' · custom') }))
+    : FALLBACK_PROVIDERS;
   const [saving, setSaving] = useState(false);
   const [clearKey, setClearKey] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -160,26 +192,46 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
     >
       <p className="mt-0 mb-3.5 font-mono text-[10px] leading-relaxed text-muted">API keys are stored locally in the app's SQLite database — they never leave your machine.</p>
 
+      {/* The logo is resolved from the provider (and host for Ollama), so it shows
+          here the moment it will show in the list. */}
+      <div className="mb-3.5 flex items-center gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2">
+        <ModelLogo model={form} size={18} />
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground">{form.label || form.model || 'new model'}</span>
+        <span className="shrink-0 font-mono text-[10px] text-muted">{form.kind ?? 'llm'}</span>
+      </div>
+
       <label className={FIELD_LABEL_CLS}>provider</label>
       <Select
         value={form.provider}
-        options={[
-          { value: 'ollama', label: 'Ollama (local)' },
-          { value: 'openai', label: 'OpenAI' },
-          { value: 'anthropic', label: 'Anthropic' },
-          { value: 'google', label: 'Google (Gemini)' },
-          { value: 'xai', label: 'xAI (Grok)' },
-          { value: 'groq', label: 'Groq' },
-          { value: 'openrouter', label: 'OpenRouter' },
-        ]}
-        onChange={(v) => setForm({ ...form, provider: v as Provider })}
+        options={providerOptions}
+        onChange={(v) => setForm({ ...form, provider: v })}
       />
+
+      <label className={`${FIELD_LABEL_CLS} mt-4`}>type</label>
+      <Select
+        value={form.kind ?? 'llm'}
+        options={MODEL_TYPES.map((t) => ({ value: t.value, label: `${t.label} — ${t.hint}` }))}
+        onChange={(v) => setForm({ ...form, kind: v as ModelType })}
+      />
+      <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+        What the model is for. This groups it in the chat picker and tells the role pickers which models can do a job.
+      </p>
 
       <label className={`${FIELD_LABEL_CLS} mt-4`}>label</label>
       <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="e.g. Qwen3 8B" className={INPUT_CLS} />
 
       <label className={`${FIELD_LABEL_CLS} mt-4`}>model id</label>
-      <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={MODEL_PLACEHOLDER[form.provider] ?? ''} className={INPUT_CLS} />
+      <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={MODEL_PLACEHOLDER[form.provider] ?? 'model id'} className={INPUT_CLS} />
+
+      {(form.kind ?? 'llm') === 'tts' && (
+        <>
+          <label className={`${FIELD_LABEL_CLS} mt-4`}>voice</label>
+          <input value={form.voice ?? ''} onChange={(e) => setForm({ ...form, voice: e.target.value })} placeholder="provider voice id (alloy, Kore, en-US-Harper:MAI-Voice-2.1…)" className={INPUT_CLS} />
+          <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+            Voices are model-specific. Leave blank to fall back to the global voice in Settings → voice.
+          </p>
+        </>
+      )}
 
       <label className={`${FIELD_LABEL_CLS} mt-4`}>reasoning</label>
       <Slider

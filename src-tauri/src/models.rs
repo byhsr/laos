@@ -21,7 +21,7 @@ pub struct ExecutionEvent { pub time: String, #[serde(rename = "type")] pub kind
 // What the UI sees: never the key itself, only whether one is set.
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct ModelConfigRecord { pub id: String, pub provider: String, pub label: String, pub model: String, pub host: Option<String>, pub has_key: bool, pub enabled: bool, pub reasoning: String, pub vision: bool, pub transcribes: bool }
+pub struct ModelConfigRecord { pub id: String, pub provider: String, pub label: String, pub model: String, #[serde(default = "default_model_kind")] pub kind: String, #[serde(default)] pub voice: String, pub host: Option<String>, pub has_key: bool, pub enabled: bool, pub reasoning: String, pub vision: bool, pub transcribes: bool }
 
 // What the UI sends back. `api_key` is write-only: empty leaves the stored key
 // alone, `clear_key` removes it.
@@ -29,6 +29,10 @@ pub struct ModelConfigRecord { pub id: String, pub provider: String, pub label: 
 #[serde(rename_all = "camelCase")]
 pub struct ModelConfigInput {
   pub id: String, pub provider: String, pub label: String, pub model: String,
+  // What the model is for (llm, vision, image, video, media, multimedia, stt, tts).
+  #[serde(default = "default_model_kind")] pub kind: String,
+  // Voice for a tts model (provider voices are model-specific, e.g. OpenRouter).
+  #[serde(default)] pub voice: String,
   #[serde(default)] pub host: Option<String>,
   #[serde(default)] pub api_key: Option<String>,
   #[serde(default)] pub clear_key: bool,
@@ -38,6 +42,43 @@ pub struct ModelConfigInput {
 // Reasoning control for a model. 'auto' sends nothing at all to the provider, so
 // models with no reasoning support are never sent a parameter they would reject.
 pub fn default_reasoning() -> String { "auto".to_string() }
+
+// The model kind a row falls back to when none was ever chosen (every existing
+// row, and any older client that doesn't send one).
+pub fn default_model_kind() -> String { "llm".to_string() }
+
+// A provider adapter as the UI sees it. Built-ins are read-only; custom ones are
+// editable. `api_key` is write-only, exactly like a model's key.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRecord {
+  pub id: String, pub label: String, pub base_url: String,
+  pub auth: String, pub auth_header: String,
+  pub extra_headers: serde_json::Value,
+  pub requires_key: bool, pub reasoning: String, pub provider_routing: bool,
+  pub caps: serde_json::Value,
+  pub has_key: bool, pub builtin: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderInput {
+  pub id: String, pub label: String,
+  #[serde(default)] pub base_url: String,
+  #[serde(default = "default_auth")] pub auth: String,
+  #[serde(default)] pub auth_header: String,
+  #[serde(default)] pub extra_headers: serde_json::Value,
+  #[serde(default = "default_true")] pub requires_key: bool,
+  #[serde(default = "default_reasoning_style")] pub reasoning: String,
+  #[serde(default)] pub provider_routing: bool,
+  #[serde(default)] pub caps: serde_json::Value,
+  #[serde(default)] pub api_key: Option<String>,
+  #[serde(default)] pub clear_key: bool,
+}
+
+fn default_auth() -> String { "bearer".to_string() }
+fn default_reasoning_style() -> String { "openai".to_string() }
+fn default_true() -> bool { true }
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

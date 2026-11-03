@@ -9,7 +9,7 @@
 use serde_json::json;
 use tauri::AppHandle;
 
-use crate::provider::Kind;
+use crate::provider::Dialect;
 
 /// f32 little-endian bytes, the storage form for `embeddings.vector`.
 pub(crate) fn to_blob(v: &[f32]) -> Vec<u8> {
@@ -46,9 +46,9 @@ pub(crate) fn content_hash(text: &str) -> String {
   format!("{:x}", h.finish())
 }
 
-fn embedding_of(kind: Kind, body: &serde_json::Value) -> Option<Vec<f32>> {
-  let arr = match kind {
-    Kind::Ollama => body.get("embedding")?.clone(),
+fn embedding_of(dialect: Dialect, body: &serde_json::Value) -> Option<Vec<f32>> {
+  let arr = match dialect {
+    Dialect::Ollama => body.get("embedding")?.clone(),
     _ => body.get("data")?.get(0)?.get("embedding")?.clone(),
   };
   let v: Vec<f32> = arr.as_array()?.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect();
@@ -68,18 +68,18 @@ pub(crate) async fn embed_text(app: &AppHandle, text: &str) -> Result<Vec<f32>, 
     let model_id = crate::provider::resolve_role(&conn, "embedding").ok_or("No embedding model configured.")?;
     crate::provider::resolve(&conn, &model_id, None)?
   };
-  if !crate::provider::supports_embeddings(resolved.kind) {
+  if !resolved.caps().embeddings {
     return Err("Provider does not support embeddings.".into());
   }
-  let body = match resolved.kind {
-    Kind::Ollama => json!({ "model": resolved.model, "prompt": text }),
+  let body = match resolved.dialect() {
+    Dialect::Ollama => json!({ "model": resolved.model, "prompt": text }),
     _ => json!({ "model": resolved.model, "input": text }),
   };
   let url = crate::provider::embeddings_url(&resolved);
   let client = crate::http::client();
   let resp = crate::http::send_model_request(&client, &resolved, &url, &body, 2).await?;
   let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-  embedding_of(resolved.kind, &json).ok_or_else(|| "Embedding response malformed.".into())
+  embedding_of(resolved.dialect(), &json).ok_or_else(|| "Embedding response malformed.".into())
 }
 
 #[cfg(test)]

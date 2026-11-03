@@ -219,15 +219,15 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   if pc_control || has_browser {
     if let Some(vid) = provider::explicit_role(&conn, "vision").filter(|v| *v != agent.model) {
       if let Ok(v) = provider::resolve(&conn, &vid, None) {
-        if provider::supports_vision(v.kind) { primary = Ok(v); }
+        if v.caps().vision { primary = Ok(v); }
       }
     }
   }
   let fallback_candidates = crate::fallback::local_candidates(&conn);
   let (mut resolved, fallback_note) = crate::fallback::resolve_with_fallback(primary, fallback_candidates.clone(), &agent.reasoning).await?;
   if let Some(note) = &fallback_note { emit_status(&on_event, "think", note); }
-  let mut is_ollama = resolved.kind == provider::Kind::Ollama;
-  let mut is_anthropic = resolved.kind == provider::Kind::Anthropic;
+  let mut is_ollama = resolved.is_ollama();
+  let mut is_anthropic = resolved.is_anthropic();
 
   // Images the chat model is meant to see go on the user's own turn, so they sit
   // with the request they belong to rather than in a turn of their own.
@@ -252,7 +252,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
         Err(e) => match crate::fallback::fallback_resolved(fallback_candidates.clone()).await {
           Some((fb, cand)) => {
             emit_status(&on_event, "think", &format!("Model error ({e}); retrying with local {cand}."));
-            resolved = fb; is_ollama = resolved.kind == provider::Kind::Ollama; is_anthropic = resolved.kind == provider::Kind::Anthropic;
+            resolved = fb; is_ollama = resolved.is_ollama(); is_anthropic = resolved.is_anthropic();
             body = build_tool_body(&resolved, &messages, &tools);
             http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?
           }
@@ -336,7 +336,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     Err(e) => match crate::fallback::fallback_resolved(fallback_candidates.clone()).await {
       Some((fb, cand)) => {
         emit_status(&on_event, "think", &format!("Model error ({e}); retrying with local {cand}."));
-        resolved = fb; is_ollama = resolved.kind == provider::Kind::Ollama; is_anthropic = resolved.kind == provider::Kind::Anthropic;
+        resolved = fb; is_ollama = resolved.is_ollama(); is_anthropic = resolved.is_anthropic();
         body = build_stream_body(&resolved, &messages);
         http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?
       }
@@ -483,12 +483,12 @@ fn emit_reasoning(on_event: &tauri::ipc::Channel<String>, text: &str) {
 fn build_tool_body(resolved: &provider::Resolved, messages: &[serde_json::Value], tools: &[Box<dyn AgentTool>]) -> serde_json::Value {
   let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "tools": tool_schemas(tools), "stream": false });
   let budget = provider::apply_reasoning(&mut body, resolved, http::CHAT_MAX_TOKENS);
-  if resolved.kind == provider::Kind::Ollama {
+  if resolved.is_ollama() {
     provider::apply_ollama_options(&mut body, budget);
   } else {
-    http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
+    http::apply_openai_defaults(&mut body, resolved.provider_routing(), budget);
   }
-  if resolved.kind == provider::Kind::Anthropic { body = crate::anthropic::to_wire(&body); }
+  if resolved.is_anthropic() { body = crate::anthropic::to_wire(&body); }
   body
 }
 
@@ -496,15 +496,15 @@ fn build_tool_body(resolved: &provider::Resolved, messages: &[serde_json::Value]
 fn build_stream_body(resolved: &provider::Resolved, messages: &[serde_json::Value]) -> serde_json::Value {
   let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "stream": true });
   let budget = provider::apply_reasoning(&mut body, resolved, http::CHAT_MAX_TOKENS);
-  if resolved.kind == provider::Kind::Ollama {
+  if resolved.is_ollama() {
     provider::apply_ollama_options(&mut body, budget);
   } else {
-    let is_openrouter = resolved.kind == provider::Kind::OpenRouter;
+    let is_openrouter = resolved.provider_routing();
     http::apply_openai_defaults(&mut body, is_openrouter, budget);
     if is_openrouter { body["usage"] = serde_json::json!({ "include": true }); }
     else { body["stream_options"] = serde_json::json!({ "include_usage": true }); }
   }
-  if resolved.kind == provider::Kind::Anthropic { body = crate::anthropic::to_wire(&body); }
+  if resolved.is_anthropic() { body = crate::anthropic::to_wire(&body); }
   body
 }
 

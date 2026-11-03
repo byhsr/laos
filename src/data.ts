@@ -1,8 +1,8 @@
 import type { ModelConfig, Tool } from './types';
 export const models: ModelConfig[] = [
-  { id:'ollama:qwen3:8b', provider:'ollama', label:'Qwen3 8B', model:'qwen3:8b', host:'http://localhost:11434', enabled:true, reasoning:'auto' },
-  { id:'groq:llama-3.3-70b-versatile', provider:'groq', label:'Llama 3.3 70B (Groq)', model:'llama-3.3-70b-versatile', enabled:false, reasoning:'auto' },
-  { id:'openrouter:anthropic/claude-3.5-haiku', provider:'openrouter', label:'Claude 3.5 Haiku', model:'anthropic/claude-3.5-haiku', enabled:false, reasoning:'auto' },
+  { id:'ollama:qwen3:8b', provider:'ollama', label:'Qwen3 8B', model:'qwen3:8b', kind:'llm', host:'http://localhost:11434', enabled:true, reasoning:'auto' },
+  { id:'groq:llama-3.3-70b-versatile', provider:'groq', label:'Llama 3.3 70B (Groq)', model:'llama-3.3-70b-versatile', kind:'llm', enabled:false, reasoning:'auto' },
+  { id:'openrouter:anthropic/claude-3.5-haiku', provider:'openrouter', label:'Claude 3.5 Haiku', model:'anthropic/claude-3.5-haiku', kind:'llm', enabled:false, reasoning:'auto' },
 ];
 export const initialTools: Tool[] = [
   { id:'browser', name:'Browser', kind:'browser', integrationId:'builtin', description:'Open a mini browser panel and let the agent navigate, click, type and read pages.', enabled:true, config:{} },

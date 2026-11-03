@@ -220,8 +220,8 @@ async fn run_llm_judge(app: &AppHandle, rule: &serde_json::Value, input_value: &
   // Utility call: no reasoning is applied (see memory::one_shot_completion).
   // Ollama still uses its chat endpoint here, because the judge needs `format`.
   let resolved = provider::resolve(&conn, &model, api_key)?;
-  let is_ollama = resolved.kind == provider::Kind::Ollama;
-  let is_anthropic = resolved.kind == provider::Kind::Anthropic;
+  let is_ollama = resolved.is_ollama();
+  let is_anthropic = resolved.is_anthropic();
   let url = resolved.chat_url();
 
   let mut last_err = "LLM judge returned no text".to_string();
@@ -242,7 +242,7 @@ async fn run_llm_judge(app: &AppHandle, rule: &serde_json::Value, input_value: &
     if is_ollama {
       provider::apply_ollama_options(&mut body, http::SUMMARY_MAX_TOKENS);
     } else {
-      http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, http::SUMMARY_MAX_TOKENS);
+      http::apply_openai_defaults(&mut body, resolved.provider_routing(), http::SUMMARY_MAX_TOKENS);
     }
     if is_anthropic { body = crate::anthropic::to_wire(&body); }
     let resp = http::send_model_request(&http::client(), &resolved, &url, &body, http::MODEL_ATTEMPTS)
@@ -296,14 +296,14 @@ async fn run_llm_node(app: &AppHandle, config: &serde_json::Value, input: &str, 
   let prompt = template.replace("{input}", input);
 
   let resolved = provider::resolve(&conn, &model, api_key)?;
-  let is_ollama = resolved.kind == provider::Kind::Ollama;
-  let is_anthropic = resolved.kind == provider::Kind::Anthropic;
+  let is_ollama = resolved.is_ollama();
+  let is_anthropic = resolved.is_anthropic();
 
   let mut body = serde_json::json!({ "model": resolved.model, "messages": [{ "role": "user", "content": prompt }], "stream": false });
   if is_ollama {
     provider::apply_ollama_options(&mut body, http::CHAT_MAX_TOKENS);
   } else {
-    http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, http::CHAT_MAX_TOKENS);
+    http::apply_openai_defaults(&mut body, resolved.provider_routing(), http::CHAT_MAX_TOKENS);
   }
   if is_anthropic { body = crate::anthropic::to_wire(&body); }
 
@@ -464,6 +464,7 @@ pub async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: S
         "UPDATE workflow_runs SET status='completed', ended_at=?1, final_output=?2, steps=?3, prompt_tokens=?4, completion_tokens=?5 WHERE id=?6",
         params![chrono::Utc::now().to_rfc3339(), final_output, serde_json::to_string(&steps).unwrap_or_else(|_| "[]".to_string()), prompt_tokens as i64, completion_tokens as i64, run_id],
       ).map_err(|e| e.to_string())?;
+      crate::notify::desktop(&app, "workflow completed", &workflow.name);
       Ok(WorkflowExecution { steps, final_output, total_prompt_tokens: prompt_tokens, total_completion_tokens: completion_tokens })
     }
     Err(e) => {
@@ -471,6 +472,7 @@ pub async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: S
         "UPDATE workflow_runs SET status='failed', ended_at=?1, final_output=?2 WHERE id=?3",
         params![chrono::Utc::now().to_rfc3339(), e, run_id],
       );
+      crate::notify::desktop(&app, "workflow failed", &workflow.name);
       Err(e)
     }
   }

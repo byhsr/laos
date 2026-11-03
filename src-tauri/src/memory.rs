@@ -33,8 +33,8 @@ pub(crate) async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &s
   // think: a summary gains nothing from it and it would multiply the per-turn
   // background cost.
   let resolved = provider::resolve(&conn, model, None)?;
-  let is_ollama = resolved.kind == provider::Kind::Ollama;
-  let is_anthropic = resolved.kind == provider::Kind::Anthropic;
+  let is_ollama = resolved.is_ollama();
+  let is_anthropic = resolved.is_anthropic();
 
   let mut body = if is_ollama {
     serde_json::json!({ "model": resolved.model, "prompt": prompt, "stream": false })
@@ -44,7 +44,7 @@ pub(crate) async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &s
   if is_ollama {
     provider::apply_ollama_options(&mut body, max_tokens);
   } else {
-    http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, max_tokens);
+    http::apply_openai_defaults(&mut body, resolved.provider_routing(), max_tokens);
   }
   if is_anthropic { body = crate::anthropic::to_wire(&body); }
 
@@ -263,7 +263,7 @@ pub fn rename_chat_session(app: AppHandle, session_id: String, title: String) ->
 pub(crate) fn append_session_message(conn: &Connection, session_id: &str, agent_id: &str, role: &str, content: &str) -> Result<(), String> {
   let now = chrono::Utc::now().to_rfc3339();
   conn.execute("INSERT INTO chat_sessions (id, agent_id, title, created_at, updated_at) VALUES (?1,?2,'Chat',?3,?3) ON CONFLICT(id) DO NOTHING", params![session_id, agent_id, now]).map_err(|e| e.to_string())?;
-  conn.execute("INSERT INTO chat_messages (session_id, role, content, time) VALUES (?1,?2,?3,'')", params![session_id, role, content]).map_err(|e| e.to_string())?;
+  conn.execute("INSERT INTO chat_messages (session_id, role, content, time) VALUES (?1,?2,?3,?4)", params![session_id, role, content, crate::db::now()]).map_err(|e| e.to_string())?;
   conn.execute("UPDATE chat_sessions SET updated_at=?1 WHERE id=?2", params![now, session_id]).map_err(|e| e.to_string())?;
   Ok(())
 }

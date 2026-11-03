@@ -1,4 +1,14 @@
-export type Provider = 'ollama' | 'openrouter' | 'groq' | 'openai' | 'google' | 'xai' | 'anthropic';
+// Provider ids are open-ended: the built-ins plus any adapter the user adds in
+// Settings → Providers.
+export type Provider = string;
+// What a provider can do. `chat` is always true; the rest gate the model roles.
+export type ProviderCaps = { chat: boolean; vision: boolean; embeddings: boolean; transcription: boolean; speech: boolean };
+// A provider adapter. Built-ins are read-only; custom ones are editable.
+export type ProviderRecord = {
+  id: string; label: string; baseUrl: string; auth: string; authHeader: string;
+  extraHeaders: Record<string, string>; requiresKey: boolean; reasoning: string;
+  providerRouting: boolean; caps: ProviderCaps; hasKey: boolean; builtin: boolean;
+};
 // Per-model reasoning control. 'auto' sends nothing at all to the provider, which
 // is the safe default: models without reasoning support never see the parameter.
 export type Reasoning = 'auto' | 'off' | 'low' | 'medium' | 'high';
@@ -6,7 +16,11 @@ export type Agent = { id: string; name: string; objective: string; model: string
 export type RunEvent = { time: string; type: 'thought' | 'tool' | 'result'; title: string; detail?: string };
 export type Run = { id: string; agentId: string; startedAt: string; endedAt?: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; model: string; input: string; events: RunEvent[]; output?: string; promptTokens?: number; completionTokens?: number };
 export type Edge = { id: string; from: string; to: string };
-export type ModelConfig = { id: string; provider: Provider; label: string; model: string; host?: string; apiKey?: string; hasKey?: boolean; clearKey?: boolean; enabled: boolean; reasoning: Reasoning; vision?: boolean; transcribes?: boolean };
+// What a model is for. Separate from `Provider` (who serves it): one provider can
+// host a chat model, an image model and a transcriber. `llm` is the default so
+// existing rows keep working unchanged.
+export type ModelType = 'llm' | 'vision' | 'image' | 'video' | 'media' | 'multimedia' | 'stt' | 'tts';
+export type ModelConfig = { id: string; provider: Provider; label: string; model: string; kind?: ModelType; voice?: string; host?: string; apiKey?: string; hasKey?: boolean; clearKey?: boolean; enabled: boolean; reasoning: Reasoning; vision?: boolean; transcribes?: boolean };
 export type IntegrationAction = { name: string; description: string };
 export type Integration = { id: string; name: string; provider: string; enabled: boolean; connected: boolean; config: Record<string, unknown>; actions: IntegrationAction[] };
 export type ToolParam = { name: string; type: string; description: string; required: boolean };
@@ -90,7 +104,7 @@ export type ChatStep = { kind: 'think' | 'tool' | 'write' | 'wait'; text: string
 export type ExecutionResult = { output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number };
 
 export const emptyTool = (): Tool => ({ id: '', name: '', kind: 'api', integrationId: 'http', description: '', enabled: true, config: { method: 'GET', url: '', headers: [], body: '', params: [] } });
-export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', host: '', apiKey: '', enabled: true, reasoning: 'auto' });
+export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', kind: 'llm', host: '', apiKey: '', enabled: true, reasoning: 'auto' });
 export const emptySkill = (): Skill => ({ id: '', name: '', description: '', content: '', docs: '', scriptIds: [] });
 export const emptyScript = (): Script => ({ id: '', name: '', description: '', kind: 'command', command: '', cwd: '', prompt: '', model: '', updatedAt: '' });
 export const emptyProject = (): Project => ({ id: '', name: '', description: '', createdAt: '', updatedAt: '' });

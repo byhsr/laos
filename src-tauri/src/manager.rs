@@ -354,8 +354,8 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     crate::fallback::local_candidates(&conn),
     &manager.reasoning,
   ).await?;
-  let is_ollama = resolved.kind == provider::Kind::Ollama;
-  let is_anthropic = resolved.kind == provider::Kind::Anthropic;
+  let is_ollama = resolved.is_ollama();
+  let is_anthropic = resolved.is_anthropic();
   let mut final_output = String::new();
 
   for _round in 0..MAX_TOOL_ROUNDS {
@@ -364,7 +364,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     if is_ollama {
       provider::apply_ollama_options(&mut body, budget);
     } else {
-      http::apply_openai_defaults(&mut body, resolved.kind == provider::Kind::OpenRouter, budget);
+      http::apply_openai_defaults(&mut body, resolved.provider_routing(), budget);
     }
     if is_anthropic { body = crate::anthropic::to_wire(&body); }
     let response = http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;

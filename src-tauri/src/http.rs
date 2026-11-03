@@ -75,21 +75,27 @@ fn strip_reasoning(body: &serde_json::Value) -> serde_json::Value {
 /// Shared by the JSON chat path and the multipart transcription path, so neither
 /// call site has to remember the per-provider headers.
 pub(crate) fn auth_headers(mut req: reqwest::RequestBuilder, resolved: &provider::Resolved) -> reqwest::RequestBuilder {
-  match resolved.kind {
-    // Anthropic authenticates with a header key and a pinned API version.
-    provider::Kind::Anthropic => {
-      if let Some(key) = &resolved.key {
-        req = req.header("x-api-key", key).header("anthropic-version", "2023-06-01");
-      }
-    }
-    _ => {
+  match resolved.def.auth {
+    provider::Auth::None => {}
+    provider::Auth::Bearer => {
       if let Some(key) = &resolved.key {
         req = req.header("Authorization", format!("Bearer {key}"));
       }
     }
+    provider::Auth::XApiKey => {
+      if let Some(key) = &resolved.key {
+        let name = if resolved.def.auth_header.trim().is_empty() { "x-api-key" } else { resolved.def.auth_header.trim() };
+        req = req.header(name, key);
+        // Anthropic also pins an API version alongside the key.
+        if resolved.is_anthropic() {
+          req = req.header("anthropic-version", "2023-06-01");
+        }
+      }
+    }
   }
-  if resolved.kind == provider::Kind::OpenRouter {
-    req = req.header("HTTP-Referer", "https://local-agent-os.app").header("X-Title", "Local Agent OS");
+  // Routing/brand headers the adapter declares (OpenRouter's HTTP-Referer/X-Title).
+  for (name, value) in &resolved.def.extra_headers {
+    req = req.header(name, value);
   }
   req
 }

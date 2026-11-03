@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { Agent, Attachment, BrainGraph, BrainObservation, Integration, ModelConfig, ModelRoles, Project, Run, RunEvent, Script, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
+import type { Agent, Attachment, BrainGraph, BrainObservation, Integration, ModelConfig, ModelRoles, Project, ProviderRecord, Run, RunEvent, Script, Skill, Task, Tool, Workflow, WorkflowRunResult } from './types';
 
 // Streams a chat completion, calling onDelta with each token chunk and onConfirm
 // with structured confirmation requests from the Manager.
@@ -100,7 +100,7 @@ export async function listTelegramLogs(): Promise<TelegramLogEntry[]> {
   try { return await invoke<TelegramLogEntry[]>('list_telegram_logs'); } catch { return []; }
 }
 // Telegram bots (multiple): each is long-polled and routed to an agent.
-export type TelegramBot = { id: string; name: string; agentId: string; terminalId: string; allowedUsers: (string | number)[]; enabled: boolean; token: string; webhookRegistered: boolean; capture?: boolean; destinationId?: string };
+export type TelegramBot = { id: string; name: string; agentId: string; terminalId: string; allowedUsers: (string | number)[]; enabled: boolean; token: string; webhookRegistered: boolean; capture?: boolean; destinationId?: string; ownerChatId?: string };
 export async function listTelegramBots(): Promise<TelegramBot[]> {
   try { return await invoke<TelegramBot[]>('list_telegram_bots'); } catch { return []; }
 }
@@ -109,6 +109,10 @@ export async function saveTelegramBot(bot: TelegramBot): Promise<string> {
 }
 export async function deleteTelegramBot(id: string): Promise<void> {
   await invoke('delete_telegram_bot', { id });
+}
+// Sends a one-off reminder to the bot's bound chat (confirms the reminder path).
+export async function sendTelegramTest(botId: string): Promise<void> {
+  await invoke('telegram_send_test', { botId });
 }
 // One tunnel, many bots: registers this bot's webhook at <base>/webhook/telegram/<id>.
 export async function setBotWebhook(botId: string, publicUrl?: string): Promise<string> {
@@ -369,6 +373,18 @@ export async function deleteModel(id: string): Promise<void> {
   await invoke('delete_model_config', { id });
 }
 
+// Provider adapters: built-in (read-only) + custom (OpenAI-compatible).
+export type ProviderDraft = ProviderRecord & { apiKey?: string; clearKey?: boolean };
+export async function listProviders(): Promise<ProviderRecord[]> {
+  try { return await invoke<ProviderRecord[]>('list_providers'); } catch { return []; }
+}
+export async function saveProvider(provider: ProviderDraft): Promise<void> {
+  await invoke('save_provider', { provider });
+}
+export async function deleteProvider(id: string): Promise<void> {
+  await invoke('delete_provider', { id });
+}
+
 export async function listTools(): Promise<Tool[]> {
   try {
     return await invoke<Tool[]>('list_tools');
@@ -605,9 +621,13 @@ export async function appVersion(): Promise<string> {
 
 // App settings: background/tray mode + launch at login.
 export type CliShortcut = { name: string; command: string; cwd: string };
-export type AppSettings = { runInBackground: boolean; launchAtLogin: boolean; autostartEnabled: boolean; defaultShell: string; cliShortcuts: CliShortcut[]; autonomy: boolean };
+export type AppSettings = {
+  runInBackground: boolean; launchAtLogin: boolean; autostartEnabled: boolean;
+  defaultShell: string; cliShortcuts: CliShortcut[]; autonomy: boolean;
+  desktopNotifications: boolean; voiceHotkey: string; voiceTtsMode: string;
+};
 export async function getAppSettings(): Promise<AppSettings> {
-  try { return await invoke<AppSettings>('get_app_settings'); } catch { return { runInBackground: true, launchAtLogin: false, autostartEnabled: false, defaultShell: '', cliShortcuts: [], autonomy: true }; }
+  try { return await invoke<AppSettings>('get_app_settings'); } catch { return { runInBackground: true, launchAtLogin: false, autostartEnabled: false, defaultShell: '', cliShortcuts: [], autonomy: true, desktopNotifications: true, voiceHotkey: 'CommandOrControl+Shift+Space', voiceTtsMode: 'auto' }; }
 }
 export async function setRunInBackground(enabled: boolean): Promise<void> {
   await invoke('set_run_in_background', { enabled });
@@ -623,6 +643,34 @@ export async function setDefaultShell(shell: string): Promise<void> {
 }
 export async function setCliShortcuts(shortcuts: CliShortcut[]): Promise<void> {
   await invoke('set_cli_shortcuts', { shortcuts });
+}
+export async function setDesktopNotifications(enabled: boolean): Promise<void> {
+  await invoke('set_desktop_notifications', { enabled });
+}
+// 'auto' | 'system' | 'provider'
+export async function setVoiceTtsMode(mode: string): Promise<void> {
+  await invoke('set_voice_tts_mode', { mode });
+}
+export async function setVoiceHotkey(accelerator: string): Promise<void> {
+  await invoke('set_voice_hotkey', { accelerator });
+}
+
+// Live voice mode: transcribe one captured utterance, and synthesise a spoken
+// reply (base64 mp3, or null when no TTS model is configured).
+export async function voiceTranscribe(name: string, mime: string, data: string): Promise<string> {
+  return await invoke<string>('voice_transcribe', { name, mime, data });
+}
+export async function voiceSpeak(text: string): Promise<string | null> {
+  return await invoke<string | null>('voice_speak', { text });
+}
+
+// The global hotkey asks the frontend to toggle live voice mode.
+export function onVoiceToggle(cb: () => void): () => void {
+  let unlisten: (() => void) | null = null;
+  listen<unknown>('voice-toggle', () => cb())
+    .then((un) => { unlisten = un; })
+    .catch(() => {});
+  return () => { unlisten?.(); };
 }
 
 // Capture / Lumin: notes, todos, reminders, goals, links and habits.
