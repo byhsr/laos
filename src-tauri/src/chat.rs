@@ -149,6 +149,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     manager.push(crate::tools::items_tool(&app, &agent.id));
     manager.push(crate::tools::current_time_tool(&app));
     manager.push(Box::new(crate::tools::MonidTool));
+    manager.push(Box::new(crate::tools::YtDlpTool));
     manager
   } else {
     build_tools(&app, &conn, &agent, &home)?

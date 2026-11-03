@@ -13,6 +13,7 @@ pub(crate) mod mcp;
 pub(crate) mod monid;
 pub(crate) mod script;
 pub(crate) mod web;
+pub(crate) mod ytdlp;
 
 pub(crate) use api::{ApiParam, ApiTool};
 pub(crate) use browser::browser_tools;
@@ -26,6 +27,7 @@ pub(crate) use mcp::{unique_name, McpTool};
 pub(crate) use monid::MonidTool;
 pub(crate) use script::script_tools;
 pub(crate) use web::HttpTool;
+pub(crate) use ytdlp::YtDlpTool;
 
 use async_trait::async_trait;
 

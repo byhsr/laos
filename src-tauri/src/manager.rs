@@ -179,6 +179,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
   tool_list.push_str("- items: The user's notes, todos, reminders, goals, links and habits — anything with a when or a do. Full CRUD (add, list, update, complete, delete). Reminders are scheduled and pushed to Telegram.\n");
   tool_list.push_str("- current_datetime: The current date and time in the user's configured timezone (plus tomorrow/yesterday). Use it before scheduling or reasoning about 'now'.\n");
   tool_list.push_str("- monid: Reach hundreds of external data tools (search/scraping/enrichment/media) through Monid. discover → inspect → run. Needs the Monid CLI installed and keyed.\n");
+  tool_list.push_str("- yt_dlp: Download a video, or extract its audio (mp3), from a URL with the yt-dlp CLI. Needs yt-dlp on PATH.\n");
   // Only the MCP tools the Manager was explicitly opted into are listed (and
   // offered) — attaching them in its config is the opt-in.
   for t in mcp_tools_for(conn, mcp_tool_ids) {
@@ -340,6 +341,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     t.push(crate::tools::items_tool(app, &manager.id));
     t.push(crate::tools::current_time_tool(app));
     t.push(Box::new(crate::tools::MonidTool));
+    t.push(Box::new(crate::tools::YtDlpTool));
     t
   };
 

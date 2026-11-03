@@ -69,7 +69,7 @@ trait AgentTool {
 | Host-filesystem tools | `agents::build_tools` | `host_fs` |
 | PC-control tools | `tools::desktop_tools` | `pc_control` (Windows) |
 | MCP tools | `agents::mcp_tools_for` | attaching the tool is the opt-in |
-| Router tools (`monid`) | `agents::build_tools` | `host_fs` (drives the Monid CLI) |
+| Router tools (`monid`, `yt_dlp`) | `agents::build_tools` | `host_fs` (drives the Monid and yt-dlp CLIs) |
 | Scripts | `tools::script_tools` | `host_fs` |
 | Manager tools | `manager::manager_tools()` | Manager only |
 

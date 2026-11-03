@@ -50,7 +50,7 @@ Caps and helpers:
 | PC control tools | `agents::build_tools` (and the Manager) when `pc_control` is granted (`tools::desktop_tools`) | `screen_capture`, `mouse_click`, `type_text`, `press_keys`, `launch_app`, `lock_screen`, … |
 | Manager tools | `manager::manager_tools()` | `create_agent`, `run_workflow`, `delegate_task`, `recall_memory`, `knowledge_base` |
 | Shared memory tools (every agent) | `agents::build_tools` (all agents) + `chat.rs`/`manager.rs` (the Manager) | `knowledge_base` (the one store any agent reads/writes — `crate::knowledge::run`), `remember`, `items`, `current_datetime` |
-| Router tools | `agents::build_tools` when `host_fs` is granted; `manager_turn`/`chat.rs` for the Manager | `monid` (drives the Monid CLI: `discover` → `inspect` → `run`) |
+| Router tools | `agents::build_tools` when `host_fs` is granted; `manager_turn`/`chat.rs` for the Manager | `monid` (drives the Monid CLI: `discover` → `inspect` → `run`), `yt_dlp` (downloads video / extracts audio via the yt-dlp CLI) |
 | MCP tools for the Manager | `agents::all_mcp_tools`, merged into `manager_tools()` | every enabled `kind='mcp'` row (the Manager has no per-agent tool picker) |
 | Inline (tool-call loops) | `chat.rs`, `agents.rs`, `manager.rs` | the loop itself |
 

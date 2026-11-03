@@ -111,6 +111,8 @@ pub(crate) fn build_tools(app: &AppHandle, conn: &Connection, agent: &AgentReque
     tools.extend(script_tools(conn));
     // Monid's catalog is reached through its CLI, so it rides on host_fs.
     tools.push(Box::new(crate::tools::MonidTool));
+    // yt-dlp downloads do their work through its CLI too, so it rides on host_fs as well.
+    tools.push(Box::new(crate::tools::YtDlpTool));
   }
   // PC control tools: granted only to agents with the explicit pc_control permission.
   if has_pc {
