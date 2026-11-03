@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { cancelChatStream, clearAgentMemory, closeSession, createChatSession, newChatStreamId, renameChatSession, streamChat } from '../runtime';
+import { cancelChatStream, clearAgentMemory, closeSession, createChatSession, getChatSession, listChatSessions, newChatStreamId, renameChatSession, streamChat } from '../runtime';
 import { useConfirmStore } from './useConfirm';
 import { useProjectsStore } from './useProjects';
 import { useRunsStore } from './useRuns';
@@ -17,6 +17,26 @@ export type ChatEntry = {
   durationMs?: number;
   ttftMs?: number;
 };
+
+// A reload (dev HMR, or the webview being recreated) resets this in-memory
+// store; the DB restore below covers that, but this mirror makes the visible
+// chat come back instantly and keeps even an in-flight turn, so a reload never
+// looks like the conversation "vanished".
+const CHAT_LS_KEY = 'laos.chat.v1';
+const MAX_PERSIST = 300; // entries per agent, newest kept
+
+type ChatPersist = { conversations: Record<string, ChatEntry[]>; sessionIds: Record<string, string | null> };
+
+function readPersistedChat(): ChatPersist {
+  try {
+    const raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(CHAT_LS_KEY);
+    if (!raw) return { conversations: {}, sessionIds: {} };
+    const p = JSON.parse(raw) as Partial<ChatPersist>;
+    return { conversations: p.conversations ?? {}, sessionIds: p.sessionIds ?? {} };
+  } catch { return { conversations: {}, sessionIds: {} }; }
+}
+
+const persistedChat = readPersistedChat();
 
 // Derives a short, readable title from the first user message.
 const titleFrom = (msg: string) => {
@@ -52,9 +72,9 @@ type ManagerState = {
 
 export const useManagerStore = create<ManagerState>((set, get) => ({
   currentAgentId: null,
-  conversations: {},
+  conversations: persistedChat.conversations,
   messages: [],
-  sessionIds: {},
+  sessionIds: persistedChat.sessionIds,
   busy: false,
   steps: [],
   activeStreamId: null,
@@ -66,16 +86,35 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
   },
 
   loadHistory: async (agentId) => {
-    // A fresh start: never adopt a previous session as the live chat. Old chats
-    // stay in History and are only continued when the user explicitly asks for
-    // one. If we already hold an in-memory conversation for this agent (e.g.
-    // switching back to it mid-session), keep it rather than wiping it.
+    // We already hold this agent's live conversation (switching back to it
+    // mid-session): keep it rather than wiping what's on screen.
+    if ((get().conversations[agentId] ?? []).length > 0) {
+      set((s) => ({
+        messages: (s.currentAgentId === agentId || agentId === 'manager') ? (s.conversations[agentId] ?? []) : s.messages,
+      }));
+      return;
+    }
+    // Nothing in memory — a reload or a first visit after restart. The messages
+    // are persisted (`chat_messages`, one session per chat), so restore the most
+    // recent session instead of showing a blank chat. Continuing appends to it.
+    let entries: ChatEntry[] = [];
+    let sessionId: string | null = null;
+    try {
+      const sessions = await listChatSessions(agentId);
+      if (sessions.length > 0) {
+        sessionId = sessions[0].id;
+        const msgs = await getChatSession(sessionId);
+        entries = msgs
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: m.time ?? '' }));
+      }
+    } catch { /* no history to restore */ }
     set((s) => {
-      const entries = s.conversations[agentId] ?? [];
-      const sessionId = s.sessionIds[agentId] ?? null;
+      // Someone typed while the fetch was in flight — don't clobber the live turn.
+      if ((s.conversations[agentId] ?? []).length > 0) return {};
       return {
         conversations: { ...s.conversations, [agentId]: entries },
-        sessionIds: { ...s.sessionIds, [agentId]: sessionId },
+        sessionIds: { ...s.sessionIds, [agentId]: sessionId ?? s.sessionIds[agentId] ?? null },
         messages: (s.currentAgentId === agentId || agentId === 'manager') ? entries : s.messages,
       };
     });
@@ -206,3 +245,19 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     set({ busy: false, steps: [], activeStreamId: null, activeAgentId: null });
   },
 }));
+
+// Mirror the live conversations to localStorage (debounced — the stream writes
+// per batch). Rounds are restored from here on load, before any DB round-trip.
+let persistTimer: ReturnType<typeof setTimeout> | undefined;
+useManagerStore.subscribe((s) => {
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    try {
+      const conversations: Record<string, ChatEntry[]> = {};
+      for (const [id, entries] of Object.entries(s.conversations)) {
+        conversations[id] = entries.length > MAX_PERSIST ? entries.slice(-MAX_PERSIST) : entries;
+      }
+      localStorage.setItem(CHAT_LS_KEY, JSON.stringify({ conversations, sessionIds: s.sessionIds }));
+    } catch { /* quota or unavailable — the DB restore is the fallback */ }
+  }, 400);
+});
