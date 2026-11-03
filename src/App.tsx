@@ -11,6 +11,7 @@ import { useProjectsStore } from './hooks/useProjects';
 import { useWorkflowsStore } from './hooks/useWorkflows';
 import { useWorkspaceStore } from './hooks/useWorkspace';
 import { useIntegrationsStore } from './hooks/useIntegrations';
+import { useProvidersStore } from './hooks/useProviders';
 import { Topbar } from './components/Topbar';
 import { Rail } from './components/Rail';
 import { Sidebar } from './components/Sidebar';
@@ -43,7 +44,10 @@ import { BrowserPanel } from './components/BrowserPanel';
 import { useBrowserStore } from './hooks/useBrowser';
 import { toast } from './hooks/useToast';
 import { syncBrowserTheme } from './theme';
-import { checkForUpdate, onBrainNotice, onBrowserEvent, onReminder, type UpdateInfo } from './runtime';
+import { VoiceOverlay } from './components/voice/VoiceOverlay';
+import { useActiveChat } from './hooks/useActiveChat';
+import { useVoice } from './hooks/useVoice';
+import { checkForUpdate, getAppSettings, onBrainNotice, onBrowserEvent, onReminder, onVoiceToggle, type UpdateInfo } from './runtime';
 
 // Every view lives in a pane that scrolls internally — the shell itself never
 // scrolls, so there is never a double scrollbar or a page that jumps.
@@ -92,6 +96,7 @@ export default function App() {
   const setActiveProject = useProjectsStore((s) => s.setActive);
   const integrations = useIntegrationsStore((s) => s.integrations);
   const loadIntegrations = useIntegrationsStore((s) => s.loadIntegrations);
+  const loadProviders = useProvidersStore((s) => s.loadProviders);
   const loadWorkspace = useWorkspaceStore((s) => s.loadWorkspace);
   const workflows = useWorkflowsStore((s) => s.workflows);
   const saveWorkflow = useWorkflowsStore((s) => s.saveWorkflow);
@@ -101,13 +106,13 @@ export default function App() {
   const loadRuns = useRunsStore((s) => s.loadRuns);
 
   useEffect(() => {
-    loadAgents(); loadModels(); loadTools(); loadSkills(); loadScripts(); loadProjects(); loadWorkflows(); loadIntegrations(); loadRuns();
+    loadAgents(); loadModels(); loadTools(); loadSkills(); loadScripts(); loadProjects(); loadWorkflows(); loadIntegrations(); loadRuns(); loadProviders();
     // Reload tools after the storage bootstrap so MCP tools imported on first run
     // (browser/memory) are present in the picker.
     void loadWorkspace().then(() => loadTools());
     // Point the in-app browser at the restored theme's colour scheme.
     syncBrowserTheme();
-  }, [loadAgents, loadModels, loadTools, loadSkills, loadScripts, loadProjects, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns]);
+  }, [loadAgents, loadModels, loadTools, loadSkills, loadScripts, loadProjects, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns, loadProviders]);
 
   // Native drag-drop is off (see tauri.conf.json) so the chat composer can accept
   // HTML5 drops. That means every other drop in the window has to be swallowed
@@ -137,6 +142,13 @@ export default function App() {
   // The learning layer announces a pattern it noticed, so it reaches the user
   // where they are rather than waiting for the Memory view to be opened.
   useEffect(() => onBrainNotice((n) => toast(`${n.title} (${n.count})`, 'info')), []);
+
+  // The global hotkey toggles live voice mode; the system voices are the default
+  // until Settings says otherwise.
+  useEffect(() => onVoiceToggle(() => useVoice.getState().toggle()), []);
+  useEffect(() => {
+    void getAppSettings().then((s) => useVoice.getState().setTtsMode(s.voiceTtsMode as 'auto' | 'system' | 'provider'));
+  }, []);
 
   // The mini browser reports its state from the backend; a browser action from an
   // agent slides the drawer open (see useBrowserStore.applyState).
@@ -180,6 +192,13 @@ export default function App() {
 
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
   const leadAgent = useMemo(() => agents.find((a) => a.isManager) ?? null, [agents]);
+
+  // Remember which chat is in front of the user so the voice hotkey talks to it
+  // (and falls back to the lead agent when no chat is open).
+  useEffect(() => {
+    if (view === 'manager') useActiveChat.getState().setActiveAgent(leadAgent?.id ?? null);
+    else if (view === 'agent' && selectedAgentId) useActiveChat.getState().setActiveAgent(selectedAgentId);
+  }, [view, selectedAgentId, leadAgent?.id]);
 
   // Onboarding writes the answers onto the lead agent, then drops you into its chat.
   const finishOnboarding = async (patch: OnboardingPatch) => {
@@ -399,6 +418,7 @@ export default function App() {
       {/* Tool approval is a modal at the root, so it works from any view (agent
           or Manager chat) rather than only while the composer is mounted. */}
       <ConfirmDialog />
+      <VoiceOverlay onOpenSettings={() => setView('settings')} />
       <Toaster />
       {showOnboarding && leadAgent && (
         <Onboarding manager={leadAgent} models={models} onFinish={finishOnboarding} onSkip={dismissOnboarding} />

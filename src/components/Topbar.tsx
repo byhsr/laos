@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { AppWindow, ArrowLeft, ArrowRight, Bot, Boxes, Compass, FolderKanban, Globe, Maximize, Minimize2, Minus, PanelLeft, Pencil, Pin, Plus, Sparkles, Trash2, Workflow as WorkflowIcon, Wrench, X } from 'lucide-react';
+import { AppWindow, ArrowLeft, ArrowRight, Bot, Boxes, Compass, FolderKanban, Globe, Maximize, Mic, Minimize2, Minus, PanelLeft, Pencil, Pin, Plus, Sparkles, Trash2, Workflow as WorkflowIcon, Wrench, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { navLabel, useNavLabels } from '../hooks/useNavLabels';
 import { CREATE_KINDS, createLabel, useCreateDefault } from '../hooks/useCreateDefault';
 import { useScribble } from '../hooks/useScribble';
+import { useVoice } from '../hooks/useVoice';
 import { useThemeKey } from '../hooks/useTheme';
 import { ContextMenuAt, type MenuItem } from './ui/ContextMenu';
 import { IconButton } from './ui/Button';
@@ -44,6 +45,7 @@ export function Topbar({ collapsed, onToggleSidebar, canBack, canForward, onBack
   const toggleDraw = useScribble((s) => s.toggleActive);
   const togglePin = useScribble((s) => s.togglePinned);
   const clearDraw = useScribble((s) => s.clear);
+  const voiceActive = useVoice((s) => s.active);
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -93,6 +95,13 @@ export function Topbar({ collapsed, onToggleSidebar, canBack, canForward, onBack
       </IconButton>
       <IconButton className={navBtn({ active: browserActive })} label="in-app browser" onClick={onToggleBrowser}>
         <Compass className="h-3 w-3" />
+      </IconButton>
+      <IconButton
+        className={navBtn({ active: voiceActive })}
+        label={voiceActive ? 'stop live voice' : 'live voice'}
+        onClick={() => useVoice.getState().toggle()}
+      >
+        <Mic className="h-3 w-3" />
       </IconButton>
       <IconButton
         className={navBtn()}

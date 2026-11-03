@@ -125,7 +125,26 @@ pub fn get_app_settings(app: AppHandle) -> Result<Value, String> {
     "defaultShell": default_shell(&app),
     "cliShortcuts": cli_shortcuts(&conn),
     "autonomy": autonomy(&app),
+    // Voice + notifications. The hotkey default lives in voice::DEFAULT_HOTKEY;
+    // an empty value means the global hotkey is off.
+    "desktopNotifications": flag(get(&conn, "desktop_notifications"), true),
+    "voiceHotkey": get(&conn, "voice_hotkey").map(|s| s.trim().to_string()).unwrap_or_else(|| crate::voice::DEFAULT_HOTKEY.to_string()),
+    "voiceTtsMode": get(&conn, "voice_tts_mode").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "auto".to_string()),
   }))
+}
+
+#[tauri::command]
+pub fn set_desktop_notifications(app: AppHandle, enabled: bool) -> Result<(), String> {
+  let conn = db(&app)?;
+  set(&conn, "desktop_notifications", if enabled { "1" } else { "0" })
+}
+
+/// How a reply is voiced: `auto` (provider TTS when a model is set, else the
+/// system voices), `system`, or `provider`.
+#[tauri::command]
+pub fn set_voice_tts_mode(app: AppHandle, mode: String) -> Result<(), String> {
+  let conn = db(&app)?;
+  set(&conn, "voice_tts_mode", mode.trim())
 }
 
 #[tauri::command]

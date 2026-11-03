@@ -24,6 +24,7 @@ mod media;
 mod memory;
 mod mic;
 mod models;
+mod notify;
 mod provider;
 mod refile;
 mod reminders;
@@ -40,11 +41,12 @@ mod transcribe;
 mod tz;
 mod updater;
 mod vault;
+mod voice;
 mod workflows;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 fn show_main(app: &tauri::AppHandle) {
   if let Some(w) = app.get_webview_window("main") {
@@ -83,10 +85,35 @@ fn main() {
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
+    // OS toasts for reminders, insights and finished background work.
+    .plugin(tauri_plugin_notification::init())
+    // The global voice hotkey: bring the window forward, then tell the frontend
+    // to toggle live voice mode. Registered below from the persisted setting.
+    .plugin(
+      tauri_plugin_global_shortcut::Builder::new()
+        .with_handler(|app, _shortcut, event| {
+          if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+            show_main(app);
+            let _ = app.emit("voice-toggle", ());
+          }
+        })
+        .build(),
+    )
     .setup(|app| {
       let handle = app.handle().clone();
       // System tray: keep the app alive in the background.
       let _ = build_tray(&handle);
+      // Register the saved voice hotkey (empty = disabled). A conflict is logged
+      // rather than fatal; the user can change it in Settings.
+      {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let accel = voice::hotkey(&handle);
+        if !accel.is_empty() {
+          if let Err(e) = handle.global_shortcut().register(accel.as_str()) {
+            eprintln!("voice hotkey “{accel}” not registered: {e}");
+          }
+        }
+      }
       // Launched by the OS at login — come up hidden in the tray.
       if std::env::args().any(|a| a == "--hidden") {
         if let Some(w) = app.get_webview_window("main") { let _ = w.hide(); }
@@ -180,6 +207,10 @@ fn main() {
       browser::browser_eval_result,
       // Microphone permission (the webview remembers a denial per origin)
       mic::reset_microphone_permission,
+      // Live voice mode: utterance transcription, reply speech, hotkey settings
+      voice::voice_transcribe,
+      voice::voice_speak,
+      voice::set_voice_hotkey,
       // Agent + workflow execution
       agents::execute_agent,
       workflows::execute_workflow,
@@ -242,6 +273,7 @@ fn main() {
       telegram::delete_telegram_bot,
       telegram::telegram_set_bot_webhook,
       telegram::telegram_clear_bot_webhook,
+      telegram::telegram_send_test,
       telegram::telegram_ask,
       telegram::telegram_start_tunnel,
       telegram::telegram_register_webhook,
@@ -256,6 +288,8 @@ fn main() {
       app_settings::set_default_shell,
       app_settings::set_cli_shortcuts,
       app_settings::set_autonomy,
+      app_settings::set_desktop_notifications,
+      app_settings::set_voice_tts_mode,
       // Identity (who the assistant is / who it's talking to)
       app_settings::get_identity,
       app_settings::set_identity,
@@ -297,6 +331,10 @@ fn main() {
       // Model roles (classifier / embedding)
       storage::list_model_roles,
       storage::set_model_role,
+      // Provider adapters (built-in + custom, Settings → Providers)
+      storage::list_providers,
+      storage::save_provider,
+      storage::delete_provider,
     ])
     .build(tauri::generate_context!())
     .expect("error while running Local Agent OS")

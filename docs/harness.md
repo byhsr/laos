@@ -68,18 +68,27 @@ popup (the streaming path does).
 
 ## The shared layer: `provider.rs`
 
-`provider::resolve(conn, "<provider>:<model>", override_key)` is the single entry point for
-working out *where* a request goes and *how* it should be configured. It returns:
+A provider is an *adapter* (`ProviderDef`): a wire `dialect` (Ollama / OpenAI-compatible /
+Anthropic), an endpoint `base` root, `auth` (+ extra headers), a `reasoning` style,
+`provider_routing`, and a `Caps` set (chat / vision / embeddings / transcription / speech). Built-ins
+are defined in `provider::builtins()`; custom OpenAI-compatible ones live in the `providers` table
+(Settings → Providers).
+
+`provider::resolve(conn, "<provider>:<model>", override_key)` is the single entry point for working
+out *where* a request goes and *how* it should be configured. It looks the id up with
+`find_provider` (built-in first, then the table) and returns:
 
 | Field | Meaning |
 | --- | --- |
-| `kind` | `Ollama` / `Groq` / `OpenRouter` — the transport family |
-| `base` | For Ollama, the model's stored `host` (that UI field is honoured, not ignored); otherwise the provider's completions URL |
+| `def` | The adapter — dialect, caps, auth, headers, reasoning style |
+| `base` | The API root: the model's stored `host` for Ollama (that UI field is honoured), otherwise the adapter's base |
 | `model` | The bare model name the provider expects — our prefix stripped |
-| `key` | API key for cloud providers; `None` for Ollama |
+| `key` | API key; resolution order is caller override → the model's own key → the provider's shared key (`provider/<id>` in the vault) |
 | `reasoning` | The model's configured reasoning level (see *Reasoning control*) |
 
-An unrecognised prefix is an error rather than a silent fall-through to OpenRouter.
+URLs are composed from `base` (`chat_url`, `embeddings_url`, `transcription_url`, `speech_url`,
+`generate_url`) rather than stripped back out of a stored chat URL. An unrecognised prefix is an
+error rather than a silent fall-through.
 
 `apply_reasoning` and `apply_ollama_options` mutate the request body before it is sent; see
 *Reasoning control* and *Token/latency tuning*.
@@ -166,8 +175,8 @@ files are reported, never silently dropped.
 
 ### Audio (voice notes)
 
-Audio takes a single route: a pinned **`transcriber`** model (OpenAI, Groq, or a local whisper
-server speaking the same API) turns it into text via `POST /audio/transcriptions` (multipart —
+Audio takes a single route: a pinned **`transcriber`** model (OpenAI, Groq, OpenRouter, or a local
+whisper server speaking the same API) turns it into text via `POST /audio/transcriptions` (multipart —
 `transcribe.rs`), and the transcript is appended to the user's turn as `[attached files] …`, so the
 chat model reads it like anything typed. The mic button records a voice note with `MediaRecorder`
 and attaches it through the same path. With no `transcriber` pinned, or a provider that cannot
@@ -176,6 +185,45 @@ transcribe, the attachment is named rather than dropped.
 The same path serves **Telegram voice notes**: `telegram.rs` resolves the file id (`getFile`), pulls
 the bytes from the file endpoint, and transcribes before routing — so the bot's agent sees the
 words. A voice note that cannot be transcribed gets a short reply saying so.
+
+### Live voice mode
+
+Hands-free conversation lives in `voice.rs` + `src/voice/*` + `src/hooks/useVoice.ts`. The loop is
+utterance-level (not word-streaming): `vad.ts` watches the mic level through an `AnalyserNode` and
+records one utterance per sentence, `voice_transcribe` turns it into text, that text is sent through
+`useManagerStore.send` to the active chat, and `voice_speak` / the system voices read the reply
+aloud before listening resumes. The mic is opened once per session with echo cancellation and the
+analyser is ignored while thinking/speaking, so the assistant never hears itself.
+
+`voice_transcribe` picks the transcriber without a pinned role: an explicit `transcriber` role, then
+a model typed `stt`, then a whisper-like id (`provider::looks_like_transcriber`). It deliberately
+refuses arbitrary chat models, so no whisper model means a clear message rather than a confusing
+failure. `voice_speak` uses a pinned `tts` role or a model typed `tts` when its provider's
+`caps.speech` is set (OpenAI and OpenRouter expose an OpenAI-compatible `POST /audio/speech`); the
+model's own `voice` wins over the global `tts_voice` setting, since voices are model-specific — and
+with no speech-capable model at all the frontend falls back to `speechSynthesis`.
+
+The global hotkey (`tauri-plugin-global-shortcut`, default `CommandOrControl+Shift+Space`) shows the
+window and emits `voice-toggle`; it is configurable and persisted under the `voice_hotkey` setting
+(empty disables it). A failed registration restores the previous shortcut instead of leaving voice
+unreachable.
+
+### Desktop notifications
+
+`notify.rs` raises OS toasts via `tauri-plugin-notification` for reminders/habits (`reminders.rs`),
+new insights (`insights.rs`), and completed/failed delegated tasks (`tasks.rs`) and workflows
+(`workflows.rs`). They are suppressed while the main window is focused — the in-app toast already
+covers that case — and by the `desktop_notifications` setting (default on).
+tts/system voice preferences live in `localStorage`; `desktop_notifications`, `voice_hotkey` and
+`voice_tts_mode` live in the `settings` table (`get_app_settings`).
+
+### Message timing
+
+Each chat bubble shows the wall-clock time it was sent; a reply also shows how long it took and how
+long to its first token. The time comes from the entry and is persisted (`chat_messages.time`,
+`%H:%M:%S`), so history shows it too. The latency is measured client-side around `streamChat`
+(`performance.now()` at send, first delta, completion) and kept in memory only — a live-read detail,
+not history. Both chat surfaces render it via `MessageBubble`'s `time` / `durationMs` / `ttftMs`.
 
 Because native drag-drop is disabled (`dragDropEnabled: false` in `tauri.conf.json`) so HTML5 drops
 reach the composer, `App` swallows any drop outside it — otherwise the webview would navigate to
@@ -268,16 +316,17 @@ intended — only removing the second, third, and fourth copies):
 4. **Token extraction differs per provider and per path.** Centralize in the adapter so
    every path records counts the same way.
 5. ~~**`apply_openai_defaults` callers pass `is_openrouter` inconsistently**~~ **Done** —
-   every caller now derives it from `resolved.kind`, so the Manager path no longer guesses
-   with `!is_groq`.
+   every caller derives it from the adapter (`resolved.provider_routing()`), so the Manager path
+   no longer guesses with `!is_groq`.
 
 ## Adding a provider
 
-If the provider is OpenAI-compatible: add one branch to `provider::resolve` in `provider.rs`
-returning a `Resolved { kind, base, model, key, reasoning }`, add the variant to `Kind`, and
-handle it in `apply_reasoning`. Nothing else in the backend changes — all five paths pick it
-up. Non-compatible providers also need a response-shape adapter where replies are parsed.
-Always update the endpoint table above.
+A built-in provider is one `ProviderDef` in `provider::builtins()` — dialect, base root, auth, caps
+and reasoning style — and every call path (chat, agents, manager, memory, media, classification,
+embeddings, transcription, speech) picks it up. A custom OpenAI-compatible provider needs no code at
+all: add it in **Settings → Providers** (id, base URL, auth, capabilities, reasoning style), and it
+is stored in the `providers` table. Non-OpenAI wire shapes need a new `Dialect` arm plus a
+response-shape adapter (as `anthropic.rs` does). Always update the endpoint table above.
 
 ## Model fallback
 
