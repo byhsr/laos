@@ -9,6 +9,14 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-03 — release 0.2.3
+
+Ships the yt-dlp download tool and skill import / export (both below). Version `0.2.2` → `0.2.3`
+across `package.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and `src-tauri/tauri.conf.json`;
+tag `v0.2.3` drives the release workflow.
+
+---
+
 ## 2026-11-03 — skill import / export
 
 - **Import + export agent skills** in the Agent Skills `SKILL.md` format. `storage.rs`:
