@@ -9,17 +9,25 @@ import type { Attachment, ChatStep } from '../../types';
 // fill; the agent's prose sits on the content plane behind a hairline, so the
 // two read apart without a second colour. An assistant reply can carry a
 // good/bad signal that feeds the agent's memory.
-export function MessageBubble({ role, content, attachments, streaming, steps, meta, onRate }: {
+const fmtMs = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
+
+export function MessageBubble({ role, content, attachments, streaming, steps, meta, time, durationMs, ttftMs, onRate }: {
   role: 'user' | 'assistant';
   content: string;
   attachments?: Attachment[];
   streaming?: boolean;
   steps?: ChatStep[];
   meta?: string;
+  time?: string;
+  durationMs?: number;
+  ttftMs?: number;
   onRate?: (signal: 'up' | 'down') => void;
 }) {
   const mine = role === 'user';
   const [rated, setRated] = useState<'up' | 'down' | null>(null);
+  // Send time, and for a reply how long it took / how long to the first token.
+  const timing = [time, durationMs != null ? fmtMs(durationMs) : '', ttftMs != null ? `${fmtMs(ttftMs)} first token` : '']
+    .filter(Boolean).join(' · ');
 
   const rate = (signal: 'up' | 'down') => {
     if (rated) return;
@@ -54,6 +62,10 @@ export function MessageBubble({ role, content, attachments, streaming, steps, me
             ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-foreground/50 align-middle" />
             : <StreamIndicator streaming steps={steps} />)}
         </div>
+
+        {!streaming && timing && (
+          <span className={`mt-1 px-1 font-mono text-[9px] text-muted/70 ${mine ? 'text-right' : ''}`}>{timing}</span>
+        )}
 
         {!mine && onRate && !streaming && content && (
           <div className={`mt-1 flex items-center gap-0.5 transition-opacity ${rated ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>

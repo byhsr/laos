@@ -64,6 +64,19 @@ pub(crate) fn list(conn: &Connection, kind: Option<&str>) -> Vec<Item> {
   out
 }
 
+/// Every item that carries a due time, oldest first, with no row cap — the
+/// scheduler must see all of them, not just the newest 500 (`list`'s limit).
+pub(crate) fn timed_items(conn: &Connection) -> Vec<Item> {
+  let mut out = Vec::new();
+  let sql = format!("{SELECT} WHERE due_at IS NOT NULL AND due_at != '' ORDER BY due_at");
+  if let Ok(mut stmt) = conn.prepare(&sql) {
+    if let Ok(rows) = stmt.query_map([], row_to_item) {
+      for r in rows { if let Ok(i) = r { out.push(i); } }
+    }
+  }
+  out
+}
+
 pub(crate) fn find(conn: &Connection, query: &str) -> Option<Item> {
   let q = query.trim().to_lowercase();
   if q.is_empty() { return None; }

@@ -101,11 +101,11 @@ fn ensure_webhook_secret(conn: &Connection) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-struct TelegramBot { id: String, name: String, token: String, agent_id: String, terminal_id: String, allowed_users: String, enabled: bool, webhook_secret: String, webhook_registered: bool, capture: bool, destination_id: String, poll_offset: i64 }
+struct TelegramBot { id: String, name: String, token: String, agent_id: String, terminal_id: String, allowed_users: String, enabled: bool, webhook_secret: String, webhook_registered: bool, capture: bool, destination_id: String, poll_offset: i64, owner_chat_id: String }
 
 fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
   let mut out = Vec::new();
-  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id, poll_offset FROM telegram_bots ORDER BY name") {
+  if let Ok(mut stmt) = conn.prepare("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id, poll_offset, owner_chat_id FROM telegram_bots ORDER BY name") {
     if let Ok(rows) = stmt.query_map([], |row| {
       let id: String = row.get(0)?;
       let token: String = row.get(2)?;
@@ -116,6 +116,7 @@ fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
         capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
         destination_id: row.get::<_, String>(10).unwrap_or_default(),
         poll_offset: row.get::<_, i64>(11).unwrap_or(0),
+        owner_chat_id: row.get::<_, String>(12).unwrap_or_default(),
       })
     }) {
       for r in rows { if let Ok(b) = r { out.push(b); } }
@@ -125,7 +126,7 @@ fn load_bots(conn: &Connection) -> Vec<TelegramBot> {
 }
 
 fn load_bot(conn: &Connection, id: &str) -> Option<TelegramBot> {
-  conn.query_row("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id, poll_offset FROM telegram_bots WHERE id=?1", params![id], |row| {
+  conn.query_row("SELECT id, name, token, agent_id, terminal_id, allowed_users, enabled, webhook_secret, webhook_registered, capture, destination_id, poll_offset, owner_chat_id FROM telegram_bots WHERE id=?1", params![id], |row| {
     let token: String = row.get(2)?;
     let webhook_secret: String = row.get(7)?;
     Ok(TelegramBot {
@@ -134,6 +135,7 @@ fn load_bot(conn: &Connection, id: &str) -> Option<TelegramBot> {
       capture: row.get::<_, i64>(9).unwrap_or(0) != 0,
       destination_id: row.get::<_, String>(10).unwrap_or_default(),
       poll_offset: row.get::<_, i64>(11).unwrap_or(0),
+      owner_chat_id: row.get::<_, String>(12).unwrap_or_default(),
     })
   }).ok()
 }
@@ -207,6 +209,7 @@ pub fn list_telegram_bots(app: AppHandle) -> Result<Vec<serde_json::Value>, Stri
   Ok(load_bots(&conn).into_iter().map(|b| serde_json::json!({
     "id": b.id, "name": b.name, "agentId": b.agent_id, "terminalId": b.terminal_id, "enabled": b.enabled, "token": mask_token(&b.token),
     "webhookRegistered": b.webhook_registered, "capture": b.capture, "destinationId": b.destination_id,
+    "ownerChatId": b.owner_chat_id,
     "allowedUsers": serde_json::from_str::<serde_json::Value>(&b.allowed_users).unwrap_or_else(|_| serde_json::json!([])),
   })).collect())
 }
@@ -238,12 +241,33 @@ pub fn save_telegram_bot(app: AppHandle, bot: serde_json::Value) -> Result<Strin
   let capture = bot.get("capture").and_then(|v| v.as_bool()).unwrap_or(false);
   // Where this bot's captured items are pushed ('' = nowhere).
   let destination_id = bot.get("destinationId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+  // The chat that receives unprompted reminders. Normally bound by the first
+  // inbound message, but settable here so app-created reminders reach Telegram
+  // without waiting for someone to message the bot. Absent = keep what's stored.
+  let owner_chat_id = match bot.get("ownerChatId").and_then(|v| v.as_str()) {
+    Some(v) => v.trim().to_string(),
+    None => load_bot(&conn, &id).map(|b| b.owner_chat_id).unwrap_or_default(),
+  };
   conn.execute(
-    "INSERT INTO telegram_bots (id, name, token, agent_id, terminal_id, allowed_users, enabled, capture, destination_id, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
-     ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, terminal_id=excluded.terminal_id, allowed_users=excluded.allowed_users, enabled=excluded.enabled, capture=excluded.capture, destination_id=excluded.destination_id, updated_at=excluded.updated_at",
-    params![id, name, stored_token, agent_id, terminal_id, allowed_users, if enabled { 1 } else { 0 }, if capture { 1 } else { 0 }, destination_id, now()],
+    "INSERT INTO telegram_bots (id, name, token, agent_id, terminal_id, allowed_users, enabled, capture, destination_id, owner_chat_id, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, token=excluded.token, agent_id=excluded.agent_id, terminal_id=excluded.terminal_id, allowed_users=excluded.allowed_users, enabled=excluded.enabled, capture=excluded.capture, destination_id=excluded.destination_id, owner_chat_id=excluded.owner_chat_id, updated_at=excluded.updated_at",
+    params![id, name, stored_token, agent_id, terminal_id, allowed_users, if enabled { 1 } else { 0 }, if capture { 1 } else { 0 }, destination_id, owner_chat_id, now()],
   ).map_err(|e| e.to_string())?;
   Ok(id)
+}
+
+// Sends a one-off reminder to the bot's bound chat so the user can confirm the
+// path works before relying on it.
+#[tauri::command]
+pub async fn telegram_send_test(app: AppHandle, bot_id: String) -> Result<(), String> {
+  let (token, chat) = {
+    let conn = db(&app)?;
+    let bot = load_bot(&conn, &bot_id).ok_or("Bot not found.")?;
+    (bot.token, bot.owner_chat_id)
+  };
+  if token.trim().is_empty() { return Err("This bot has no token yet.".into()); }
+  if chat.trim().is_empty() { return Err("Set a reminders chat id first — message the bot and send /id.".into()); }
+  notify(&token, &chat, "✅ test reminder — reminders will arrive here").await
 }
 
 #[tauri::command]
@@ -1226,6 +1250,7 @@ pub(crate) async fn telegram_webhook_server(app: AppHandle, port: u16) {
               token.map(|t| (secret, t.clone(), TelegramBot {
                 id: "bot-default".into(), name: "Telegram".into(), token: t, agent_id: "manager".into(), terminal_id: String::new(), allowed_users: "[]".into(),
                 enabled: true, webhook_secret: String::new(), webhook_registered: true, capture: false, destination_id: String::new(), poll_offset: 0,
+                owner_chat_id: String::new(),
               }))
             }
           }
@@ -1873,7 +1898,7 @@ mod tests {
       id: "b1".into(), name: "n".into(), token: "t".into(), agent_id: "manager".into(),
       terminal_id: String::new(), allowed_users: allowed.into(), enabled: true,
       webhook_secret: String::new(), webhook_registered: false, capture: false,
-      destination_id: String::new(), poll_offset: 0,
+      destination_id: String::new(), poll_offset: 0, owner_chat_id: String::new(),
     }
   }
 

@@ -186,6 +186,9 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
                 content={m.content}
                 attachments={m.attachments}
                 steps={steps}
+                time={m.time}
+                durationMs={m.durationMs}
+                ttftMs={m.ttftMs}
                 streaming={busy && i === messages.length - 1 && m.role === 'assistant'}
                 onRate={m.role === 'assistant' && i === messages.length - 1 && !busy
                   ? (signal) => void rateTurn(managerId, signal, m.content)
@@ -216,7 +219,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
               <div className="grid gap-3">
                 {viewMsgs.length === 0
                   ? <p className="m-0 text-center font-mono text-xs text-muted">no messages</p>
-                  : viewMsgs.map((m, i) => <MessageBubble key={i} role={m.role} content={m.content} />)}
+                  : viewMsgs.map((m, i) => <MessageBubble key={i} role={m.role} content={m.content} time={m.time} />)}
               </div>
             </div>
           ) : (

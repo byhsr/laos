@@ -11,7 +11,19 @@ use crate::capture::Item;
 use crate::db::db;
 
 fn parse(iso: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
-  chrono::DateTime::parse_from_rfc3339(iso).ok()
+  let s = iso.trim();
+  if s.is_empty() { return None; }
+  if let Ok(d) = chrono::DateTime::parse_from_rfc3339(s) { return Some(d); }
+  // A time with no offset — the classifier often returns one — is read as local
+  // rather than silently failing and making the item inert forever.
+  for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"] {
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
+      if let chrono::LocalResult::Single(dt) = chrono::TimeZone::from_local_datetime(&chrono::Local, &naive) {
+        return Some(dt.fixed_offset());
+      }
+    }
+  }
+  None
 }
 
 fn is_due(item: &Item, now: chrono::DateTime<chrono::FixedOffset>) -> bool {
@@ -37,15 +49,17 @@ pub(crate) fn next_due(current: &Option<String>, cadence: &str) -> Option<String
 
 fn line(item: &Item) -> String {
   let title = if item.title.trim().is_empty() { &item.body } else { &item.title };
-  match item.kind.as_str() {
-    "habit" => format!("⏰ habit: {title}"),
-    _ => format!("⏰ reminder: {title}"),
-  }
+  // Name the kind so a timed todo/goal doesn't masquerade as a reminder.
+  let label = match item.kind.trim() {
+    "" | "reminder" => "reminder",
+    other => other,
+  };
+  format!("⏰ {label}: {title}")
 }
 
 pub(crate) fn due_summary(conn: &Connection) -> String {
   let now = chrono::Utc::now().fixed_offset();
-  let mut due: Vec<Item> = crate::capture::list(conn, None).into_iter().filter(|i| is_due(i, now)).collect();
+  let mut due: Vec<Item> = crate::capture::timed_items(conn).into_iter().filter(|i| is_due(i, now)).collect();
   due.sort_by(|a, b| a.due_at.cmp(&b.due_at));
   if due.is_empty() { return "Nothing due right now.".into(); }
   due.iter().map(|i| {
@@ -65,8 +79,8 @@ struct Fired {
 // must not hold the connection across the network awaits below.
 fn collect_due(conn: &Connection) -> Vec<Fired> {
   let now = chrono::Utc::now().fixed_offset();
-  crate::capture::list(conn, None).into_iter()
-    .filter(|i| i.due_at.is_some() && is_due(i, now))
+  crate::capture::timed_items(conn).into_iter()
+    .filter(|i| is_due(i, now))
     .map(|item| {
       // The bot that captured the item, falling back to the owner bot so a
       // reminder created by an agent (or in the app) still reaches Telegram.
@@ -97,11 +111,14 @@ pub(crate) async fn reminder_loop(app: AppHandle) {
           Err(_) => { failed = true; crate::telegram::log_error(&app, &format!("reminder “{}” not delivered: timed out", line(&f.item))); }
         }
       }
+      let title = if f.item.title.trim().is_empty() { f.item.body.clone() } else { f.item.title.clone() };
       // The app shows it too (App.tsx listens and toasts).
       let _ = app.emit("lumin-reminder", serde_json::json!({
-        "id": f.item.id, "kind": f.item.kind,
-        "title": if f.item.title.trim().is_empty() { f.item.body.clone() } else { f.item.title.clone() },
+        "id": f.item.id, "kind": f.item.kind, "title": title,
       }));
+      // And a system toast when the user is elsewhere (suppressed while focused).
+      let line = if f.item.kind == "habit" { format!("habit: {title}") } else { format!("reminder: {title}") };
+      crate::notify::desktop(&app, "⏰ due now", &line);
 
       if let Ok(conn) = db(&app) {
         let ts = chrono::Utc::now().to_rfc3339();
@@ -127,9 +144,17 @@ pub(crate) async fn reminder_loop(app: AppHandle) {
 pub fn item_due(app: AppHandle, upcoming: Option<bool>) -> Result<Vec<Item>, String> {
   let conn = db(&app)?;
   let now = chrono::Utc::now().fixed_offset();
-  let mut items: Vec<Item> = crate::capture::list(&conn, None).into_iter()
-    .filter(|i| i.status == "active" && i.due_at.is_some())
-    .filter(|i| if upcoming.unwrap_or(false) { !is_due(i, now) } else { is_due(i, now) })
+  let mut items: Vec<Item> = crate::capture::timed_items(&conn).into_iter()
+    .filter(|i| i.status == "active")
+    .filter(|i| {
+      if upcoming.unwrap_or(false) {
+        // Strictly ahead of now — not "anything not currently due", which would
+        // resurrect an item already fired today.
+        i.due_at.as_deref().and_then(parse).map(|d| d > now).unwrap_or(false)
+      } else {
+        is_due(i, now)
+      }
+    })
     .collect();
   items.sort_by(|a, b| a.due_at.cmp(&b.due_at));
   Ok(items)

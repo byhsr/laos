@@ -88,6 +88,11 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   // reasoning as it streams in.
   const [steps, setSteps] = useState<ChatStep[]>([]);
 
+  // A voice turn targeting this agent runs through the store, so the store's
+  // in-flight state (not this component's local `running`) drives the live caret.
+  const storeBusy = useManagerStore((s) => s.busy && s.activeAgentId === agent.id);
+  const chatBusy = running || storeBusy;
+
   const pushStep = (ev: StreamStep) => setSteps((prev) => mergeStep(prev, ev));
   const [error, setError] = useState<string | undefined>(undefined);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -173,6 +178,8 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     cancelledRef.current = false;
     const streamId = newChatStreamId();
     streamIdRef.current = streamId;
+    const t0 = performance.now();
+    let ttftMs: number | undefined;
     setRunning(true); setError(undefined); setSteps([]);
     const userMsg: ChatEntry = { role: 'user', content: text, time: new Date().toLocaleTimeString(), attachments };
     const assistantMsg: ChatEntry = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
@@ -189,6 +196,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     // Batch the streamed deltas — see src/streamBuffer.ts for why.
     const batcher = createDeltaBuffer((text) => {
       if (cancelledRef.current || turnSeq.current !== myTurn) return;
+      if (ttftMs === undefined) ttftMs = performance.now() - t0;
       setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: text } : m)));
     });
     let failed = false;
@@ -209,6 +217,9 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       streamIdRef.current = null;
       // Only flush the tail on success, so a late flush can't overwrite the error.
       if (!failed) batcher.end();
+      // Stamp how long the reply took onto the assistant bubble.
+      const durationMs = performance.now() - t0;
+      setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 && m.role === 'assistant' ? { ...m, durationMs, ttftMs } : m)));
       setRunning(false);
       setSteps([]);
     }
@@ -309,8 +320,11 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                   content={m.content}
                   attachments={m.attachments}
                   steps={steps}
-                  streaming={running && i === messages.length - 1 && m.role === 'assistant'}
-                  onRate={m.role === 'assistant' && i === messages.length - 1 && !running
+                  time={m.time}
+                  durationMs={m.durationMs}
+                  ttftMs={m.ttftMs}
+                  streaming={chatBusy && i === messages.length - 1 && m.role === 'assistant'}
+                  onRate={m.role === 'assistant' && i === messages.length - 1 && !chatBusy
                     ? (signal) => void rateTurn(agent.id, signal, m.content)
                     : undefined}
                 />
@@ -323,7 +337,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             </p>
           )}
           <ChatComposer
-            busy={running}
+            busy={chatBusy}
             modelId={agent.model}
             reasoning={agent.reasoning}
             placeholder={`message ${agent.name}…`}
@@ -428,7 +442,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                 </div>
                 <div className="grid gap-3">
                   {history.map((m, i) => (
-                    <MessageBubble key={i} role={m.role === 'user' ? 'user' : 'assistant'} content={m.content} meta={m.role === 'user' ? 'you' : agent.name} />
+                    <MessageBubble key={i} role={m.role === 'user' ? 'user' : 'assistant'} content={m.content} meta={m.role === 'user' ? 'you' : agent.name} time={m.time} />
                   ))}
                 </div>
               </div>
@@ -438,7 +452,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                 {sessions.length === 0 ? null : (
                   <div className="mt-3 grid gap-1.5">
                     {sessions.map((s) => (
-                      <button key={s.id} className="focus-ring flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2 text-left transition-colors hover:border-foreground/30" onClick={async () => { setViewingSession(s.id); const msgs = await getChatSession(s.id); setHistory(msgs.map((m, i) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: `#${i + 1}` }))); }}>
+                      <button key={s.id} className="focus-ring flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2 text-left transition-colors hover:border-foreground/30" onClick={async () => { setViewingSession(s.id); const msgs = await getChatSession(s.id); setHistory(msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: m.time ?? '' }))); }}>
                         <span className="min-w-0 truncate font-mono text-[11px] text-foreground">{s.title}</span>
                         <span className="shrink-0 font-mono text-[10px] text-muted">{fmtDate(s.updatedAt)}</span>
                       </button>

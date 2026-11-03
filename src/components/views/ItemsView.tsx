@@ -7,9 +7,12 @@ import { Select } from '../ui/Select';
 import { tabCls } from '../ui/tabs';
 import { toast } from '../../hooks/useToast';
 import {
-  ITEM_KINDS, insightAccept, insightDismiss, insightList, itemDelete, itemList, itemSave, itemToggle,
+  ITEM_KINDS, insightAccept, insightDismiss, insightList, itemDelete, itemDue, itemList, itemSave, itemToggle,
   listDestinations, pushItem, reflectNow, reminderSnooze, type Destination, type Insight, type Item,
 } from '../../runtime';
+
+// Kinds that carry a time; the rest are just filed.
+const TIME_KINDS = ['reminder', 'habit', 'todo', 'goal'];
 
 const fmtDue = (iso: string | null) => {
   if (!iso) return '';
@@ -28,13 +31,16 @@ export function ItemsView() {
   const [filter, setFilter] = useState<string>('all');
   const [kind, setKind] = useState<string>('note');
   const [text, setText] = useState('');
+  const [due, setDue] = useState('');
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
 
   const showInsights = filter === 'insights';
+  const showDue = filter === 'due';
   const load = async () => {
     try {
       if (showInsights) setInsights(await insightList('new'));
+      else if (showDue) setItems([...(await itemDue(false)), ...(await itemDue(true))]);
       else setItems(await itemList(filter === 'all' ? undefined : filter));
     } catch (e) { toast(e instanceof Error ? e.message : String(e), 'error'); }
   };
@@ -59,11 +65,13 @@ export function ItemsView() {
     try {
       await itemSave({
         id: '', kind, title: words.slice(0, 7).join(' ') + (words.length > 7 ? '…' : ''), body, url,
-        tags, collection: tags[0] ?? '', status: 'active', due_at: null,
+        tags, collection: tags[0] ?? '', status: 'active',
+        // `toISOString()` carries a Z offset, which the scheduler parses.
+        due_at: due ? new Date(due).toISOString() : null,
         cadence: kind === 'habit' ? 'daily' : '', streak: 0, last_done_at: null, project_id: '',
         fired_at: null, source: 'app', created_at: '', updated_at: '',
       });
-      setText('');
+      setText(''); setDue('');
       await load();
     } catch (e) { toast(e instanceof Error ? e.message : String(e), 'error'); }
   };
@@ -92,7 +100,7 @@ export function ItemsView() {
   return (
     <div className="flex h-full flex-col">
       <div className="mb-4 flex shrink-0 flex-wrap items-center gap-1">
-        {['all', ...ITEM_KINDS, 'insights'].map((k) => (
+        {['all', ...ITEM_KINDS, 'due', 'insights'].map((k) => (
           <button key={k} className={tabCls(filter === k)} onClick={() => setFilter(k)}>{k}</button>
         ))}
         {!showInsights && (
@@ -149,8 +157,24 @@ export function ItemsView() {
                   className={INPUT_CLS}
                 />
               </div>
+              {TIME_KINDS.includes(kind) && (
+                <div className="w-[196px]">
+                  <input
+                    type="datetime-local"
+                    value={due}
+                    onChange={(e) => setDue(e.target.value)}
+                    title="when to remind you"
+                    className={INPUT_CLS}
+                  />
+                </div>
+              )}
               <Button variant="primary" icon={<Plus size={12} />} onClick={() => void add()}>add</Button>
             </div>
+            {TIME_KINDS.includes(kind) && !due && (
+              <p className="mt-2 mb-0 font-mono text-[10px] text-muted">
+                no time set — a {kind} without a time is filed but never reminds you.
+              </p>
+            )}
           </Card>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -160,9 +184,11 @@ export function ItemsView() {
                 <p className="m-0 text-[12px]">
                   {q
                     ? `no items match “${query.trim()}”.`
-                    : filter === 'all'
-                      ? 'nothing saved yet — file items here, or text them to a bot set to capture free text.'
-                      : `no ${filter} items yet.`}
+                    : filter === 'due'
+                      ? 'nothing due — timed reminders and habits appear here.'
+                      : filter === 'all'
+                        ? 'nothing saved yet — file items here, or text them to a bot set to capture free text.'
+                        : `no ${filter} items yet.`}
                 </p>
               </div>
             )}

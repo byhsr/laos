@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, Bot, Check, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { listTelegramLogs, listTelegramBots, saveTelegramBot, deleteTelegramBot, setBotWebhook, clearBotWebhook, terminalList, listDestinations, type TelegramLogEntry, type TelegramBot, type TerminalSession, type Destination } from '../../runtime';
+import { listTelegramLogs, listTelegramBots, saveTelegramBot, deleteTelegramBot, sendTelegramTest, setBotWebhook, clearBotWebhook, terminalList, listDestinations, type TelegramLogEntry, type TelegramBot, type TerminalSession, type Destination } from '../../runtime';
 import { useAgentsStore } from '../../hooks/useAgents';
 import { Button, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -15,7 +15,7 @@ const fmtTime = (s?: string | null) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleTimeString();
 };
 
-const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', terminalId: '', allowedUsers: [], enabled: true, token: '', webhookRegistered: false, capture: false, destinationId: '' });
+const blankBot = (): TelegramBot => ({ id: '', name: '', agentId: 'manager', terminalId: '', allowedUsers: [], enabled: true, token: '', webhookRegistered: false, capture: false, destinationId: '', ownerChatId: '' });
 
 // Telegram: manage multiple bots (each long-polled and routed to an agent), plus
 // the activity log. Polls the log while the view is open.
@@ -28,6 +28,7 @@ export function TelegramView() {
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
 
   const load = async () => setLogs(await listTelegramLogs());
   const loadBots = async () => { setBots(await listTelegramBots()); setTerminals(await terminalList()); setDestinations(await listDestinations()); };
@@ -78,7 +79,7 @@ export function TelegramView() {
               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-background text-muted"><Bot size={14} /></span>
               <div className="min-w-0 flex-1">
                 <b className="block truncate font-mono text-[11px] text-foreground">{b.name}</b>
-                <span className="block truncate font-mono text-[10px] text-muted">→ {b.terminalId ? `terminal: ${terminals.find((t) => t.id === b.terminalId)?.name ?? b.terminalId}` : `agent: ${agentName(b.agentId)}`}{b.capture ? ' · capture' : ''}{b.token ? ' · token set' : ' · no token'}{b.allowedUsers?.length ? ` · ${b.allowedUsers.length} allowed` : ' · unclaimed'}{b.enabled ? '' : ' · disabled'}{b.webhookRegistered ? ' · webhook' : ' · long-poll'}</span>
+                <span className="block truncate font-mono text-[10px] text-muted">→ {b.terminalId ? `terminal: ${terminals.find((t) => t.id === b.terminalId)?.name ?? b.terminalId}` : `agent: ${agentName(b.agentId)}`}{b.capture ? ' · capture' : ''}{b.token ? ' · token set' : ' · no token'}{b.allowedUsers?.length ? ` · ${b.allowedUsers.length} allowed` : ' · unclaimed'}{b.enabled ? '' : ' · disabled'}{b.webhookRegistered ? ' · webhook' : ' · long-poll'}{b.ownerChatId ? ' · reminders chat set' : ''}</span>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 {b.id && (
@@ -147,6 +148,25 @@ export function TelegramView() {
               className={INPUT_CLS}
             />
             <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">Only these Telegram user ids get a reply. Left empty, the first user to message the bot is bound as its owner, then locked to them.</p>
+            <label className={`${FIELD_LABEL_CLS} mt-2`}>reminders chat</label>
+            <div className="flex items-center gap-2">
+              <input
+                value={editing.ownerChatId ?? ''}
+                onChange={(e) => setEditing({ ...editing, ownerChatId: e.target.value })}
+                placeholder="e.g. 123456789"
+                className={INPUT_CLS}
+              />
+              <Button
+                disabled={testing || !editing.id || !editing.token}
+                onClick={async () => {
+                  setTesting(true);
+                  try { await sendTelegramTest(editing.id); toast('test reminder sent', 'success'); }
+                  catch (e) { toast(e instanceof Error ? e.message : String(e), 'error'); }
+                  finally { setTesting(false); }
+                }}
+              >{testing ? 'sending…' : 'send test'}</Button>
+            </div>
+            <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">Reminders fire to this chat. Message the bot and send <span className="text-foreground">/id</span> to get the number. Left blank, it binds to the first chat that messages the bot.</p>
             <div className="mt-1 flex justify-end gap-2">
               <Button onClick={() => setEditing(null)}>cancel</Button>
               <Button variant="primary" icon={<Check size={12} />} disabled={saving} onClick={saveBot}>{saving ? 'saving…' : 'save'}</Button>

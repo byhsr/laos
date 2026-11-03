@@ -7,7 +7,16 @@ import type { Agent, Attachment, ChatStep } from '../types';
 import { createDeltaBuffer } from '../streamBuffer';
 import { mergeStep } from '../chatSteps';
 
-export type ChatEntry = { role: 'user' | 'assistant'; content: string; time: string; attachments?: Attachment[] };
+export type ChatEntry = {
+  role: 'user' | 'assistant';
+  content: string;
+  time: string;
+  attachments?: Attachment[];
+  // Wall-clock latency of the reply, captured live (not persisted). ttft = time
+  // to the first streamed token.
+  durationMs?: number;
+  ttftMs?: number;
+};
 
 // Derives a short, readable title from the first user message.
 const titleFrom = (msg: string) => {
@@ -35,7 +44,9 @@ type ManagerState = {
   loadHistory: (agentId: string) => Promise<void>;
   resumeSession: (agentId: string, sessionId: string, entries: ChatEntry[]) => void;
   reset: (agentId: string) => Promise<void>;
-  send: (message: string, managerAgent: Agent, attachments?: Attachment[]) => Promise<void>;
+  // `isManagerOverride` lets a global caller (live voice) run against a regular
+  // agent; the Manager view leaves it unset and keeps the manager path.
+  send: (message: string, managerAgent: Agent, attachments?: Attachment[], isManagerOverride?: boolean) => Promise<void>;
   cancel: (action: 'pause' | 'delete') => void;
 };
 
@@ -104,7 +115,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     });
   },
 
-  send: async (message, managerAgent, attachments) => {
+  send: async (message, managerAgent, attachments, isManagerOverride) => {
     // Lazily create a session on the first message so every chat is recorded,
     // titled by the first user message.
     if (!get().sessionIds[managerAgent.id]) {
@@ -121,6 +132,8 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     const myTurn = ++turnSeq;
     cancelledTurn = false;
     const streamId = newChatStreamId();
+    const t0 = performance.now();
+    let ttftMs: number | undefined;
     set({ busy: true, steps: [], activeStreamId: streamId, activeAgentId: agentId });
     const userEntry: ChatEntry = { role: 'user', content: message, time: new Date().toLocaleTimeString(), attachments };
     // Seed an empty assistant bubble that grows as tokens stream in.
@@ -133,6 +146,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     // (and re-parsing its markdown) once per token.
     const batcher = createDeltaBuffer((text) => {
       if (cancelledTurn || myTurn !== turnSeq) return;
+      if (ttftMs === undefined) ttftMs = performance.now() - t0;
       set((s) => {
         const list = s.conversations[agentId] ?? [];
         const updated = list.map((e, i) => (i === list.length - 1 ? { ...e, content: text } : e));
@@ -141,7 +155,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     });
     let failed = false;
     try {
-      await streamChat(managerAgent, message, true, (delta) => batcher.push(delta), (confirmReq) => {
+      await streamChat(managerAgent, message, isManagerOverride ?? true, (delta) => batcher.push(delta), (confirmReq) => {
         // Pop the confirmation dialog; the backend waits for the decision.
         useConfirmStore.getState().request(confirmReq);
       }, get().sessionIds[managerAgent.id] ?? undefined, (ev) => set((s) => ({ steps: mergeStep(s.steps, ev) })), streamId, attachments);
@@ -160,6 +174,13 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       // Only flush the tail on success: after a failure the bubble already shows
       // the error, and a late flush would overwrite it with partial text.
       if (!failed) batcher.end();
+      // Stamp how long the reply took onto the assistant bubble.
+      const durationMs = performance.now() - t0;
+      set((s) => {
+        const list = s.conversations[agentId] ?? [];
+        const updated = list.map((e, i) => (i === list.length - 1 && e.role === 'assistant' ? { ...e, durationMs, ttftMs } : e));
+        return { conversations: { ...s.conversations, [agentId]: updated }, messages: updated };
+      });
       set({ busy: false, steps: [], activeStreamId: null, activeAgentId: null });
     }
   },

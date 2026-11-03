@@ -92,12 +92,20 @@ personal*, *Notion — work*), give each a destination, and point a bot at each.
 
 `reminders.rs` is the app's only time-based machinery: a **30 s tick** that
 
-1. finds `items` where `kind IN ('reminder','habit')`, `status='active'`, `due_at <= now`,
-   `fired_at IS NULL`;
-2. messages the bot that captured it (its `owner_chat_id`, filled from the first authorized
-   message) via `telegram::notify`;
-3. emits a `lumin-reminder` Tauri event, which `App.tsx` toasts;
+1. finds every `items` row with a `due_at`, `status='active'` and `fired_at IS NULL` whose time has
+   passed (`capture::timed_items` — no row cap, unlike `list`'s newest-500). The time parses as
+   RFC3339, and a naive time with no offset is read as local, so an extractor-resolved time still
+   fires;
+2. messages the bot that captured it (its `owner_chat_id`, settable in the Telegram view or filled
+   from the first authorized message) via `telegram::notify`, falling back to the first bot that
+   has a chat;
+3. emits a `lumin-reminder` Tauri event, which `App.tsx` toasts, plus a desktop toast (suppressed
+   while the window is focused);
 4. marks it fired, or for a `cadence` rolls `due_at` forward to the next occurrence.
+
+A reminder needs a **time**: the Lumin inbox has a date/time field on add (for `reminder`, `habit`,
+`todo` and `goal`), and its **due** tab lists what's due and upcoming. An item with no `due_at` is
+filed but never fires.
 
 **It is in-app**: it runs while the app is open (the tray keeps it alive), and a closed app
 fires overdue items on the next launch. There is no OS-level service.
