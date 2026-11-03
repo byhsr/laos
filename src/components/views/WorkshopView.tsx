@@ -21,13 +21,14 @@ const TABS: { key: WorkshopTab; label: string }[] = [
 
 export function WorkshopView({
   skills, scripts, projects, activeProjectId, tools, integrations,
-  onAddSkill, onEditSkill, onDeleteSkill,
+  onAddSkill, onEditSkill, onDeleteSkill, onImportSkill, onExportSkill,
   onAddScript, onEditScript, onDeleteScript,
   onAddProject, onEditProject, onDeleteProject, onSetActiveProject,
   onAddTool, onEditTool, onDeleteTool,
 }: {
   skills: Skill[]; scripts: Script[]; projects: Project[]; activeProjectId: string; tools: Tool[]; integrations: Integration[];
   onAddSkill: () => void; onEditSkill: (s: Skill) => void; onDeleteSkill: (id: string) => Promise<void>;
+  onImportSkill: () => void; onExportSkill: () => void;
   onAddScript: () => void; onEditScript: (s: Script) => void; onDeleteScript: (id: string) => Promise<void>;
   onAddProject: () => void; onEditProject: (p: Project) => void; onDeleteProject: (id: string) => Promise<void>; onSetActiveProject: (id: string) => void;
   onAddTool: () => void; onEditTool: (t: Tool) => void; onDeleteTool: (id: string) => Promise<void>;
@@ -45,7 +46,7 @@ export function WorkshopView({
 
       {/* Sub-views stay mounted so their local state survives tab switches. */}
       <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'skills' ? '' : 'hidden'}`}>
-        <SkillsView skills={skills} onAdd={onAddSkill} onEdit={onEditSkill} onDelete={onDeleteSkill} />
+        <SkillsView skills={skills} onAdd={onAddSkill} onEdit={onEditSkill} onDelete={onDeleteSkill} onImport={onImportSkill} onExport={onExportSkill} />
       </div>
       <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'scripts' ? '' : 'hidden'}`}>
         <ScriptsView scripts={scripts} onAdd={onAddScript} onEdit={onEditScript} onDelete={onDeleteScript} />

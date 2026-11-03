@@ -34,7 +34,7 @@ import { KnowledgeBaseView } from './components/views/KnowledgeBaseView';
 import { TerminalView } from './components/views/TerminalView';
 import { ItemsView } from './components/views/ItemsView';
 import { NotificationsView } from './components/views/NotificationsView';
-import { SkillFormDrawer } from './components/views/SkillsView';
+import { SkillFormDrawer, SkillsTransferModal } from './components/views/SkillsView';
 import { ScriptFormDrawer } from './components/views/ScriptsView';
 import { ProjectFormDrawer } from './components/views/ProjectsView';
 import { Toaster } from './components/ui/Toaster';
@@ -180,6 +180,9 @@ export default function App() {
   const goBack = () => setNav((n) => (n.i > 0 ? { ...n, i: n.i - 1 } : n));
   const goForward = () => setNav((n) => (n.i < n.stack.length - 1 ? { ...n, i: n.i + 1 } : n));
   const [drawerForm, setDrawerForm] = useState<DrawerForm>(null);
+  // The skills import/export modal (Workshop → skills). Separate from `drawerForm`
+  // because it is not a create/edit drawer.
+  const [skillTransfer, setSkillTransfer] = useState<'import' | 'export' | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [workflowToOpen, setWorkflowToOpen] = useState<string | null>(null);
   const building = view === 'builder';
@@ -363,6 +366,8 @@ export default function App() {
               onAddSkill={() => setDrawerForm({ kind: 'skill', editing: emptySkill(), isNew: true })}
               onEditSkill={(s) => setDrawerForm({ kind: 'skill', editing: s, isNew: false })}
               onDeleteSkill={async (id) => { await deleteSkill(id); setAgents((prev) => prev.map((a) => ({ ...a, skillIds: (a.skillIds ?? []).filter((s) => s !== id) }))); toast('skill deleted', 'success'); }}
+              onImportSkill={() => setSkillTransfer('import')}
+              onExportSkill={() => setSkillTransfer('export')}
               onAddScript={() => setDrawerForm({ kind: 'script', editing: emptyScript(), isNew: true })}
               onEditScript={(s) => setDrawerForm({ kind: 'script', editing: s, isNew: false })}
               onDeleteScript={async (id) => { await deleteScript(id); toast('script deleted', 'success'); }}
@@ -410,6 +415,13 @@ export default function App() {
           editing={drawerForm.editing} isNew={drawerForm.isNew} scripts={scripts}
           onClose={() => setDrawerForm(null)}
           onSave={async (s) => { await saveSkill(s); setDrawerForm(null); toast('skill saved', 'success'); }}
+        />
+      )}
+      {skillTransfer && (
+        <SkillsTransferModal
+          mode={skillTransfer}
+          onClose={() => setSkillTransfer(null)}
+          onImported={loadSkills}
         />
       )}
       {drawerForm && drawerForm.kind === 'script' && (

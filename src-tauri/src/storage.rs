@@ -435,6 +435,220 @@ pub fn delete_skill(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// Skills — import / export (the Agent Skills `SKILL.md` format)
+//
+// A skill moves as a single markdown file: `---` frontmatter carrying `name` and
+// `description`, then a body of instructions. Reference material is written under
+// a `## Reference` heading and split back off on import, so a skill round-trips
+// through export → import. `script_ids` are local ids and are not carried; an
+// existing skill keeps its own when a same-named file updates it (so re-importing
+// a folder is idempotent instead of duplicating).
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillImportReport { pub imported: usize, pub updated: usize, pub skipped: usize, pub messages: Vec<String> }
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillExportReport { pub dir: String, pub count: usize }
+
+/// One markdown file read in the webview — drag-and-drop hands back contents, not
+/// a path (the same reason `ChatComposer` reads dropped files directly).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDraft { pub name: String, pub content: String }
+
+#[tauri::command]
+pub async fn import_skills(app: AppHandle, path: String) -> Result<SkillImportReport, String> {
+  // Folder walks + file reads are blocking; keep them off the command thread.
+  tokio::task::spawn_blocking(move || import_skills_at(&app, &path)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn import_skill_files(app: AppHandle, files: Vec<SkillDraft>) -> Result<SkillImportReport, String> {
+  tokio::task::spawn_blocking(move || import_drafts_at(&app, files)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn export_skills(app: AppHandle, path: Option<String>) -> Result<SkillExportReport, String> {
+  tokio::task::spawn_blocking(move || export_skills_to(&app, path.as_deref())).await.map_err(|e| e.to_string())?
+}
+
+/// Reads every `.md` at `path` (a folder, walked recursively, or a single file).
+fn import_skills_at(app: &AppHandle, path: &str) -> Result<SkillImportReport, String> {
+  let root = std::path::PathBuf::from(path.trim());
+  if !root.exists() { return Err(format!("Path not found: {}", root.display())); }
+  let mut files = Vec::new();
+  collect_markdown(&root, &mut files);
+  files.sort();
+  if files.is_empty() { return Err("No .md files found at that path.".into()); }
+  let draft = |file: &std::path::Path| {
+    std::fs::read_to_string(file).ok().map(|content| SkillDraft {
+      name: file.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string(),
+      content,
+    })
+  };
+  import_drafts_at(app, files.iter().filter_map(|f| draft(f)).collect())
+}
+
+/// The shared import: parse each markdown draft and upsert it (by name) so a
+/// re-run updates existing skills instead of duplicating them.
+fn import_drafts_at(app: &AppHandle, drafts: Vec<SkillDraft>) -> Result<SkillImportReport, String> {
+  if drafts.is_empty() { return Err("Nothing to import — no readable .md files.".into()); }
+  let conn = db(app)?;
+  let stamp = chrono::Utc::now().timestamp_millis();
+  let mut report = SkillImportReport { imported: 0, updated: 0, skipped: 0, messages: Vec::new() };
+  let mut fresh = 0usize;
+  for draft in &drafts {
+    let fallback = std::path::Path::new(&draft.name).file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let Some(parsed) = parse_skill_file(&draft.content, fallback) else { report.skipped += 1; continue };
+    upsert_skill(&conn, &parsed, format!("skill-{stamp}-{fresh}"), &mut report)?;
+    fresh += 1;
+  }
+  Ok(report)
+}
+
+/// Upserts one parsed skill: a same-named row is updated in place (keeping its id
+/// and any attached scripts), otherwise `new_id` is inserted.
+fn upsert_skill(conn: &Connection, parsed: &ParsedSkill, new_id: String, report: &mut SkillImportReport) -> Result<(), String> {
+  let existing: Option<String> = conn.query_row(
+    "SELECT id FROM skills WHERE lower(name)=lower(?1) LIMIT 1", params![parsed.name], |r| r.get(0),
+  ).ok();
+  match existing {
+    Some(id) => {
+      conn.execute(
+        "UPDATE skills SET description=?1, content=?2, docs=?3, updated_at=?4 WHERE id=?5",
+        params![parsed.description, parsed.content, parsed.docs, chrono::Utc::now().to_rfc3339(), id],
+      ).map_err(|e| e.to_string())?;
+      report.updated += 1;
+      report.messages.push(format!("updated {}", parsed.name));
+    }
+    None => {
+      conn.execute(
+        "INSERT INTO skills (id, name, description, content, docs, script_ids, updated_at) VALUES (?1,?2,?3,?4,?5,'[]',?6)",
+        params![new_id, parsed.name, parsed.description, parsed.content, parsed.docs, chrono::Utc::now().to_rfc3339()],
+      ).map_err(|e| e.to_string())?;
+      report.imported += 1;
+      report.messages.push(format!("imported {}", parsed.name));
+    }
+  }
+  Ok(())
+}
+
+fn export_skills_to(app: &AppHandle, path: Option<&str>) -> Result<SkillExportReport, String> {
+  let conn = db(app)?;
+  let mut stmt = conn.prepare("SELECT id, name, description, content, docs, script_ids FROM skills ORDER BY name").map_err(|e| e.to_string())?;
+  let rows = stmt.query_map([], |row| {
+    let script_ids: String = row.get(5)?;
+    Ok(SkillRecord { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, content: row.get(3)?, docs: row.get(4)?, script_ids: parse_json_vec(&script_ids) })
+  }).map_err(|e| e.to_string())?;
+  let mut skills = Vec::new();
+  for row in rows { skills.push(row.map_err(|e| e.to_string())?); }
+  if skills.is_empty() { return Err("There are no skills to export.".into()); }
+
+  let dir = match path.map(str::trim).filter(|p| !p.is_empty()) {
+    Some(p) => std::path::PathBuf::from(p),
+    None => default_skills_dir(),
+  };
+  std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
+  for s in &skills {
+    let folder = dir.join(slug(&s.name));
+    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    std::fs::write(folder.join("SKILL.md"), render_skill_file(s)).map_err(|e| e.to_string())?;
+  }
+  Ok(SkillExportReport { dir: dir.to_string_lossy().to_string(), count: skills.len() })
+}
+
+struct ParsedSkill { name: String, description: String, content: String, docs: String }
+
+/// Reads a `SKILL.md`: a leading `---` frontmatter block (`name`, `description`)
+/// then a body of instructions, with reference material under `## Reference`.
+/// None when there is no frontmatter block or no usable name.
+fn parse_skill_file(text: &str, fallback_name: &str) -> Option<ParsedSkill> {
+  let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+  let mut lines = text.lines();
+  if lines.next()?.trim_end() != "---" { return None; }
+  let (mut name, mut description) = (String::new(), String::new());
+  let mut closed = false;
+  let mut body: Vec<&str> = Vec::new();
+  for line in lines {
+    if closed { body.push(line); continue; }
+    if line.trim_end() == "---" { closed = true; continue; }
+    if let Some(v) = line.strip_prefix("name:") { name = unquote(v); }
+    else if let Some(v) = line.strip_prefix("description:") { description = unquote(v); }
+  }
+  if !closed { return None; }
+  let name = if name.trim().is_empty() { fallback_name.trim().to_string() } else { name.trim().to_string() };
+  if name.is_empty() { return None; }
+  let (content, docs) = split_reference(&body.join("\n"));
+  Some(ParsedSkill { name, description: description.trim().to_string(), content, docs })
+}
+
+/// Strips a matching pair of single or double quotes from a frontmatter value.
+fn unquote(v: &str) -> String {
+  let v = v.trim();
+  for q in ['"', '\''] {
+    if let Some(inner) = v.strip_prefix(q).and_then(|s| s.strip_suffix(q)) { return inner.to_string(); }
+  }
+  v.to_string()
+}
+
+/// Splits a body at a `## Reference` heading into instructions and reference
+/// material — the inverse of `render_skill_file`.
+fn split_reference(body: &str) -> (String, String) {
+  let (mut content, mut docs) = (Vec::new(), Vec::new());
+  let mut in_docs = false;
+  for line in body.lines() {
+    if !in_docs && line.trim_end().eq_ignore_ascii_case("## reference") { in_docs = true; continue; }
+    if in_docs { docs.push(line); } else { content.push(line); }
+  }
+  (content.join("\n").trim().to_string(), docs.join("\n").trim().to_string())
+}
+
+/// Renders a skill into the interchange format `import_skills` reads back.
+fn render_skill_file(s: &SkillRecord) -> String {
+  let mut out = format!("---\nname: {}\n", s.name.trim());
+  if !s.description.trim().is_empty() { out.push_str(&format!("description: {}\n", s.description.trim())); }
+  out.push_str("---\n\n");
+  out.push_str(s.content.trim());
+  out.push('\n');
+  if !s.docs.trim().is_empty() { out.push_str(&format!("\n## Reference\n\n{}\n", s.docs.trim())); }
+  out
+}
+
+/// A filename-safe folder name for a skill.
+fn slug(name: &str) -> String {
+  let mut s: String = name.trim().to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+  while s.contains("--") { s = s.replace("--", "-"); }
+  let s = s.trim_matches('-');
+  if s.is_empty() { "skill".to_string() } else { s.to_string() }
+}
+
+/// Every `.md` file at `root` (or `root` itself when it is a file), recursively.
+fn collect_markdown(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+  if root.is_file() { if is_markdown(root) { out.push(root.to_path_buf()); } return; }
+  let Ok(entries) = std::fs::read_dir(root) else { return };
+  for entry in entries.flatten() {
+    let path = entry.path();
+    if path.is_dir() { collect_markdown(&path, out); }
+    else if is_markdown(&path) { out.push(path); }
+  }
+}
+
+fn is_markdown(p: &std::path::Path) -> bool {
+  p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("md")).unwrap_or(false)
+}
+
+/// Where an export lands when the user names no folder: their Downloads.
+fn default_skills_dir() -> std::path::PathBuf {
+  match std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+    Ok(home) => std::path::Path::new(&home).join("Downloads").join("lup-skills"),
+    Err(_) => std::env::temp_dir().join("lup-skills"),
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Scripts (reusable runnable commands / custom apps)
 // ---------------------------------------------------------------------------
 
@@ -644,6 +858,62 @@ pub fn delete_workflow(app: AppHandle, id: String) -> Result<(), String> {
   let conn = db(&app)?;
   conn.execute("DELETE FROM workflows WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn skill(name: &str, description: &str, content: &str, docs: &str) -> SkillRecord {
+    SkillRecord { id: "s1".into(), name: name.into(), description: description.into(), content: content.into(), docs: docs.into(), script_ids: Vec::new() }
+  }
+
+  #[test]
+  fn a_skill_round_trips_through_export_and_import() {
+    let out = render_skill_file(&skill("Cold email writer", "when writing outreach", "Write plainly.", "Tone: warm."));
+    let parsed = parse_skill_file(&out, "fallback").unwrap();
+    assert_eq!(parsed.name, "Cold email writer");
+    assert_eq!(parsed.description, "when writing outreach");
+    assert_eq!(parsed.content, "Write plainly.");
+    assert_eq!(parsed.docs, "Tone: warm.");
+  }
+
+  #[test]
+  fn frontmatter_name_defaults_to_the_files_stem() {
+    let parsed = parse_skill_file("---\ndescription: no name here\n---\n\nDo the thing.\n", "my-skill").unwrap();
+    assert_eq!(parsed.name, "my-skill");
+    assert_eq!(parsed.content, "Do the thing.");
+    assert!(parsed.docs.is_empty());
+  }
+
+  #[test]
+  fn a_file_without_a_closed_frontmatter_block_is_not_a_skill() {
+    assert!(parse_skill_file("# Just a doc\n", "x").is_none());
+    assert!(parse_skill_file("---\nname: broken\nstill the frontmatter\n", "x").is_none());
+  }
+
+  #[test]
+  fn export_names_are_filename_safe() {
+    assert_eq!(slug("Cold Email Writer!"), "cold-email-writer");
+    assert_eq!(slug("  "), "skill");
+  }
+
+  #[test]
+  fn importing_the_same_name_updates_in_place_instead_of_duplicating() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+      "CREATE TABLE skills (id TEXT PRIMARY KEY, name TEXT, description TEXT, content TEXT, docs TEXT, script_ids TEXT NOT NULL DEFAULT '[]', updated_at TEXT)",
+    ).unwrap();
+    let mut report = SkillImportReport { imported: 0, updated: 0, skipped: 0, messages: Vec::new() };
+    let first = ParsedSkill { name: "Cold email".into(), description: String::new(), content: "v1".into(), docs: String::new() };
+    upsert_skill(&conn, &first, "skill-1".into(), &mut report).unwrap();
+    let second = ParsedSkill { name: "cold EMAIL".into(), description: String::new(), content: "v2".into(), docs: String::new() };
+    upsert_skill(&conn, &second, "skill-2".into(), &mut report).unwrap();
+    assert_eq!((report.imported, report.updated), (1, 1));
+    let (id, content): (String, String) = conn.query_row("SELECT id, content FROM skills", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!(id, "skill-1", "the second import should update, not insert");
+    assert_eq!(content, "v2");
+  }
 }
 
 // Picks a reachable model for the Manager: prefer an enabled cloud model

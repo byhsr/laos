@@ -65,7 +65,7 @@ Registered in `main.rs::invoke_handler`. The frontend wrapper for each lives in 
 
 | Group | Commands | Module |
 | --- | --- | --- |
-| Storage bootstrap + CRUD | `initialize_storage`, `list_model_configs`, `save_model_config`, `delete_model_config`, `list_tools`, `save_tool`, `delete_tool`, `list_agents`, `save_agent`, `delete_agent`, `list_workflows`, `save_workflow`, `delete_workflow`, `list_knowledge_docs`, `get_knowledge_doc`, `save_knowledge_doc`, `delete_knowledge_doc`, `list_skills`, `save_skill`, `delete_skill` | `storage.rs` |
+| Storage bootstrap + CRUD | `initialize_storage`, `list_model_configs`, `save_model_config`, `delete_model_config`, `list_tools`, `save_tool`, `delete_tool`, `list_agents`, `save_agent`, `delete_agent`, `list_workflows`, `save_workflow`, `delete_workflow`, `list_knowledge_docs`, `get_knowledge_doc`, `save_knowledge_doc`, `delete_knowledge_doc`, `list_skills`, `save_skill`, `delete_skill`, `import_skills`, `export_skills` | `storage.rs` |
 | Integrations | `list_integrations`, `save_integration_config`, `test_integration`, `start_oauth`, `connect_oauth`, `complete_oauth` | `integrations.rs` |
 | MCP | `list_mcp_servers`, `save_mcp_server`, `delete_mcp_server`, `test_mcp_server`, `import_mcp_tools` | `mcp.rs` |
 | Execution | `execute_agent`, `execute_workflow` | `agents.rs`, `workflows.rs` |
@@ -135,8 +135,8 @@ chat.rs     ── top-level command
 ## Workflow import / export
 
 Workflows move in and out as JSON, entirely in the webview (a Blob download plus a hidden
-`<input type=file>`) — the same permission-free pattern the Memory view uses; no dialog/fs
-plugin is wired up.
+`<input type=file>`) — the same permission-free pattern the Memory view uses. (The skills transfer
+below is the one import path that does use the native `tauri-plugin-dialog`.)
 
 An export is `{ version: 1, kind: 'lup-workflow', exportedAt, workflow: { name, nodes, edges } }`;
 **export all** packs every workflow under `kind: 'lup-workflows'`. Runs are not exported (they
@@ -145,3 +145,18 @@ live in `workflow_runs`, keyed by workflow id).
 Import validates `kind`/shape and mints a **fresh id** before saving, so it can never overwrite
 an existing workflow — `storage::save_workflow` upserts by id. `CanvasView.tsx` owns this; the
 buttons sit in the builder header (import / export) and the list header (import / export all).
+
+## Skill import / export
+
+Skills move as `SKILL.md` files — the Agent Skills format — one folder per skill: `---`
+frontmatter carrying `name` and `description`, then the body of instructions, with reference
+material under a `## Reference` heading. `storage::export_skills` writes one per skill (default
+destination: `~/Downloads/lup-skills`); `storage::import_skills` reads every `.md` under a
+folder (or a single file), and `storage::import_skill_files` takes markdown read in the webview.
+Either way a skill is upserted by name, so re-importing is idempotent instead of duplicating. `script_ids` are local ids and are not carried; a same-named skill keeps its own.
+
+Unlike workflows, this runs in the backend (`storage.rs`) rather than the webview: the unit is a
+folder of files, not a single download, and the backend already owns filesystem access. The UI
+is the import / export modal in Workshop → skills. It offers the native folder picker
+(`tauri-plugin-dialog`, the only place it is used) and a drag-and-drop panel; dropped entries are
+read in the webview (the file contents, not a path), the same approach `ChatComposer` uses.

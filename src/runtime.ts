@@ -417,6 +417,27 @@ export async function deleteSkill(id: string): Promise<void> {
   await invoke('delete_skill', { id });
 }
 
+// Import skills from a folder (or a single .md file) and export them back, as
+// `SKILL.md` files in the Agent Skills format.
+export type SkillImportReport = { imported: number; updated: number; skipped: number; messages: string[] };
+export type SkillExportReport = { dir: string; count: number };
+
+export async function importSkills(path: string): Promise<SkillImportReport> {
+  return await invoke<SkillImportReport>('import_skills', { path });
+}
+
+// Drag-and-drop hands back file contents, not a path, so those go through a
+// separate command.
+export type SkillDraft = { name: string; content: string };
+
+export async function importSkillFiles(files: SkillDraft[]): Promise<SkillImportReport> {
+  return await invoke<SkillImportReport>('import_skill_files', { files });
+}
+
+export async function exportSkills(path: string): Promise<SkillExportReport> {
+  return await invoke<SkillExportReport>('export_skills', { path });
+}
+
 // Scripts (reusable runnable commands / custom apps).
 export async function listScripts(): Promise<Script[]> {
   try {

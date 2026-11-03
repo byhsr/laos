@@ -9,6 +9,59 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-03 — skill import / export
+
+- **Import + export agent skills** in the Agent Skills `SKILL.md` format. `storage.rs`:
+  `import_skills` reads every `.md` under a folder (or a single file) — `---` frontmatter (`name`,
+  `description`) plus a body of instructions, with reference material under a `## Reference` heading —
+  and upserts by name, so re-importing a folder updates in place instead of duplicating.
+  `export_skills` writes one `SKILL.md` per skill (default `~/Downloads/lup-skills`). `script_ids` are
+  local ids and are not carried; a same-named skill keeps its own. Both take the filesystem path in the
+  backend (the unit is a folder of files, not a single download — unlike the workflow JSON pattern) and
+  run off the command thread via `spawn_blocking`.
+- **UI:** `import` / `export` buttons on Workshop → skills open `SkillsTransferModal` (`SkillsView.tsx`).
+  Import takes a folder from the new native picker or markdown dropped onto the panel; a drop is read in
+  the webview and sent to `storage::import_skill_files` (the composer's drop pattern — drag-and-drop has
+  no path). `runtime.ts` gained `importSkills` / `importSkillFiles` / `exportSkills`, and the modal reloads
+  the skills store after an import. Passed through `WorkshopView` and mounted from `App.tsx`. The window
+  keeps `dragDropEnabled: false`, which is what lets HTML5 drops work.
+- **Native dialog plugin.** Added `tauri-plugin-dialog` (`Cargo.toml`, `main.rs`) + `@tauri-apps/plugin-dialog`
+  + the `dialog:default` capability — the first (and only) place the app uses a native folder picker.
+- Docs: `docs/architecture.md` (command table + a *Skill import / export* section).
+
+**Verified:** `cargo test` — **78 pass** (was 73; +4 parse/render/slug, +1 upsert-by-name).
+`npm run build` — `tsc -b` + `vite build` clean.
+
+**Note / open:** the shell had `NODE_ENV=production` with npm `omit=dev`, so `npm install` pruned the
+devDependencies — restored with `npm install --include=dev`. The native picker and drag-and-drop were not
+exercised in this session (no GUI run). Only `.md` files with a frontmatter `name` import; other markdown
+is counted as skipped.
+
+---
+
+## 2026-11-03 — yt-dlp download tool
+
+- **`yt_dlp` tool.** `tools/ytdlp.rs` (new): wraps the yt-dlp CLI so an agent (and the Manager) can save a
+  video (merged to mp4) or extract its audio (mp3) from a URL into a folder the user can find. Params:
+  `url` (required), `mode` (`video` | `audio`, default `video`), `outputDir` (defaults to the user's
+  Downloads), `filename` (base name; default the site's own title), `playlist` (default false →
+  `--no-playlist`, so a video that sits inside a playlist doesn't pull the whole list). Gated on `host_fs` —
+  it shells out and writes to disk, the `monid` precedent. Wired in `agents::build_tools` (the host_fs
+  block), the Manager tool list in `chat.rs`, and `manager_turn`, and listed in the Manager prompt
+  (`build_manager_system_prompt`). A pure `shell_line` builds the flags, so the command is covered by tests
+  without yt-dlp installed. Not on the confirmation list — like the other `host_fs` tools, the grant is the
+  opt-in. Docs updated: the router-tools rows in `ORCHESTRATION.md` and `docs/tool-calls.md`.
+
+**Verified:** `cargo test` — **73 pass** (was 69; +4 ytdlp). `npm run build` — `tsc -b` + `vite build` clean
+(frontend untouched, so no UI change was needed). One pre-existing warning is left alone: `unused import:
+clip` in `tools/monid.rs`, unrelated to this change.
+
+**Open / to confirm at runtime:** yt-dlp must be on PATH, and ffmpeg for the audio-extract and mp4-merge
+steps; when either is missing the tool returns the CLI's own error. Downloads land in the user's Downloads
+by default, which is why the tool needs the `host_fs` grant.
+
+---
+
 ## 2026-11-03 — agent-owned items, notification queue, connections layer, new tools
 
 The "next iteration" batch: agent work separated from the user's own, reminders made durable, a

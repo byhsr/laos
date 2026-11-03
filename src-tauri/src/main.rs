@@ -89,6 +89,8 @@ fn main() {
     .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
     // OS toasts for reminders, insights and finished background work.
     .plugin(tauri_plugin_notification::init())
+    // Native folder / file pickers (skills import & export).
+    .plugin(tauri_plugin_dialog::init())
     // The global voice hotkey: bring the window forward, then tell the frontend
     // to toggle live voice mode. Registered below from the persisted setting.
     .plugin(
@@ -172,6 +174,9 @@ fn main() {
       storage::list_skills,
       storage::save_skill,
       storage::delete_skill,
+      storage::import_skills,
+      storage::import_skill_files,
+      storage::export_skills,
       // Scripts (reusable runnable commands / custom apps)
       storage::list_scripts,
       storage::save_script,
