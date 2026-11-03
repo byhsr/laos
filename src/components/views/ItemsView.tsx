@@ -22,6 +22,17 @@ const fmtDue = (iso: string | null) => {
   return `${late ? '⚠ ' : ''}${d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
 };
 
+// When it was captured: the clock time if today, else the date.
+const fmtWhen = (iso: string) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
+
 // The Lumin inbox: everything captured — notes, todos, reminders, goals, links
 // and habits — plus the insights the learning layer proposes.
 export function ItemsView() {
@@ -209,6 +220,9 @@ export function ItemsView() {
                       <span className="block truncate font-mono text-[10px] text-muted">{it.body}</span>
                     )}
                   </div>
+                  {it.created_at && (
+                    <span className="shrink-0 font-mono text-[10px] text-muted/70" title={`created ${new Date(it.created_at).toLocaleString()}`}>{fmtWhen(it.created_at)}</span>
+                  )}
                   {it.streak > 0 && <span className="shrink-0 font-mono text-[10px] text-muted">{it.streak}🔥</span>}
                   {it.due_at && <span className="shrink-0 font-mono text-[10px] text-muted">{fmtDue(it.due_at)}</span>}
                   {/* The title keeps the row; the rest appears on hover so a row
