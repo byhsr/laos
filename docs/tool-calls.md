@@ -49,7 +49,8 @@ Caps and helpers:
 | Host-filesystem tools | `agents::build_tools` when `host_fs` is granted | `search_files`, `read_file_any`, `run_command` |
 | PC control tools | `agents::build_tools` (and the Manager) when `pc_control` is granted (`tools::desktop_tools`) | `screen_capture`, `mouse_click`, `type_text`, `press_keys`, `launch_app`, `lock_screen`, … |
 | Manager tools | `manager::manager_tools()` | `create_agent`, `run_workflow`, `delegate_task`, `recall_memory`, `knowledge_base` |
-| Shared memory tools (every agent) | `agents::build_tools` (all agents) + `chat.rs`/`manager.rs` (the Manager) | `knowledge_base` (the one store any agent reads/writes — `crate::knowledge::run`), `remember` |
+| Shared memory tools (every agent) | `agents::build_tools` (all agents) + `chat.rs`/`manager.rs` (the Manager) | `knowledge_base` (the one store any agent reads/writes — `crate::knowledge::run`), `remember`, `items`, `current_datetime` |
+| Router tools | `agents::build_tools` when `host_fs` is granted; `manager_turn`/`chat.rs` for the Manager | `monid` (drives the Monid CLI: `discover` → `inspect` → `run`) |
 | MCP tools for the Manager | `agents::all_mcp_tools`, merged into `manager_tools()` | every enabled `kind='mcp'` row (the Manager has no per-agent tool picker) |
 | Inline (tool-call loops) | `chat.rs`, `agents.rs`, `manager.rs` | the loop itself |
 
@@ -161,8 +162,9 @@ read-only ones (`screen_capture`, `list_windows`, `read_clipboard`) do not — a
 vision-control loop issues many of them, and the once-per-agent `pc_control`
 grant is the real opt-in.
 
-Everything else (listers, `get_workspace_status`, `recall_memory`, `knowledge_base`
-list/get/search, `remember`, `search_files`, `read_file_any`, `get_task_status`) executes without asking.
+everything else (listers, `get_workspace_status`, `recall_memory`, `knowledge_base`
+list/get/search, `remember`, `search_files`, `read_file_any`, `get_task_status`,
+`current_datetime`) executes without asking.
 
 **The flow:**
 

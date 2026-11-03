@@ -8,6 +8,7 @@ mod browser;
 mod capture;
 mod chat;
 mod classify;
+mod connections;
 mod db;
 mod destinations;
 mod embed;
@@ -25,6 +26,7 @@ mod memory;
 mod mic;
 mod models;
 mod notify;
+mod notifications;
 mod provider;
 mod refile;
 mod reminders;
@@ -186,6 +188,7 @@ fn main() {
       integrations::start_oauth,
       integrations::connect_oauth,
       integrations::complete_oauth,
+      integrations::refresh_google_token,
       // MCP connector (stdio)
       mcp::list_mcp_servers,
       mcp::save_mcp_server,
@@ -301,6 +304,13 @@ fn main() {
       // Reminders + habits (scheduler)
       reminders::item_due,
       reminders::reminder_snooze,
+      // Notification queue (the durable inbox behind reminders/insights/finished work)
+      notifications::list_notifications,
+      notifications::notification_unread_count,
+      notifications::mark_notification_read,
+      notifications::dismiss_notification,
+      notifications::mark_all_notifications_read,
+      notifications::clear_notifications,
       // Learning layer (insights)
       insights::insight_list,
       insights::insight_accept,
@@ -335,6 +345,12 @@ fn main() {
       storage::list_providers,
       storage::save_provider,
       storage::delete_provider,
+      // Resource / connection / adapter layer
+      connections::list_adapters,
+      connections::list_connections,
+      connections::list_resources,
+      connections::save_resource,
+      connections::delete_resource,
     ])
     .build(tauri::generate_context!())
     .expect("error while running Local Agent OS")

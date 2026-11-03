@@ -1,7 +1,8 @@
-import { Blocks, BookOpen, Bot, Brain, Home, Lightbulb, ListChecks, MoreHorizontal, Send, Settings, SquareTerminal, Terminal, Workflow } from 'lucide-react';
+import { Bell, Blocks, BookOpen, Bot, Brain, Home, Lightbulb, ListChecks, MoreHorizontal, Send, Settings, SquareTerminal, Terminal, Workflow } from 'lucide-react';
 import type { View } from '../types';
 import { navLabel, useNavLabels, type NavKey } from '../hooks/useNavLabels';
 import { useSidebarTabs } from '../hooks/useSidebarTabs';
+import { useNotifications } from '../hooks/useNotifications';
 import { ContextMenu, type MenuItem } from './ui/ContextMenu';
 import { IconButton } from './ui/Button';
 
@@ -20,6 +21,7 @@ const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
   { key: 'telegram', view: 'telegram', icon: <Send size={12} /> },
   { key: 'terminal', view: 'terminal', icon: <SquareTerminal size={12} /> },
   { key: 'items', view: 'items', icon: <Lightbulb size={12} /> },
+  { key: 'notifications', view: 'notifications', icon: <Bell size={12} /> },
 ];
 
 // The sections a user can hide. Graph lives in the topbar and Settings stays put,
@@ -29,6 +31,7 @@ export const RAIL_KEYS: NavKey[] = NAV.map((n) => n.key);
 export function Rail({ view, setView }: { view: View; setView: (v: View) => void }) {
   const labels = useNavLabels((s) => s.labels);
   const hidden = useSidebarTabs((s) => s.hidden);
+  const unread = useNotifications((s) => s.unread);
   const btn = (active = false) =>
     `grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded border transition-colors duration-150 focus-ring ${active ? 'border-border bg-background text-foreground' : 'border-transparent bg-transparent text-muted hover:bg-background hover:text-foreground'}`;
 
@@ -52,10 +55,17 @@ export function Rail({ view, setView }: { view: View; setView: (v: View) => void
         <IconButton
           key={n.key}
           className={btn(view === n.view)}
-          label={navLabel(labels, n.key)}
+          label={n.key === 'notifications' && unread > 0 ? `${navLabel(labels, n.key)} (${unread})` : navLabel(labels, n.key)}
           onClick={() => setView(n.view)}
         >
-          {n.icon}
+          {n.key === 'notifications' && unread > 0 ? (
+            <span className="relative inline-flex">
+              {n.icon}
+              <span className="absolute -right-1.5 -top-1.5 grid h-3 min-w-3 place-items-center rounded-full bg-foreground px-0.5 font-mono text-[8px] leading-none text-background">
+                {unread > 9 ? '9+' : unread}
+              </span>
+            </span>
+          ) : n.icon}
         </IconButton>
       ))}
       <div className="mt-auto flex flex-col items-center gap-0.5">

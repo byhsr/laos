@@ -2,15 +2,20 @@
 // integration credentials. Data-driven - new actions are added to the match.
 
 use async_trait::async_trait;
+use base64::Engine as _;
 
 use super::{clip, AgentTool};
 use crate::http;
 
 // Generic integration tool: executes a provider REST action using the stored
-// integration credentials. Data-driven â€” new actions are added to the provider match.
+// integration credentials. Data-driven — new actions are added to the provider match.
 pub(crate) struct IntegrationTool {
   pub(crate) action: String,
   pub(crate) credentials: serde_json::Value,
+  /// The integration id and app handle, so a Google action can refresh an expired
+  /// token before it runs. `None` in contexts with no app handle.
+  pub(crate) id: String,
+  pub(crate) app: Option<tauri::AppHandle>,
 }
 
 #[async_trait]
@@ -31,16 +36,35 @@ impl AgentTool for IntegrationTool {
       "docs_get" => "Read a Google Doc's content. Params: documentId (string).".into(),
       "exa_search" => "Search the web with Exa and get ranked results. Params: query (string), numResults (integer, optional).".into(),
       "parallel_search" => "Search the web with Parallel Web Systems and get ranked excerpts. Params: query (string).".into(),
+      "tavily_search" => "Search the web with Tavily and get LLM-ready results. Params: query (string), maxResults (integer, optional).".into(),
+      "tinyfish_search" => "Search the live web with TinyFish — ranked results with titles, snippets and URLs. Params: query (string).".into(),
+      "calendar_list_events" => "List upcoming events on a Google Calendar. Params: calendarId (string, optional — default 'primary'), q (string, optional search), maxResults (integer, optional).".into(),
+      "calendar_create_event" => "Create a Google Calendar event. Params: calendarId (optional), title (string), start (RFC3339 string), end (RFC3339 string), content (string, optional description).".into(),
+      "gmail_send" => "Send an email through Gmail. Params: to (string), title (subject), content (body).".into(),
+      "gmail_list" => "List Gmail messages. Params: q (string, Gmail search query), maxResults (integer, optional).".into(),
       _ => "Integration action".into(),
     }
   }
   fn params_schema(&self) -> serde_json::Value {
-    serde_json::json!({ "type": "object", "properties": { "query": { "type": "string" }, "numResults": { "type": "integer" }, "parentId": { "type": "string" }, "title": { "type": "string" }, "pageId": { "type": "string" }, "baseId": { "type": "string" }, "tableName": { "type": "string" }, "maxRecords": { "type": "integer" }, "fields": { "type": "object" }, "recordId": { "type": "string" }, "spreadsheetId": { "type": "string" }, "range": { "type": "string" }, "values": { "type": "array" }, "documentId": { "type": "string" }, "content": { "type": "string" } }, "required": [] })
+    serde_json::json!({ "type": "object", "properties": { "query": { "type": "string" }, "numResults": { "type": "integer" }, "maxResults": { "type": "integer" }, "parentId": { "type": "string" }, "title": { "type": "string" }, "pageId": { "type": "string" }, "baseId": { "type": "string" }, "tableName": { "type": "string" }, "maxRecords": { "type": "integer" }, "fields": { "type": "object" }, "recordId": { "type": "string" }, "spreadsheetId": { "type": "string" }, "range": { "type": "string" }, "values": { "type": "array" }, "documentId": { "type": "string" }, "content": { "type": "string" }, "to": { "type": "string" }, "start": { "type": "string" }, "end": { "type": "string" }, "q": { "type": "string" }, "calendarId": { "type": "string" } }, "required": [] })
   }
   async fn run(&self, args: &serde_json::Value) -> Result<String, String> {
-    let token = self.credentials.get("token").and_then(|t| t.as_str()).or_else(|| self.credentials.get("apiKey").and_then(|t| t.as_str())).or_else(|| self.credentials.get("accessToken").and_then(|t| t.as_str())).unwrap_or("");
+    let snapshot = self.credentials.get("token").and_then(|t| t.as_str())
+      .or_else(|| self.credentials.get("apiKey").and_then(|t| t.as_str()))
+      .or_else(|| self.credentials.get("accessToken").and_then(|t| t.as_str()))
+      .unwrap_or("")
+      .to_string();
     let client = http::client();
     let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // A Google access token dies after ~1h. Refresh from the stored refresh token
+    // before a Google call, so a long-lived connection never fails on expiry.
+    let token = if self.action.starts_with("sheets_") || self.action.starts_with("docs_")
+      || self.action.starts_with("calendar_") || self.action.starts_with("gmail_") {
+      match &self.app {
+        Some(app) => crate::integrations::google_token(app, &self.id).await.unwrap_or_else(|_| snapshot.clone()),
+        None => snapshot.clone(),
+      }
+    } else { snapshot.clone() };
 
     match self.action.as_str() {
       "notion_search" => {
@@ -148,6 +172,73 @@ impl AgentTool for IntegrationTool {
         let resp = client.post("https://api.parallel.ai/v1/search")
           .header("x-api-key", token)
           .json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "tavily_search" => {
+        let num = args.get("maxResults").and_then(|v| v.as_i64()).unwrap_or(5);
+        let body = serde_json::json!({ "api_key": token, "query": arg("query"), "max_results": num, "search_depth": "basic" });
+        let resp = client.post("https://api.tavily.com/search").json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "tinyfish_search" => {
+        // TinyFish Search: GET https://api.search.tinyfish.ai?query=… with X-API-Key.
+        let resp = client.get("https://api.search.tinyfish.ai")
+          .query(&[("query", arg("query"))])
+          .header("X-API-Key", token)
+          .send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "calendar_list_events" => {
+        let cal = if arg("calendarId").is_empty() { "primary".to_string() } else { arg("calendarId") };
+        let max = args.get("maxResults").and_then(|v| v.as_i64()).unwrap_or(10);
+        let mut req = client.get(format!("https://www.googleapis.com/calendar/v3/calendars/{cal}/events"))
+          .header("Authorization", format!("Bearer {token}"))
+          .query(&[("maxResults", max.to_string()), ("singleEvents", "true".to_string()), ("orderBy", "startTime".to_string())]);
+        let q = arg("q");
+        if !q.is_empty() { req = req.query(&[("q", q)]); }
+        let resp = req.send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "calendar_create_event" => {
+        let cal = if arg("calendarId").is_empty() { "primary".to_string() } else { arg("calendarId") };
+        let body = serde_json::json!({
+          "summary": arg("title"),
+          "description": arg("content"),
+          "start": { "dateTime": arg("start") },
+          "end": { "dateTime": arg("end") },
+        });
+        let resp = client.post(format!("https://www.googleapis.com/calendar/v3/calendars/{cal}/events"))
+          .header("Authorization", format!("Bearer {token}"))
+          .json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "gmail_send" => {
+        // Gmail wants the RFC822 message base64url-encoded in `raw`.
+        let raw = format!(
+          "To: {}\r\nSubject: {}\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\n\r\n{}",
+          arg("to"), arg("title"), arg("content"),
+        );
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes());
+        let body = serde_json::json!({ "raw": encoded });
+        let resp = client.post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send")
+          .header("Authorization", format!("Bearer {token}"))
+          .json(&body).send().await.map_err(|e| e.to_string())?;
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(clip(&text))
+      }
+      "gmail_list" => {
+        let max = args.get("maxResults").and_then(|v| v.as_i64()).unwrap_or(10);
+        let mut req = client.get("https://gmail.googleapis.com/gmail/v1/users/me/messages")
+          .header("Authorization", format!("Bearer {token}"))
+          .query(&[("maxResults", max.to_string())]);
+        let q = arg("q");
+        if !q.is_empty() { req = req.query(&[("q", q)]); }
+        let resp = req.send().await.map_err(|e| e.to_string())?;
         let text = resp.text().await.map_err(|e| e.to_string())?;
         Ok(clip(&text))
       }

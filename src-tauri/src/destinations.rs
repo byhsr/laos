@@ -143,7 +143,7 @@ fn check(conn: &Connection, d: &Destination) -> Result<String, String> {
     id: "sample".into(), kind: "note".into(), title: "Sample title".into(), body: "Sample body".into(),
     url: "https://example.com".into(), tags: vec!["sample".into()], collection: String::new(),
     status: "active".into(), due_at: None, cadence: String::new(), streak: 0, last_done_at: None,
-    project_id: String::new(), fired_at: None, source: "app".into(), created_at: String::new(), updated_at: String::new(),
+    project_id: String::new(), fired_at: None, source: "app".into(), owner: String::new(), created_at: String::new(), updated_at: String::new(),
   };
   render_args(&sample, &d.arg_template)?;
   Ok(format!("ok — {} is ready.", d.tool))

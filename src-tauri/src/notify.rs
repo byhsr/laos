@@ -34,3 +34,13 @@ pub(crate) fn desktop(app: &AppHandle, title: &str, body: &str) {
   let body: String = body.chars().take(180).collect();
   let _ = app.notification().builder().title(title).body(body).show();
 }
+
+/// Enqueue a durable notification AND raise the OS toast, in one call. The single
+/// entry point for a real alert — a reminder, an insight, finished work — so the
+/// in-app inbox, the badge and the toast never drift apart.
+pub(crate) fn notify_and_push(app: &AppHandle, kind: &str, title: &str, body: &str, ref_kind: &str, ref_id: &str) {
+  if let Ok(conn) = db(app) {
+    crate::notifications::push_event(app, &conn, kind, title, body, ref_kind, ref_id);
+  }
+  desktop(app, title, body);
+}

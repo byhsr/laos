@@ -464,7 +464,7 @@ pub async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: S
         "UPDATE workflow_runs SET status='completed', ended_at=?1, final_output=?2, steps=?3, prompt_tokens=?4, completion_tokens=?5 WHERE id=?6",
         params![chrono::Utc::now().to_rfc3339(), final_output, serde_json::to_string(&steps).unwrap_or_else(|_| "[]".to_string()), prompt_tokens as i64, completion_tokens as i64, run_id],
       ).map_err(|e| e.to_string())?;
-      crate::notify::desktop(&app, "workflow completed", &workflow.name);
+      crate::notify::notify_and_push(&app, "workflow", "workflow completed", &workflow.name, "workflow", &workflow.id);
       Ok(WorkflowExecution { steps, final_output, total_prompt_tokens: prompt_tokens, total_completion_tokens: completion_tokens })
     }
     Err(e) => {
@@ -472,7 +472,7 @@ pub async fn execute_workflow(app: AppHandle, workflow: WorkflowRecord, input: S
         "UPDATE workflow_runs SET status='failed', ended_at=?1, final_output=?2 WHERE id=?3",
         params![chrono::Utc::now().to_rfc3339(), e, run_id],
       );
-      crate::notify::desktop(&app, "workflow failed", &workflow.name);
+      crate::notify::notify_and_push(&app, "workflow", "workflow failed", &workflow.name, "workflow", &workflow.id);
       Err(e)
     }
   }
@@ -598,7 +598,7 @@ async fn run_workflow_nodes(app: &AppHandle, workflow: &WorkflowRecord, input: S
           serde_json::json!({ "error": "integration node requires integrationId and action" }).to_string()
         } else {
           let creds = integration_secret(&conn, &integration_id).unwrap_or_else(|_| serde_json::json!({}));
-          let tool = IntegrationTool { action: action.clone(), credentials: creds };
+          let tool = IntegrationTool { action: action.clone(), credentials: creds, id: integration_id.clone(), app: Some(app.clone()) };
           // Build args from the node config, injecting the accumulated output
           // as the primary payload (title/content/fields) where applicable.
           let mut args = config.get("args").cloned().unwrap_or(serde_json::json!({}));

@@ -158,7 +158,7 @@ pub(crate) async fn triage(
       let title = crate::capture::title_from(text);
       let item = crate::capture::add(&conn, crate::capture::NewItem {
         kind: &kind, title: &title, body: text, url: &url, tags, collection: &collection,
-        due_at: due.clone(), cadence: "", project_id: project.unwrap_or(""), source: "app",
+        due_at: due.clone(), cadence: "", project_id: project.unwrap_or(""), source: "app", owner: "",
       }).ok()?;
       crate::brain::ingest_item(app, &conn, &item, &crate::capture::synthesized_class(&kind), "life");
       let when = due.as_deref().map(|d| format!(" for {}", crate::tz::format(&conn, d))).unwrap_or_default();

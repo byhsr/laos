@@ -62,13 +62,13 @@ pub(crate) async fn delegate_task(app: &AppHandle, task_id: &str, assigned_agent
     Ok(out) => {
       conn.execute("UPDATE tasks SET status='completed', result=?1, completed_at=?2 WHERE id=?3", params![out, chrono::Utc::now().to_rfc3339(), task_id]).map_err(|e| e.to_string())?;
       drop(conn);
-      crate::notify::desktop(app, "task completed", &format!("{assigned_agent}: {input}"));
+      crate::notify::notify_and_push(app, "task", "task completed", &format!("{assigned_agent}: {input}"), "task", &task_id);
       Ok(out)
     }
     Err(e) => {
       conn.execute("UPDATE tasks SET status='failed', result=?1, completed_at=?2 WHERE id=?3", params![format!("Error: {e}"), chrono::Utc::now().to_rfc3339(), task_id]).map_err(|e| e.to_string())?;
       drop(conn);
-      crate::notify::desktop(app, "task failed", &format!("{assigned_agent}: {e}"));
+      crate::notify::notify_and_push(app, "task", "task failed", &format!("{assigned_agent}: {e}"), "task", &task_id);
       Err(e)
     }
   }

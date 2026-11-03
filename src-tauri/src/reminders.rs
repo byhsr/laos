@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use rusqlite::{params, Connection};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::capture::Item;
 use crate::db::db;
@@ -112,13 +112,10 @@ pub(crate) async fn reminder_loop(app: AppHandle) {
         }
       }
       let title = if f.item.title.trim().is_empty() { f.item.body.clone() } else { f.item.title.clone() };
-      // The app shows it too (App.tsx listens and toasts).
-      let _ = app.emit("lumin-reminder", serde_json::json!({
-        "id": f.item.id, "kind": f.item.kind, "title": title,
-      }));
-      // And a system toast when the user is elsewhere (suppressed while focused).
+      // Queue it durably AND toast it. The queue survives a reload (and the window
+      // sitting on the tray); the OS toast fires only when the app isn't in front.
       let line = if f.item.kind == "habit" { format!("habit: {title}") } else { format!("reminder: {title}") };
-      crate::notify::desktop(&app, "⏰ due now", &line);
+      crate::notify::notify_and_push(&app, &f.item.kind, "⏰ due now", &line, "item", &f.item.id);
 
       if let Ok(conn) = db(&app) {
         let ts = chrono::Utc::now().to_rfc3339();

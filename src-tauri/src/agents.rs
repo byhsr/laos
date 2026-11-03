@@ -97,7 +97,7 @@ pub(crate) fn build_tools(app: &AppHandle, conn: &Connection, agent: &AgentReque
       if let Some(def) = def {
         for action in def.actions {
           if has_network {
-            tools.push(Box::new(IntegrationTool { action: action.name, credentials: credentials.clone() }));
+            tools.push(Box::new(IntegrationTool { action: action.name, credentials: credentials.clone(), id: def.id.clone(), app: Some(app.clone()) }));
           }
         }
       }
@@ -109,6 +109,8 @@ pub(crate) fn build_tools(app: &AppHandle, conn: &Connection, agent: &AgentReque
     tools.push(Box::new(ReadAnyFileTool));
     tools.push(Box::new(RunCommandTool));
     tools.extend(script_tools(conn));
+    // Monid's catalog is reached through its CLI, so it rides on host_fs.
+    tools.push(Box::new(crate::tools::MonidTool));
   }
   // PC control tools: granted only to agents with the explicit pc_control permission.
   if has_pc {
@@ -120,7 +122,9 @@ pub(crate) fn build_tools(app: &AppHandle, conn: &Connection, agent: &AgentReque
   // knowledge base was standing in for).
   tools.push(crate::tools::knowledge_tool(app));
   tools.push(crate::tools::remember_tool(app, &agent.id));
-  tools.push(crate::tools::items_tool(app));
+  tools.push(crate::tools::items_tool(app, &agent.id));
+  // And the clock, so a turn that depends on "now" doesn't have to guess the date.
+  tools.push(crate::tools::current_time_tool(app));
   Ok(tools)
 }
 

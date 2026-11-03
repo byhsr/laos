@@ -81,10 +81,21 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   if !item_cols.iter().any(|c| c == "last_done_at") { conn.execute("ALTER TABLE items ADD COLUMN last_done_at TEXT", []).map_err(|e| e.to_string())?; }
   if !item_cols.iter().any(|c| c == "project_id") { conn.execute("ALTER TABLE items ADD COLUMN project_id TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   if !item_cols.iter().any(|c| c == "fired_at") { conn.execute("ALTER TABLE items ADD COLUMN fired_at TEXT", []).map_err(|e| e.to_string())?; }
+  // Who owns an item: '' = the user, otherwise the filing agent's id. Lets the
+  // Items view keep an agent's todos apart from the user's own.
+  if !item_cols.iter().any(|c| c == "owner") { conn.execute("ALTER TABLE items ADD COLUMN owner TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   // The learning layer's proposals (goals, preferences, patterns, habit nudges).
   conn.execute("CREATE TABLE IF NOT EXISTS insights (id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'new', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
   // Named MCP destinations: where captured items are pushed (e.g. a Notion account).
   conn.execute("CREATE TABLE IF NOT EXISTS destinations (id TEXT PRIMARY KEY, name TEXT NOT NULL, server_id TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '', arg_template TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
+  // The notification queue: a durable inbox for reminders, insights and finished
+  // work — the toast/OS/Telegram surfaces are all ephemeral.
+  conn.execute("CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', ref_kind TEXT NOT NULL DEFAULT '', ref_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, read_at TEXT, dismissed_at TEXT)", []).map_err(|e| e.to_string())?;
+  // The resource / connection / adapter layer: an adapters catalog (seeded from
+  // code) and the concrete resources a connection exposes. Connections themselves
+  // are the existing integration_configs + providers rows, surfaced as one set.
+  conn.execute("CREATE TABLE IF NOT EXISTS adapters (id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL, provider TEXT NOT NULL, auth TEXT NOT NULL DEFAULT 'api_key', base_url TEXT NOT NULL DEFAULT '', caps TEXT NOT NULL DEFAULT '{}', fields TEXT NOT NULL DEFAULT '[]', actions TEXT NOT NULL DEFAULT '[]', builtin INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
+  conn.execute("CREATE TABLE IF NOT EXISTS resources (id TEXT PRIMARY KEY, connection_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', external_id TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', meta TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
   // Native agent-memory tables (was the fox MCP server).
   crate::agent_memory::ensure_schema(&conn)?;
   // Model roles: pin classifier / embedding to a specific model (see provider.rs).

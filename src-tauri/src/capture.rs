@@ -29,6 +29,9 @@ pub struct Item {
   #[serde(default)] pub project_id: String,
   #[serde(default)] pub fired_at: Option<String>,
   #[serde(default)] pub source: String,
+  // Who owns the item: '' = the user, otherwise an agent id. Agent-created todos
+  // are tagged so the Items view can keep them apart from the user's own list.
+  #[serde(default)] pub owner: String,
   #[serde(default)] pub created_at: String,
   #[serde(default)] pub updated_at: String,
 }
@@ -37,7 +40,7 @@ fn default_kind() -> String { "note".into() }
 fn default_status() -> String { "active".into() }
 fn now() -> String { chrono::Utc::now().to_rfc3339() }
 
-const SELECT: &str = "SELECT id, kind, title, body, url, tags, collection, status, due_at, cadence, streak, last_done_at, project_id, fired_at, source, created_at, updated_at FROM items";
+const SELECT: &str = "SELECT id, kind, title, body, url, tags, collection, status, due_at, cadence, streak, last_done_at, project_id, fired_at, source, owner, created_at, updated_at FROM items";
 
 pub(crate) fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<Item> {
   let tags: String = row.get(5)?;
@@ -46,16 +49,30 @@ pub(crate) fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<Item> {
     tags: serde_json::from_str(&tags).unwrap_or_default(),
     collection: row.get(6)?, status: row.get(7)?, due_at: row.get(8)?, cadence: row.get(9)?,
     streak: row.get(10)?, last_done_at: row.get(11)?, project_id: row.get(12)?, fired_at: row.get(13)?,
-    source: row.get(14)?, created_at: row.get(15)?, updated_at: row.get(16)?,
+    source: row.get(14)?, owner: row.get(15)?, created_at: row.get(16)?, updated_at: row.get(17)?,
   })
 }
 
 pub(crate) fn list(conn: &Connection, kind: Option<&str>) -> Vec<Item> {
+  list_filtered(conn, kind, None)
+}
+
+/// Items filtered by kind and/or owner. `owner` is exact-match; `None` means "any
+/// owner", `Some("")` means the user's own items.
+pub(crate) fn list_filtered(conn: &Connection, kind: Option<&str>, owner: Option<&str>) -> Vec<Item> {
+  let mut clauses: Vec<String> = Vec::new();
+  let mut args: Vec<String> = Vec::new();
+  if let Some(k) = kind.filter(|k| !k.trim().is_empty()) {
+    clauses.push(format!("kind=?{}", args.len() + 1));
+    args.push(k.to_string());
+  }
+  if let Some(o) = owner {
+    clauses.push(format!("owner=?{}", args.len() + 1));
+    args.push(o.to_string());
+  }
+  let where_clause = if clauses.is_empty() { String::new() } else { format!(" WHERE {}", clauses.join(" AND ")) };
+  let sql = format!("{SELECT}{where_clause} ORDER BY created_at DESC LIMIT 500");
   let mut out = Vec::new();
-  let (sql, args): (String, Vec<String>) = match kind.filter(|k| !k.trim().is_empty()) {
-    Some(k) => (format!("{SELECT} WHERE kind=?1 ORDER BY created_at DESC LIMIT 500"), vec![k.to_string()]),
-    None => (format!("{SELECT} ORDER BY created_at DESC LIMIT 500"), vec![]),
-  };
   if let Ok(mut stmt) = conn.prepare(&sql) {
     if let Ok(rows) = stmt.query_map(rusqlite::params_from_iter(args.iter()), row_to_item) {
       for r in rows { if let Ok(i) = r { out.push(i); } }
@@ -97,8 +114,8 @@ pub(crate) fn upsert(conn: &Connection, item: &Item) -> Result<(), String> {
   let tags = serde_json::to_string(&item.tags).unwrap_or_else(|_| "[]".into());
   let created = if item.created_at.trim().is_empty() { now() } else { item.created_at.clone() };
   conn.execute(
-    "INSERT INTO items (id, kind, title, body, url, tags, collection, status, due_at, cadence, streak, last_done_at, project_id, fired_at, source, created_at, updated_at) \
-     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17) \
+    "INSERT INTO items (id, kind, title, body, url, tags, collection, status, due_at, cadence, streak, last_done_at, project_id, fired_at, source, owner, created_at, updated_at) \
+     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18) \
      ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, title=excluded.title, body=excluded.body, url=excluded.url, \
      tags=excluded.tags, collection=excluded.collection, status=excluded.status, due_at=excluded.due_at, \
      cadence=excluded.cadence, streak=excluded.streak, last_done_at=excluded.last_done_at, project_id=excluded.project_id, \
@@ -106,7 +123,7 @@ pub(crate) fn upsert(conn: &Connection, item: &Item) -> Result<(), String> {
     params![
       item.id, item.kind, item.title, item.body, item.url, tags, item.collection, item.status,
       item.due_at, item.cadence, item.streak, item.last_done_at, item.project_id, item.fired_at,
-      item.source, created, now()
+      item.source, item.owner, created, now()
     ],
   ).map_err(|e| e.to_string())?;
   Ok(())
@@ -124,6 +141,8 @@ pub(crate) struct NewItem<'a> {
   pub cadence: &'a str,
   pub project_id: &'a str,
   pub source: &'a str,
+  /// '' = the user; otherwise the agent id that filed it.
+  pub owner: &'a str,
 }
 
 pub(crate) fn add(conn: &Connection, new: NewItem) -> Result<Item, String> {
@@ -134,6 +153,7 @@ pub(crate) fn add(conn: &Connection, new: NewItem) -> Result<Item, String> {
     tags: new.tags, collection: new.collection.to_string(), status: "active".into(),
     due_at: new.due_at, cadence: norm_cadence(new.cadence), streak: 0, last_done_at: None,
     project_id: new.project_id.to_string(), fired_at: None, source: new.source.to_string(),
+    owner: new.owner.to_string(),
     created_at: now(), updated_at: now(),
   };
   upsert(conn, &item)?;
@@ -338,7 +358,7 @@ pub(crate) fn command(app: &AppHandle, text: &str, source: &str) -> Option<Resul
     let class = synthesized_class(kind);
     return Some(match add(&conn, NewItem {
       kind, title: &title, body: &body, url: &url, tags, collection: &collection,
-      due_at, cadence, project_id: "", source,
+      due_at, cadence, project_id: "", source, owner: "",
     }) {
       Ok(item) => {
         // Mirror it into the brain map (index node + entities + event).
@@ -481,7 +501,7 @@ fn apply(conn: &Connection, intent: &Intent, raw: &str, source: &str) -> Result<
       }
       let item = add(conn, NewItem {
         kind, title: &title, body: &body, url: &url, tags, collection: &collection,
-        due_at: p.due_at.clone(), cadence: &p.cadence, project_id: "", source,
+        due_at: p.due_at.clone(), cadence: &p.cadence, project_id: "", source, owner: "",
       })?;
       Ok((confirm(conn, &item), Some(item)))
     }
@@ -493,9 +513,9 @@ fn apply(conn: &Connection, intent: &Intent, raw: &str, source: &str) -> Result<
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn item_list(app: AppHandle, kind: Option<String>) -> Result<Vec<Item>, String> {
+pub fn item_list(app: AppHandle, kind: Option<String>, owner: Option<String>) -> Result<Vec<Item>, String> {
   let conn = db(&app)?;
-  Ok(list(&conn, kind.as_deref()))
+  Ok(list_filtered(&conn, kind.as_deref(), owner.as_deref()))
 }
 
 #[tauri::command]
@@ -551,7 +571,7 @@ mod tests {
     conn.execute_batch(
       "CREATE TABLE items (id TEXT PRIMARY KEY, kind TEXT, title TEXT, body TEXT, url TEXT, tags TEXT, \
        collection TEXT, status TEXT, due_at TEXT, cadence TEXT, streak INTEGER, last_done_at TEXT, \
-       project_id TEXT, fired_at TEXT, source TEXT, created_at TEXT, updated_at TEXT);",
+       project_id TEXT, fired_at TEXT, source TEXT, owner TEXT NOT NULL DEFAULT '', created_at TEXT, updated_at TEXT);",
     ).unwrap();
     conn
   }
@@ -570,7 +590,7 @@ mod tests {
     let conn = items_db();
     let item = add(&conn, NewItem {
       kind: "todo", title: "Renew the domain", body: "", url: "", tags: vec![],
-      collection: "", due_at: None, cadence: "", project_id: "", source: "app",
+      collection: "", due_at: None, cadence: "", project_id: "", source: "app", owner: "",
     }).unwrap();
     assert!(list(&conn, None).iter().any(|i| i.id == item.id), "a new item is listed");
     complete(&conn, &item.id).unwrap();
@@ -585,7 +605,7 @@ mod tests {
     let conn = items_db();
     let a = add(&conn, NewItem {
       kind: "todo", title: "Water the plants", body: "", url: "", tags: vec![],
-      collection: "", due_at: None, cadence: "", project_id: "", source: "app",
+      collection: "", due_at: None, cadence: "", project_id: "", source: "app", owner: "",
     }).unwrap();
     let found = find_exact_active(&conn, "  water the PLANTS ").expect("case/space-insensitive exact match");
     assert_eq!(found.id, a.id);
@@ -616,5 +636,28 @@ mod tests {
     assert_eq!(listed_item_id(&conn, "test-list-a", 3), None);
 
     remember_items_kind("test-list-a", None);
+  }
+
+  /// Agent-filed items carry the owning agent's id, so the Items view can keep
+  /// them out of the user's own list.
+  #[test]
+  fn owner_filters_agent_items_from_the_users_list() {
+    let conn = items_db();
+    add(&conn, NewItem {
+      kind: "todo", title: "Pay the invoice", body: "", url: "", tags: vec![],
+      collection: "", due_at: None, cadence: "", project_id: "", source: "app", owner: "",
+    }).unwrap();
+    add(&conn, NewItem {
+      kind: "todo", title: "Draft the report", body: "", url: "", tags: vec![],
+      collection: "", due_at: None, cadence: "", project_id: "", source: "app", owner: "agent-1",
+    }).unwrap();
+
+    let mine = list_filtered(&conn, None, Some(""));
+    assert_eq!(mine.len(), 1);
+    assert_eq!(mine[0].title, "Pay the invoice");
+    let agent = list_filtered(&conn, None, Some("agent-1"));
+    assert_eq!(agent.len(), 1);
+    assert_eq!(agent[0].title, "Draft the report");
+    assert_eq!(list_filtered(&conn, None, None).len(), 2, "no owner filter sees both");
   }
 }

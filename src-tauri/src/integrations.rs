@@ -29,6 +29,14 @@ pub(crate) fn integration_definitions() -> Vec<IntegrationRecord> {
       IntegrationAction { name: "docs_create".into(), description: "Create a Google Doc with content".into() },
       IntegrationAction { name: "docs_get".into(), description: "Read a Google Doc's content".into() },
     ] },
+    IntegrationRecord { id: "calendar".into(), name: "Google Calendar".into(), provider: "google".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
+      IntegrationAction { name: "calendar_list_events".into(), description: "List upcoming events on a Google Calendar".into() },
+      IntegrationAction { name: "calendar_create_event".into(), description: "Create a Google Calendar event".into() },
+    ] },
+    IntegrationRecord { id: "gmail".into(), name: "Gmail".into(), provider: "google".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
+      IntegrationAction { name: "gmail_send".into(), description: "Send an email through Gmail".into() },
+      IntegrationAction { name: "gmail_list".into(), description: "List Gmail messages matching a query".into() },
+    ] },
     IntegrationRecord { id: "telegram".into(), name: "Telegram".into(), provider: "telegram".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
       IntegrationAction { name: "telegram_send".into(), description: "Send a Telegram message".into() },
     ] },
@@ -38,6 +46,13 @@ pub(crate) fn integration_definitions() -> Vec<IntegrationRecord> {
     ] },
     IntegrationRecord { id: "parallel".into(), name: "Parallel".into(), provider: "parallel".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
       IntegrationAction { name: "parallel_search".into(), description: "Search the web with Parallel Web Systems".into() },
+    ] },
+    // Web search connectors: one API key each (kept API-key based, never OAuth).
+    IntegrationRecord { id: "tavily".into(), name: "Tavily".into(), provider: "tavily".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
+      IntegrationAction { name: "tavily_search".into(), description: "Search the web with Tavily and get LLM-ready results".into() },
+    ] },
+    IntegrationRecord { id: "tinyfish".into(), name: "TinyFish".into(), provider: "tinyfish".into(), enabled: false, connected: false, config: serde_json::json!({}), actions: vec![
+      IntegrationAction { name: "tinyfish_search".into(), description: "Search the live web with TinyFish (ranked, fresh results)".into() },
     ] },
   ]
 }
@@ -165,6 +180,23 @@ pub async fn test_integration(app: AppHandle, id: String) -> Result<bool, String
     conn.execute("UPDATE integration_configs SET connected=?1 WHERE id=?2", params![if ok { 1 } else { 0 }, id]).map_err(|e| e.to_string())?;
     return Ok(ok);
   }
+  // Tavily posts its key in the JSON body; TinyFish takes it in an X-API-Key header.
+  if id == "tavily" {
+    let body = serde_json::json!({ "api_key": token, "query": "ping", "max_results": 1 });
+    let response = http::client().post("https://api.tavily.com/search").json(&body).send().await.map_err(|e| e.to_string())?;
+    let ok = response.status().is_success();
+    conn.execute("UPDATE integration_configs SET connected=?1 WHERE id=?2", params![if ok { 1 } else { 0 }, id]).map_err(|e| e.to_string())?;
+    return Ok(ok);
+  }
+  if id == "tinyfish" {
+    let response = http::client().get("https://api.search.tinyfish.ai")
+      .query(&[("query", "ping")])
+      .header("X-API-Key", token)
+      .send().await.map_err(|e| e.to_string())?;
+    let ok = response.status().is_success();
+    conn.execute("UPDATE integration_configs SET connected=?1 WHERE id=?2", params![if ok { 1 } else { 0 }, id]).map_err(|e| e.to_string())?;
+    return Ok(ok);
+  }
   let url: String = match id.as_str() {
     "notion" => "https://api.notion.com/v1/users/me".into(),
     "airtable" => "https://api.airtable.com/v0/meta/whoami".into(),
@@ -186,26 +218,62 @@ pub async fn test_integration(app: AppHandle, id: String) -> Result<bool, String
 
 const OAUTH_REDIRECT_PORT: u16 = 14852;
 
+// A bundled Google "Desktop" OAuth client, so connecting Google is a single tap
+// (no client id to paste). For installed apps Google does not treat the client
+// secret as confidential; it still never reaches the renderer. Override per
+// integration in its config, or point this at your own Google Cloud project.
+const GOOGLE_CLIENT_ID: &str = "";
+const GOOGLE_CLIENT_SECRET: &str = "";
+
 fn oauth_redirect_uri() -> String { format!("http://127.0.0.1:{OAUTH_REDIRECT_PORT}/callback") }
 
+fn is_google(id: &str) -> bool { matches!(id, "sheets" | "docs" | "calendar" | "gmail") }
+
+/// The OAuth scopes a Google integration requests (each id asks only for what it
+/// needs, so consent is legible).
+fn google_scopes(id: &str) -> String {
+  let scopes: &[&str] = match id {
+    "sheets" => &["https://www.googleapis.com/auth/spreadsheets"],
+    "docs" => &["https://www.googleapis.com/auth/documents"],
+    "calendar" => &["https://www.googleapis.com/auth/calendar"],
+    "gmail" => &["https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.readonly"],
+    _ => &[],
+  };
+  scopes.join("%20")
+}
+
+/// The (client id, client secret) to use: the integration's own if set, else the
+/// bundled client for a Google integration.
+fn client_creds(cfg: &serde_json::Value, id: &str) -> (String, String) {
+  let cid = cfg.get("clientId").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+  let csec = cfg.get("clientSecret").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+  if cid.is_empty() && is_google(id) { (GOOGLE_CLIENT_ID.to_string(), GOOGLE_CLIENT_SECRET.to_string()) } else { (cid, csec) }
+}
+
 // Builds the provider authorize URL. Client IDs come from the integration config
-// (set in the UI), scopes are per provider.
+// (set in the UI), or the bundled Google client for Google integrations.
 #[tauri::command]
 pub fn start_oauth(app: AppHandle, id: String) -> Result<String, String> {
   let conn = db(&app)?;
   let cfg = integration_secret(&conn, &id)?;
-  let client_id = cfg.get("clientId").and_then(|c| c.as_str()).unwrap_or("").to_string();
-  if client_id.is_empty() {
-    return Err(format!("OAuth for '{id}' needs a clientId. Set it in the integration config first."));
-  }
+  let (client_id, _) = client_creds(&cfg, &id);
   let redirect = oauth_redirect_uri();
   let url = match id.as_str() {
-    "sheets" | "docs" => format!(
-      "https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={redirect}&response_type=code&scope=https://www.googleapis.com/auth/spreadsheets%20https://www.googleapis.com/auth/documents&access_type=offline&prompt=consent"
-    ),
-    "notion" => format!(
-      "https://api.notion.com/v1/oauth/authorize?client_id={client_id}&redirect_uri={redirect}&response_type=code&owner=user"
-    ),
+    "sheets" | "docs" | "calendar" | "gmail" => {
+      if client_id.is_empty() {
+        return Err(format!("OAuth for '{id}' needs a Google client id — set GOOGLE_CLIENT_ID or a client id in the config."));
+      }
+      format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={redirect}&response_type=code&scope={}&access_type=offline&prompt=consent",
+        google_scopes(&id)
+      )
+    }
+    "notion" => {
+      if client_id.is_empty() {
+        return Err(format!("OAuth for '{id}' needs a clientId. Set it in the integration config first."));
+      }
+      format!("https://api.notion.com/v1/oauth/authorize?client_id={client_id}&redirect_uri={redirect}&response_type=code&owner=user")
+    }
     _ => return Err(format!("OAuth is not available for '{id}'. Configure it with an API token instead.")),
   };
   let _ = app; // app kept for signature consistency with future token refresh
@@ -258,13 +326,12 @@ pub async fn connect_oauth(app: AppHandle, id: String) -> Result<String, String>
 async fn complete_oauth_inner(app: &AppHandle, id: &str, code: &str) -> Result<(), String> {
   let conn = db(app)?;
   let cfg = integration_secret(&conn, id)?;
-  let client_id = cfg.get("clientId").and_then(|c| c.as_str()).unwrap_or("").to_string();
-  let client_secret = cfg.get("clientSecret").and_then(|c| c.as_str()).unwrap_or("").to_string();
+  let (client_id, client_secret) = client_creds(&cfg, id);
   if client_id.is_empty() || client_secret.is_empty() {
     return Err("OAuth client ID/secret not configured for this integration.".into());
   }
   let token_url = match id {
-    "sheets" | "docs" => "https://oauth2.googleapis.com/token",
+    "sheets" | "docs" | "calendar" | "gmail" => "https://oauth2.googleapis.com/token",
     "notion" => "https://api.notion.com/v1/oauth/token",
     _ => return Err(format!("OAuth is not available for '{id}'.")),
   };
@@ -285,6 +352,11 @@ async fn complete_oauth_inner(app: &AppHandle, id: &str, code: &str) -> Result<(
   if let Some(obj) = stored.as_object_mut() {
     obj.insert("accessToken".into(), tokens.get("access_token").cloned().unwrap_or(serde_json::Value::Null));
     obj.insert("refreshToken".into(), tokens.get("refresh_token").cloned().unwrap_or(serde_json::Value::Null));
+    // Google access tokens last ~1h; remember when this one dies so it can be
+    // refreshed lazily instead of failing the next call.
+    if let Some(secs) = tokens.get("expires_in").and_then(|v| v.as_i64()) {
+      obj.insert("expiresAt".into(), serde_json::json!((chrono::Utc::now() + chrono::Duration::seconds(secs)).to_rfc3339()));
+    }
   }
   conn.execute(
     "INSERT INTO integration_configs (id, name, provider, config_json, enabled, connected, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)
@@ -298,6 +370,57 @@ async fn complete_oauth_inner(app: &AppHandle, id: &str, code: &str) -> Result<(
 #[tauri::command]
 pub async fn complete_oauth(app: AppHandle, id: String, code: String) -> Result<(), String> {
   complete_oauth_inner(&app, &id, &code).await
+}
+
+/// A usable Google access token for a connection. Refreshes from the stored
+/// refresh token when the cached one has expired (or is within a minute of it),
+/// so a long-lived Google connection keeps working without a re-connect.
+pub(crate) async fn google_token(app: &AppHandle, id: &str) -> Result<String, String> {
+  let conn = db(app)?;
+  let cfg = integration_secret(&conn, id)?;
+  let access = cfg.get("accessToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+  let refresh = cfg.get("refreshToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+  let expires = cfg.get("expiresAt").and_then(|v| v.as_str()).and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
+  let still_valid = expires
+    .map(|e| e.with_timezone(&chrono::Utc) > chrono::Utc::now() + chrono::Duration::seconds(60))
+    .unwrap_or(!access.is_empty());
+  if still_valid && !access.is_empty() { return Ok(access); }
+  if refresh.is_empty() {
+    return if access.is_empty() { Err("Google connection has no token — connect it again.".into()) } else { Ok(access) };
+  }
+  let (client_id, client_secret) = client_creds(&cfg, id);
+  let body = serde_json::json!({
+    "client_id": client_id, "client_secret": client_secret,
+    "refresh_token": refresh, "grant_type": "refresh_token",
+  });
+  let resp = http::client().post("https://oauth2.googleapis.com/token").json(&body).send().await.map_err(|e| e.to_string())?;
+  if !resp.status().is_success() {
+    return Err(format!("Google token refresh failed: {}", resp.text().await.unwrap_or_default()));
+  }
+  let tokens: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+  let new_access = tokens.get("access_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+  if new_access.is_empty() { return Err("Google token refresh returned no access token.".into()); }
+  let mut stored = cfg.clone();
+  if let Some(obj) = stored.as_object_mut() {
+    obj.insert("accessToken".into(), serde_json::json!(new_access));
+    if let Some(secs) = tokens.get("expires_in").and_then(|v| v.as_i64()) {
+      obj.insert("expiresAt".into(), serde_json::json!((chrono::Utc::now() + chrono::Duration::seconds(secs)).to_rfc3339()));
+    }
+    // Re-seal the secrets before persisting (the read resolved the sentinels).
+    crate::vault::protect_object(&format!("integration/{id}"), obj)?;
+  }
+  conn.execute(
+    "UPDATE integration_configs SET config_json=?2, updated_at=?3 WHERE id=?1",
+    params![id, serde_json::to_string(&stored).map_err(|e| e.to_string())?, now()],
+  ).map_err(|e| e.to_string())?;
+  Ok(new_access)
+}
+
+/// Explicit refresh, callable from the UI. The lazy refresh in the Google action
+/// path is the norm; this exists for a "reconnect"-style button.
+#[tauri::command]
+pub async fn refresh_google_token(app: AppHandle, id: String) -> Result<(), String> {
+  google_token(&app, &id).await.map(|_| ())
 }
 
 #[cfg(test)]

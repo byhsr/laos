@@ -19,16 +19,24 @@ Defined in `integrations::integration_definitions()`. Each entry is
 | `airtable` | Airtable | `airtable` | `airtable_list_records`, `airtable_create_record`, `airtable_update_record` | token |
 | `sheets` | Google Sheets | `google` | `sheets_read`, `sheets_append`, `sheets_update` | OAuth |
 | `docs` | Google Docs | `google` | `docs_create`, `docs_get` | OAuth |
+| `calendar` | Google Calendar | `google` | `calendar_list_events`, `calendar_create_event` | OAuth |
+| `gmail` | Gmail | `google` | `gmail_send`, `gmail_list` | OAuth |
 | `telegram` | Telegram | `telegram` | `telegram_send` | bot token |
 | `exa` | Exa | `exa` | `exa_search` | API key (`x-api-key`) |
 | `parallel` | Parallel | `parallel` | `parallel_search` | API key (`x-api-key`) |
+| `tavily` | Tavily | `tavily` | `tavily_search` | API key (in the JSON body) |
+| `tinyfish` | TinyFish | `tinyfish` | `tinyfish_search` | API key (`X-API-Key`) |
 
-**Web search.** `exa` and `parallel` each need a single API key. `exa_search` posts to
-`https://api.exa.ai/search` (`type: auto`, highlights on); `parallel_search` posts to
-`https://api.parallel.ai/v1/search` (`objective` + `search_queries`, `mode: basic`). Both return
-the vendor's JSON as tool output, clipped like every other action. They're the honest way for an
-agent to search the web — the alternative is a generic `api` tool with a `x-api-key` header, which
-`vault.rs` keeps in the credential store like any other secret.
+**Web search.** `exa`, `parallel`, `tavily` and `tinyfish` each need a single API key. `exa_search`
+posts to `https://api.exa.ai/search` (`type: auto`, highlights on); `parallel_search` posts to
+`https://api.parallel.ai/v1/search` (`objective` + `search_queries`, `mode: basic`); `tavily_search`
+posts to `https://api.tavily.com/search` with the key in the body; `tinyfish_search` GETs
+`https://api.search.tinyfish.ai?query=…` with an `X-API-Key` header. They're the honest way for an
+agent to search the web — the alternative is a generic `api` tool with an `x-api-key` header.
+
+**Monid (a tool router).** `monid` is not a static integration: it is a *router* whose whole catalog
+(2,000+ endpoints) is reached dynamically through its CLI. It is a single `AgentTool` in
+`src-tauri/src/tools/monid.rs` (`discover` → `inspect` → `run`), gated on `host_fs`.
 
 Action implementations live in `src-tauri/src/tools/integration.rs` — a single `match` on the
 action name. The tool's `description()` and `params_schema()` are also switched there.
@@ -64,8 +72,16 @@ value keeps the stored sentinel, and a newly typed value goes straight to the cr
 
 ## OAuth
 
-Supported by `notion`, `sheets`, and `docs`. Redirect URI is fixed:
+Supported by `notion`, `sheets`, `docs`, `calendar` and `gmail`. Redirect URI is fixed:
 `http://127.0.0.1:14852/callback` (`OAUTH_REDIRECT_PORT = 14852`).
+
+**Google is one tap.** The four Google ids share a bundled desktop OAuth client
+(`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `integrations.rs`) — the user clicks **connect**, the
+browser opens, they pick an account, and it's integrated; no client id to paste. (The bundled values
+ship empty; fill them with a Google Cloud **Desktop** client. For installed apps Google does not treat
+the client secret as confidential, but it still never reaches the renderer.) Scopes are per-id, and
+the exchange stores `accessToken` / `refreshToken` / `expiresAt`; `integrations::google_token`
+refreshes lazily from the refresh token, so a long-lived connection keeps working.
 
 | Command | Behavior |
 | --- | --- |

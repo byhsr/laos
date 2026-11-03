@@ -8,8 +8,9 @@ import { tabCls } from '../ui/tabs';
 import { toast } from '../../hooks/useToast';
 import {
   ITEM_KINDS, insightAccept, insightDismiss, insightList, itemDelete, itemDue, itemList, itemSave, itemToggle,
-  listDestinations, pushItem, reflectNow, reminderSnooze, type Destination, type Insight, type Item,
+  listAgents, listDestinations, pushItem, reflectNow, reminderSnooze, type Destination, type Insight, type Item,
 } from '../../runtime';
+import type { Agent } from '../../types';
 
 // Kinds that carry a time; the rest are just filed.
 const TIME_KINDS = ['reminder', 'habit', 'todo', 'goal'];
@@ -44,6 +45,8 @@ export function ItemsView() {
   const [text, setText] = useState('');
   const [due, setDue] = useState('');
   const [query, setQuery] = useState('');
+  const [owner, setOwner] = useState<string>('all');
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [busy, setBusy] = useState(false);
 
   const showInsights = filter === 'insights';
@@ -57,6 +60,8 @@ export function ItemsView() {
   };
   useEffect(() => { void load(); }, [filter]);
   useEffect(() => { listDestinations().then(setDestinations); }, []);
+  // Agent names for the owner filter/badge; harmless if the list is unavailable.
+  useEffect(() => { listAgents().then(setAgents).catch(() => {}); }, []);
 
   // Push one item to a destination (e.g. a Notion account via an MCP server).
   const sendTo = async (it: Item, destinationId: string) => {
@@ -80,7 +85,7 @@ export function ItemsView() {
         // `toISOString()` carries a Z offset, which the scheduler parses.
         due_at: due ? new Date(due).toISOString() : null,
         cadence: kind === 'habit' ? 'daily' : '', streak: 0, last_done_at: null, project_id: '',
-        fired_at: null, source: 'app', created_at: '', updated_at: '',
+        fired_at: null, source: 'app', owner: '', created_at: '', updated_at: '',
       });
       setText(''); setDue('');
       await load();
@@ -104,9 +109,16 @@ export function ItemsView() {
 
   // Search across title, body and tags — a captured list gets long fast.
   const q = query.trim().toLowerCase();
+  const ownerName = (o: string) => agents.find((a) => a.id === o)?.name ?? o;
+  // Who filed it: '' = you, otherwise an agent id. Filtered client-side so the
+  // chips can list every owner actually present in the current view.
+  const owners = Array.from(new Set(items.map((it) => it.owner ?? '').filter((o) => o !== '')));
+  const owned = owner === 'all' ? items
+    : owner === 'mine' ? items.filter((it) => !it.owner)
+    : items.filter((it) => it.owner === owner);
   const visible = q
-    ? items.filter((it) => [it.title ?? '', it.body ?? '', ...(it.tags ?? [])].join(' ').toLowerCase().includes(q))
-    : items;
+    ? owned.filter((it) => [it.title ?? '', it.body ?? '', ...(it.tags ?? [])].join(' ').toLowerCase().includes(q))
+    : owned;
 
   return (
     <div className="flex h-full flex-col">
@@ -125,6 +137,18 @@ export function ItemsView() {
           </div>
         )}
       </div>
+
+      {/* Agent-filed items are kept apart from your own list. */}
+      {!showInsights && (owners.length > 0 || owner !== 'all') && (
+        <div className="mb-3 flex shrink-0 flex-wrap items-center gap-1">
+          <span className="mr-1 font-mono text-[10px] tracking-wider text-muted uppercase">filed by</span>
+          <button className={tabCls(owner === 'all')} onClick={() => setOwner('all')}>all</button>
+          <button className={tabCls(owner === 'mine')} onClick={() => setOwner('mine')}>mine</button>
+          {owners.map((o) => (
+            <button key={o} className={tabCls(owner === o)} onClick={() => setOwner(o)}>{ownerName(o)}</button>
+          ))}
+        </div>
+      )}
 
       {showInsights ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -212,6 +236,9 @@ export function ItemsView() {
                     aria-label={it.status === 'done' ? 'mark active' : 'mark done'}
                   >✓</button>
                   <span className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[9px] tracking-wider text-muted uppercase">{it.kind}</span>
+                  {it.owner && (
+                    <span className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[9px] tracking-wider text-muted uppercase" title={`filed by ${ownerName(it.owner)}`}>{ownerName(it.owner)}</span>
+                  )}
                   <div className="min-w-0 flex-1">
                     <span className={`block truncate font-mono text-[11px] ${it.status === 'done' ? 'text-muted line-through' : 'text-foreground'}`}>{it.title || it.body}</span>
                     {/* The title is capped at 7 words; show the body's opening so a

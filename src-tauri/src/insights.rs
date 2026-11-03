@@ -82,7 +82,7 @@ pub(crate) fn accept(conn: &Connection, rest: &str) -> Result<String, String> {
     let (tags, collection) = (Vec::new(), String::new());
     crate::capture::add(conn, crate::capture::NewItem {
       kind: "habit", title: &ins.title, body: &ins.body, url: "", tags, collection: &collection,
-      due_at: None, cadence: "daily", project_id: "", source: "insight",
+      due_at: None, cadence: "daily", project_id: "", source: "insight", owner: "",
     })?;
   }
   set_status(conn, &ins.id, "accepted")?;
@@ -225,7 +225,7 @@ pub(crate) async fn reflect(app: &AppHandle) -> Result<usize, String> {
   if drafted > 0 {
     let _ = phrase_observations(app).await;
     let _ = app.emit("brain-notice", json!({ "kind": "observation", "count": drafted, "title": "New observation to review" }));
-    crate::notify::desktop(app, "new insight", "A new observation is ready to review.");
+    crate::notify::notify_and_push(app, "insight", "new insight", "A new observation is ready to review.", "", "");
   }
 
   Ok(written)

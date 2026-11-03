@@ -25,7 +25,7 @@ const DAY: i64 = 86_400_000;
 /// to join against. Only ever created in the throwaway eval database.
 const ITEMS_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, kind TEXT, title TEXT, body TEXT, url TEXT, \
   tags TEXT, collection TEXT, status TEXT, due_at TEXT, cadence TEXT, streak INTEGER, last_done_at TEXT, project_id TEXT, \
-  fired_at TEXT, source TEXT, created_at TEXT, updated_at TEXT);";
+  fired_at TEXT, source TEXT, owner TEXT NOT NULL DEFAULT '', created_at TEXT, updated_at TEXT);";
 
 fn round3(v: f64) -> f64 { (v * 1000.0).round() / 1000.0 }
 

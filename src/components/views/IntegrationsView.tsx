@@ -19,10 +19,17 @@ const LOGOS: Record<string, React.ReactNode> = {
   airtable: <SiAirtable size={18} />,
   sheets: <SiGoogle size={18} />,
   docs: <SiGoogle size={18} />,
+  calendar: <SiGoogle size={18} />,
+  gmail: <SiGoogle size={18} />,
   telegram: <SiTelegram size={18} />,
+  tavily: <Globe size={18} />,
+  tinyfish: <Globe size={18} />,
 };
 
-const OAUTH_PROVIDERS = ['sheets', 'docs', 'notion'];
+const OAUTH_PROVIDERS = ['sheets', 'docs', 'calendar', 'gmail', 'notion'];
+// Google integrations share the app's bundled OAuth client, so connecting them is
+// one tap — no client id to enter first.
+const GOOGLE_IDS = ['sheets', 'docs', 'calendar', 'gmail'];
 
 // Backend progress lines arrive with a leading status glyph; the UI owns the
 // icon, so strip any glyph the backend embedded in the text.
@@ -71,7 +78,9 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
   const onConnect = async (id: string) => {
     const def = integrations.find((i) => i.id === id);
     const hasClientId = def && typeof def.config.clientId === 'string' && (def.config.clientId as string).length > 0;
-    if (!hasClientId) {
+    // Google integrations use the bundled client, so they connect in one tap; the
+    // others still need their own OAuth client id first.
+    if (!hasClientId && !GOOGLE_IDS.includes(id)) {
       // No OAuth client configured yet — open the config panel so the user can set it.
       setDrawerId(id);
       toast(`set the OAuth client ID/secret for ${def?.name ?? id} first, then click connect`, 'info');

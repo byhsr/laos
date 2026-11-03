@@ -3,23 +3,27 @@
 
 pub(crate) mod api;
 pub(crate) mod browser;
+pub(crate) mod datetime;
 pub(crate) mod desktop;
 pub(crate) mod filesystem;
 pub(crate) mod integration;
 pub(crate) mod items;
 pub(crate) mod knowledge;
 pub(crate) mod mcp;
+pub(crate) mod monid;
 pub(crate) mod script;
 pub(crate) mod web;
 
 pub(crate) use api::{ApiParam, ApiTool};
 pub(crate) use browser::browser_tools;
+pub(crate) use datetime::current_time_tool;
 pub(crate) use desktop::desktop_tools;
 pub(crate) use filesystem::{run_shell_in, ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool};
 pub(crate) use integration::IntegrationTool;
 pub(crate) use items::items_tool;
 pub(crate) use knowledge::{knowledge_tool, remember_tool};
 pub(crate) use mcp::{unique_name, McpTool};
+pub(crate) use monid::MonidTool;
 pub(crate) use script::script_tools;
 pub(crate) use web::HttpTool;
 

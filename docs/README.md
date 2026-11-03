@@ -146,6 +146,8 @@ Find the row for what you're changing, update the listed code and doc together.
 | Timeouts, retries, backoff, max tokens | `src-tauri/src/http.rs` | [harness.md](./harness.md) |
 | Streaming or a Tauri event/channel payload | `src-tauri/src/chat.rs`, `src/runtime.ts` | [harness.md](./harness.md), [tool-calls.md](./tool-calls.md) |
 | A tool (`AgentTool` impl), its kind, or its permission gate | `src-tauri/src/tools/*`, `src-tauri/src/agents.rs` (`build_tools`) | [tool-calls.md](./tool-calls.md) |
+| The notification queue / inbox | `src-tauri/src/notifications.rs`, `src-tauri/src/notify.rs`, `src/components/views/NotificationsView.tsx`, `src/hooks/useNotifications.ts` | [data-model.md](./data-model.md) |
+| Connections / adapters / resources, or a new integration's config fields | `src-tauri/src/connections.rs`, `src-tauri/src/integrations.rs`, `src/components/views/ConnectionsView.tsx` | [integrations.md](./integrations.md), [data-model.md](./data-model.md) |
 | The tool-call loop or the round cap | `src-tauri/src/chat.rs`, `src-tauri/src/agents.rs`, `src-tauri/src/tools/mod.rs` | [tool-calls.md](./tool-calls.md) |
 | A Manager tool or the confirmation list | `src-tauri/src/manager.rs` (`manager_tools`, `dispatch_manager_tool`, `requires_confirmation`) | [tool-calls.md](./tool-calls.md) |
 | The confirmation popup UX | `src/components/ui/ConfirmDialog.tsx`, `src/hooks/useConfirm.ts`, `src/runtime.ts` | [tool-calls.md](./tool-calls.md) |

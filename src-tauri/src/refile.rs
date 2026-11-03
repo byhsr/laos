@@ -68,7 +68,7 @@ pub(crate) fn apply(app: &AppHandle, proposals: &[Proposal]) -> Result<usize, St
       "items" => {
         let item = crate::capture::add(&conn, crate::capture::NewItem {
           kind: &p.kind, title: &p.title, body: &p.content, url: "", tags: Vec::new(), collection: "",
-          due_at: p.due_at.clone(), cadence: "", project_id: "", source: "app",
+          due_at: p.due_at.clone(), cadence: "", project_id: "", source: "app", owner: "",
         })?;
         crate::brain::ingest_item(app, &conn, &item, &crate::capture::synthesized_class(&p.kind), "life");
       }

@@ -27,7 +27,7 @@ export const useIntegrationsStore = create<IntegrationsState>((set, get) => ({
     // OAuth integrations open the provider flow in the system browser; the
     // backend listens on loopback in the background and exchanges the code.
     // Returns the auth URL for user feedback.
-    const oauthProviders = ['sheets', 'docs', 'notion'];
+    const oauthProviders = ['sheets', 'docs', 'calendar', 'gmail', 'notion'];
     if (oauthProviders.includes(id)) {
       const url = await connectOAuth(id);
       return url;

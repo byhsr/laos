@@ -78,6 +78,9 @@ pub async fn initialize_storage(app: AppHandle) -> Result<(), String> {
     retire_memory_mcp(&conn);
     retire_playwright_browser(&conn);
     ensure_browser_tool(&conn)?;
+    // Seed the adapters catalog (integration + provider descriptors) after the
+    // built-ins exist so the Connections view has a full catalog.
+    crate::connections::seed_adapters(&conn)?;
     // Before anything can read a secret: move any plaintext left over from an
     // older build into the OS credential store.
     crate::vault::migrate(&conn)?;

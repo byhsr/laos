@@ -190,6 +190,34 @@ elsewhere. A model's own key overrides the provider's shared key.
 
 `id` (PK), `name`, `provider`, `config_json`, `enabled`, `connected`, `updated_at`.
 
+For Google integrations `config_json` also carries the OAuth token lifecycle: `accessToken`,
+`refreshToken` and `expiresAt` (RFC3339). `integrations::google_token` reads them and refreshes from
+the refresh token when the access token has expired, before any Google action runs.
+
+### `notifications`
+
+The durable inbox (`src-tauri/src/notifications.rs`) behind every alert — reminders, insights,
+finished tasks and workflow results. Written by `notify::notify_and_push`, read by the Notifications
+view and the Rail's unread badge. `id` (INTEGER PK AUTOINCREMENT), `kind` (reminder / habit / task /
+workflow / insight / …), `title`, `body`, `ref_kind` + `ref_id` (the source row, for a future jump),
+`created_at`, `read_at` (`NULL` = unread), `dismissed_at` (`NULL` = still in the list). Pruned to the
+newest 500 on every insert.
+
+### `adapters` / `resources`
+
+The resource / connection / adapter layer (`src-tauri/src/connections.rs`).
+
+- `adapters` (id PK, name, category — `integration` / `llm` / `router`, provider, auth — `api_key` /
+  `oauth` / `none`, base_url, caps JSON, fields JSON — the credential fields the UI renders,
+  actions JSON, builtin, created_at) — the catalog, seeded from `integration_definitions()` +
+  `provider::builtins()` on boot (idempotent; built-in rows are refreshed, user rows untouched).
+- `resources` (id PK, connection_id, kind — sheet / doc / calendar / channel / … , name, external_id,
+  url, meta JSON, created_at, updated_at) — the concrete external objects a connection exposes.
+
+**Connections are not a table.** They are the existing `integration_configs` rows (category
+`integration`) plus the `providers` rows and provider built-ins (category `llm`), surfaced as one set
+by `connections::list_connections`.
+
 ### `tasks`
 
 `id` (PK), `requester`, `assigned_agent`, `status`, `input`, `context`, `result`,
@@ -253,7 +281,8 @@ Lumin's store ([lumin.md](./lumin.md)): `id` (PK), `kind` (`note` | `todo` | `re
 it), `cadence`
 (`''` | `daily` | `weekly` | `monthly`; recurring items roll forward), `streak` (habits),
 `last_done_at`, `project_id` (scopes an item to a project), `fired_at` (`NULL` = not yet
-fired), `source` (bot name, `app` or `insight`), `created_at`, `updated_at`.
+fired), `source` (bot name, `app` or `insight`), `owner` (`''` = the user, else the id of the agent
+that filed it — this is what the Items view's **filed by** filter reads), `created_at`, `updated_at`.
 
 ### `insights`
 
@@ -293,6 +322,7 @@ bots** (routed by path) and only that bot's polling pauses. The legacy single
 | `agents` | `is_manager`, `description`, `persona`, `skill_ids`, `pinned`, `avatar` |
 | `runs` | `prompt_tokens`, `completion_tokens` |
 | `chat_sessions` | `summary`, `project_id`, `distilled_count` |
+| `items` | `cadence`, `streak`, `last_done_at`, `project_id`, `fired_at`, `owner` |
 
 There is no version table — migrations are single-column `ALTER`s that are safe to re-run.
 

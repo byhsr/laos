@@ -69,6 +69,7 @@ trait AgentTool {
 | Host-filesystem tools | `agents::build_tools` | `host_fs` |
 | PC-control tools | `tools::desktop_tools` | `pc_control` (Windows) |
 | MCP tools | `agents::mcp_tools_for` | attaching the tool is the opt-in |
+| Router tools (`monid`) | `agents::build_tools` | `host_fs` (drives the Monid CLI) |
 | Scripts | `tools::script_tools` | `host_fs` |
 | Manager tools | `manager::manager_tools()` | Manager only |
 
@@ -136,6 +137,19 @@ relative times resolve in the user's configured zone (`tz.rs`, default `Asia/Kol
 `refile.rs` migrates a knowledge base that already accumulated memories/todos (the **tidy**
 button in the Knowledge tab). Full detail: `docs/routing.md`.
 
+Items carry an `owner` (`''` = the user, else the filing agent's id). The `items` tool is built with
+the calling agent (`items_tool(app, agent_id)`, like `remember_tool`), so an agent's todos are kept
+apart from the user's own — the Items view has a **filed by** filter that reads it.
+
+## Notifications
+
+`notifications.rs` + the `notifications` table are the durable inbox behind every alert. A fired
+reminder, a new insight, a finished task and a workflow result all go through
+`notify::notify_and_push`, which enqueues a row (pruned to 500), emits `lumin-notification`, and
+raises the OS toast (suppressed while the window is focused). The Notifications view is the inbox;
+the Rail's bell shows the unread count. Everything that used to be a 5-second toast is now
+recoverable after a reload — including while the window sat on the tray.
+
 ## Workflows
 
 `execute_workflow` (`workflows.rs`) runs nodes in **BFS (topological) order**, threading each node's output into the next; the last output is the result.
@@ -164,6 +178,8 @@ Branch outcomes travel as **data envelopes**, not routing — `fromPort`/`toPort
 | Harness | `provider.rs`, `http.rs`, `anthropic.rs`, `fallback.rs` |
 | Tools | `tools/*.rs` (`items`, `knowledge`, `browser`, `desktop`, `filesystem`, `mcp`, `script`, `web`), `mcp.rs`, `integrations.rs` |
 | Memory | `memory.rs`, `agent_memory.rs`, `fox.rs`, `brain.rs`, `retrieve.rs` |
+| Notifications | `notifications.rs`, `notify.rs` |
+| Connections / adapters / resources | `connections.rs`, `integrations.rs`, `provider.rs` |
 | Capture routing | `routing.rs`, `tools/items.rs`, `tz.rs`, `refile.rs`, `capture.rs`, `reminders.rs` |
 | Media | `media.rs`, `transcribe.rs` |
 | Workflows / tasks | `workflows.rs`, `tasks.rs` |

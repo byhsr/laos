@@ -4,18 +4,18 @@ import { SkillsView } from './SkillsView';
 import { ScriptsView } from './ScriptsView';
 import { ProjectsView } from './ProjectsView';
 import { ToolsView } from './ToolsView';
-import { IntegrationsView } from './IntegrationsView';
+import { ConnectionsView } from './ConnectionsView';
 import { KnowledgeBaseView } from './KnowledgeBaseView';
 import { tabCls } from '../ui/tabs';
 
-type WorkshopTab = 'skills' | 'scripts' | 'projects' | 'tools' | 'integrations' | 'knowledge';
+type WorkshopTab = 'skills' | 'scripts' | 'projects' | 'tools' | 'connections' | 'knowledge';
 
 const TABS: { key: WorkshopTab; label: string }[] = [
   { key: 'skills', label: 'skills' },
   { key: 'scripts', label: 'apps' },
   { key: 'projects', label: 'projects' },
   { key: 'tools', label: 'tools' },
-  { key: 'integrations', label: 'integrations' },
+  { key: 'connections', label: 'connections' },
   { key: 'knowledge', label: 'knowledge' },
 ];
 
@@ -56,8 +56,8 @@ export function WorkshopView({
       <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'tools' ? '' : 'hidden'}`}>
         <ToolsView tools={tools} integrations={integrations} onAdd={onAddTool} onEdit={onEditTool} onDelete={onDeleteTool} />
       </div>
-      <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'integrations' ? '' : 'hidden'}`}>
-        <IntegrationsView integrations={integrations} />
+      <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'connections' ? '' : 'hidden'}`}>
+        <ConnectionsView integrations={integrations} />
       </div>
       <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${tab === 'knowledge' ? '' : 'hidden'}`}>
         <KnowledgeBaseView />

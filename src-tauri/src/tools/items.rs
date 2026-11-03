@@ -10,7 +10,7 @@ use tauri::AppHandle;
 
 use super::{str_arg, AgentTool};
 
-pub(crate) struct ItemsTool { pub(crate) app: AppHandle }
+pub(crate) struct ItemsTool { pub(crate) app: AppHandle, pub(crate) owner: String }
 
 #[async_trait]
 impl AgentTool for ItemsTool {
@@ -23,7 +23,8 @@ and pushed to the user on Telegram. Full CRUD: add, list, update, complete, dele
 'list' | 'update' | 'complete' | 'delete'), kind ('note' | 'todo' | 'reminder' | 'goal' | 'link' | 'habit', \
 default 'note'), title (string), body (string, optional), due (string — a time like 'tomorrow 9am' or an \
 ISO-8601 instant; for reminders), cadence ('daily' | 'weekly' | 'monthly'; for habits), status ('active' | \
-'done', for 'update'), query (string — which item, for 'update' / 'complete' / 'delete').".into()
+'done', for 'update'), query (string — which item, for 'update' / 'complete' / 'delete'). Items you file are \
+tagged with your agent id, so they are listed apart from the user's own todos.".into()
   }
 
   fn params_schema(&self) -> serde_json::Value {
@@ -42,7 +43,7 @@ ISO-8601 instant; for reminders), cadence ('daily' | 'weekly' | 'monthly'; for h
   async fn run(&self, args: &serde_json::Value) -> Result<String, String> {
     let conn = crate::db::db(&self.app)?;
     match str_arg(args, "action").unwrap_or_else(|| "list".into()).trim() {
-      "add" => add(&self.app, &conn, args),
+      "add" => add(&self.app, &conn, args, &self.owner),
       "list" => Ok(list(&conn, str_arg(args, "kind").as_deref())),
       "update" => update(&self.app, &conn, args),
       "complete" => complete_item(&conn, args),
@@ -52,7 +53,7 @@ ISO-8601 instant; for reminders), cadence ('daily' | 'weekly' | 'monthly'; for h
   }
 }
 
-fn add(app: &AppHandle, conn: &Connection, args: &serde_json::Value) -> Result<String, String> {
+fn add(app: &AppHandle, conn: &Connection, args: &serde_json::Value, owner: &str) -> Result<String, String> {
   let title = str_arg(args, "title").unwrap_or_default();
   let mut body = str_arg(args, "body").unwrap_or_default();
   let seed = if title.trim().is_empty() { body.clone() } else { title.clone() };
@@ -70,7 +71,7 @@ fn add(app: &AppHandle, conn: &Connection, args: &serde_json::Value) -> Result<S
 
   let item = crate::capture::add(conn, crate::capture::NewItem {
     kind, title: &title, body: &body, url: &url, tags, collection: &collection,
-    due_at: due.clone(), cadence: &cadence, project_id: "", source: "app",
+    due_at: due.clone(), cadence: &cadence, project_id: "", source: "app", owner,
   })?;
   // Mirror it into the brain map, exactly as the capture fast paths do.
   crate::brain::ingest_item(app, conn, &item, &crate::capture::synthesized_class(kind), "life");
@@ -133,7 +134,8 @@ fn update(app: &AppHandle, conn: &Connection, args: &serde_json::Value) -> Resul
   Ok(format!("Updated \"{}\" (id: {}).", item.title, item.id))
 }
 
-/// The items tool, held by every agent and the Manager.
-pub(crate) fn items_tool(app: &AppHandle) -> Box<dyn AgentTool> {
-  Box::new(ItemsTool { app: app.clone() })
+/// The items tool held by every agent and the Manager. `owner` is the filing
+/// agent's id, so its items are tagged and the user's own list stays separate.
+pub(crate) fn items_tool(app: &AppHandle, agent_id: &str) -> Box<dyn AgentTool> {
+  Box::new(ItemsTool { app: app.clone(), owner: agent_id.to_string() })
 }

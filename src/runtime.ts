@@ -678,11 +678,12 @@ export type Item = {
   id: string; kind: string; title: string; body: string; url: string; tags: string[];
   collection: string; status: string; due_at: string | null; cadence: string; streak: number;
   last_done_at: string | null; project_id: string; fired_at: string | null;
-  source: string; created_at: string; updated_at: string;
+  source: string; owner: string; created_at: string; updated_at: string;
 };
 export const ITEM_KINDS = ['note', 'todo', 'reminder', 'goal', 'link', 'habit'] as const;
-export async function itemList(kind?: string): Promise<Item[]> {
-  return await invoke<Item[]>('item_list', { kind: kind ?? null });
+// `owner` filters by who filed the item: undefined = any, '' = you, else an agent id.
+export async function itemList(kind?: string, owner?: string): Promise<Item[]> {
+  return await invoke<Item[]>('item_list', { kind: kind ?? null, owner: owner ?? null });
 }
 export async function itemSave(item: Item): Promise<Item> {
   return await invoke<Item>('item_save', { item });
@@ -709,10 +710,27 @@ export async function insightAccept(id: string): Promise<void> { await invoke('i
 export async function insightDismiss(id: string): Promise<void> { await invoke('insight_dismiss', { id }); }
 export async function reflectNow(): Promise<number> { return await invoke<number>('reflect_now'); }
 
-// Subscribe to reminders firing (the backend emits `lumin-reminder`).
-export function onReminder(cb: (r: { id: string; kind: string; title: string }) => void): () => void {
+// The notification queue: reminders, insights and finished work, persisted so the
+// inbox survives a reload (and the window sitting on the tray).
+export type Notification = {
+  id: number; kind: string; title: string; body: string;
+  refKind: string; refId: string; createdAt: string; readAt: string | null; dismissedAt: string | null;
+};
+export async function listNotifications(unreadOnly = false): Promise<Notification[]> {
+  try { return await invoke<Notification[]>('list_notifications', { unreadOnly }); } catch { return []; }
+}
+export async function notificationUnreadCount(): Promise<number> {
+  try { return await invoke<number>('notification_unread_count'); } catch { return 0; }
+}
+export async function markNotificationRead(id: number): Promise<void> { await invoke('mark_notification_read', { id }); }
+export async function dismissNotification(id: number): Promise<void> { await invoke('dismiss_notification', { id }); }
+export async function markAllNotificationsRead(): Promise<void> { await invoke('mark_all_notifications_read'); }
+export async function clearNotifications(): Promise<void> { await invoke('clear_notifications'); }
+
+// Fires when the backend queues a new notification (reminder, insight, finished work).
+export function onNotification(cb: (n: { id: number; kind: string; title: string; body: string; refKind: string; refId: string }) => void): () => void {
   let unlisten: (() => void) | null = null;
-  listen<{ id: string; kind: string; title: string }>('lumin-reminder', (e) => cb(e.payload))
+  listen<{ id: number; kind: string; title: string; body: string; refKind: string; refId: string }>('lumin-notification', (e) => cb(e.payload))
     .then((un) => { unlisten = un; })
     .catch(() => {});
   return () => { unlisten?.(); };
@@ -758,4 +776,38 @@ export function onBrowserEvent(cb: (s: BrowserState) => void): () => void {
     .then((un) => { unlisten = un; })
     .catch(() => {});
   return () => { unlisten?.(); };
+}
+
+// Resource / connection / adapter layer. An adapter is a descriptor (built-in or
+// seeded from code), a connection is a configured instance with credentials, and
+// a resource is a concrete external object a connection exposes.
+export type Adapter = {
+  id: string; name: string; category: string; provider: string; auth: string;
+  baseUrl: string; caps: Record<string, boolean>;
+  fields: { key: string; label: string; secret: boolean }[];
+  actions: { name: string; description: string }[];
+  builtin: boolean;
+};
+export type Connection = {
+  id: string; adapterId: string; name: string; category: string;
+  enabled: boolean; connected: boolean; builtin: boolean;
+};
+export type Resource = {
+  id: string; connectionId: string; kind: string; name: string; externalId: string;
+  url: string; meta: Record<string, unknown>; createdAt: string; updatedAt: string;
+};
+export async function listAdapters(): Promise<Adapter[]> {
+  try { return await invoke<Adapter[]>('list_adapters'); } catch { return []; }
+}
+export async function listConnections(): Promise<Connection[]> {
+  try { return await invoke<Connection[]>('list_connections'); } catch { return []; }
+}
+export async function listResources(): Promise<Resource[]> {
+  try { return await invoke<Resource[]>('list_resources'); } catch { return []; }
+}
+export async function saveResource(resource: Resource): Promise<Resource> {
+  return await invoke<Resource>('save_resource', { resource });
+}
+export async function deleteResource(id: string): Promise<void> {
+  await invoke('delete_resource', { id });
 }

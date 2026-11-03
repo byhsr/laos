@@ -9,6 +9,55 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-03 — agent-owned items, notification queue, connections layer, new tools
+
+The "next iteration" batch: agent work separated from the user's own, reminders made durable, a
+resource/connection/adapter layer, new tools and providers, Google one-tap OAuth, and an agent clock.
+
+- **Phase 1 — `current_datetime` tool.** `tools/datetime.rs` (new). Every agent + the Manager now
+  hold a clock that reports now/tomorrow/yesterday in the configured zone (`tz::zone`), so a turn
+  that must schedule or reason about "now" no longer guesses. Wired in `agents::build_tools` (the
+  unconditional block), `manager_turn`, the `chat.rs` Manager branch, and the Manager prompt.
+- **Phase 2 — agent-owned items.** `items.owner` added (migration; `''` = the user, else the agent
+  id). `items_tool(app, agent_id)` now tags what it files (the `remember_tool` precedent), threaded
+  at `agents.rs` / `chat.rs` / `manager.rs`. `capture::list_filtered` + `item_list(app, kind, owner)`
+  read by owner. `ItemsView` gained a **filed by** filter (mine / each agent) and an owner badge.
+- **Phase 3 — notification queue.** New `notifications` table (pruned to 500) + `notifications.rs`
+  with `push`/`push_event` and the `list / unread_count / mark_read / dismiss / mark_all_read /
+  clear` commands. `notify::notify_and_push` is the one entry point; `reminder_loop`, insights,
+  tasks and workflows all route through it, so the in-app toast, the OS toast and the durable inbox
+  can't drift. New `lumin-notification` event (replaces `lumin-reminder`); the Rail has a bell with
+  an unread badge; `NotificationsView` is the inbox.
+- **Phase 4 — resource / connection / adapter layer.** `adapters` (catalog, seeded from
+  `integration_definitions()` + `provider::builtins()`) and `resources` tables; `connections.rs`
+  surfaces integrations (`integration_configs`) and LLM endpoints (`providers`) as one set. New
+  `connections::*` commands + a `useConnections` store, and a **Connections** tab in Workshop
+  (adapter catalog, connection list, resource add/list/delete) wrapping the existing integration
+  config/OAuth flow.
+- **Phase 5 — new integrations & Google one-tap OAuth.** Tavily (`tavily_search`) and TinyFish
+  (`tinyfish_search`, `GET api.search.tinyfish.ai`, `X-API-Key`) as API-key connectors; Google
+  **Calendar** (`calendar_list_events`, `calendar_create_event`) and **Gmail** (`gmail_send`,
+  `gmail_list`). Google integrations share a bundled desktop OAuth client (`GOOGLE_CLIENT_ID/_SECRET`
+  in `integrations.rs`), so connecting is one tap; scopes are per-id; token exchange now stores
+  `expiresAt`, and `integrations::google_token` refreshes lazily from the stored refresh token,
+  which every Google action calls before it runs. New `refresh_google_token` command.
+- **Phase 6 — Monid router.** `tools/monid.rs` (new): a `monid` tool wrapping the documented Monid
+  CLI (`discover` → `inspect` → `run`) so an agent reaches its 2,000+ endpoint catalog dynamically.
+  Gated on `host_fs` (it shells out), also held by the Manager. A `monid` router adapter is seeded
+  into the catalog.
+
+**Verified:** `cargo test` — **69 pass** (was 62; +1 datetime, +1 owner, +2 notification, +1
+adapter-seed). `npm run build` — `tsc -b` + `vite build` clean.
+
+**Open / to confirm at runtime:** the bundled Google client is a placeholder (`GOOGLE_CLIENT_ID`
+empty) — fill it with a Google Cloud **Desktop** client for the one-tap flow to work end-to-end
+(redirect `http://127.0.0.1:14852/callback`). Monid needs the CLI installed and keyed
+(`npm i -g @monid-ai/cli`, `monid keys add`). TinyFish/Exa/Parallel keys are per-integration. The
+Connections layer keeps `integration_configs`/`providers` as the storage of record (a genuine
+`connections` table would need a migration of every reader — deferred).
+
+---
+
 ## 2026-11-01 — release 0.2.2
 
 Ships the items CRUD + `promise` → `goal` + classify-every-kind work, the blank-screen fix, and the

@@ -33,6 +33,7 @@ import { MemoryView } from './components/views/MemoryView';
 import { KnowledgeBaseView } from './components/views/KnowledgeBaseView';
 import { TerminalView } from './components/views/TerminalView';
 import { ItemsView } from './components/views/ItemsView';
+import { NotificationsView } from './components/views/NotificationsView';
 import { SkillFormDrawer } from './components/views/SkillsView';
 import { ScriptFormDrawer } from './components/views/ScriptsView';
 import { ProjectFormDrawer } from './components/views/ProjectsView';
@@ -47,7 +48,8 @@ import { syncBrowserTheme } from './theme';
 import { VoiceOverlay } from './components/voice/VoiceOverlay';
 import { useActiveChat } from './hooks/useActiveChat';
 import { useVoice } from './hooks/useVoice';
-import { checkForUpdate, getAppSettings, onBrainNotice, onBrowserEvent, onReminder, onVoiceToggle, type UpdateInfo } from './runtime';
+import { useNotifications } from './hooks/useNotifications';
+import { checkForUpdate, getAppSettings, onBrainNotice, onBrowserEvent, onNotification, onVoiceToggle, type UpdateInfo } from './runtime';
 
 // Every view lives in a pane that scrolls internally — the shell itself never
 // scrolls, so there is never a double scrollbar or a page that jumps.
@@ -110,6 +112,9 @@ export default function App() {
     // Reload tools after the storage bootstrap so MCP tools imported on first run
     // (browser/memory) are present in the picker.
     void loadWorkspace().then(() => loadTools());
+    // Populate the notification badge at startup (reminders may have fired while
+    // the window was on the tray).
+    void useNotifications.getState().load();
     // Point the in-app browser at the restored theme's colour scheme.
     syncBrowserTheme();
   }, [loadAgents, loadModels, loadTools, loadSkills, loadScripts, loadProjects, loadWorkspace, loadWorkflows, loadIntegrations, loadRuns, loadProviders]);
@@ -136,8 +141,13 @@ export default function App() {
     }, 4000);
     return () => clearTimeout(t);
   }, []);
-  // Reminders fire from the backend's 30s scheduler; surface them in-app too.
-  useEffect(() => onReminder((r) => toast(`⏰ ${r.kind}: ${r.title}`, 'success')), []);
+  // The notification queue carries reminders, insights and finished work: toast
+  // the live one and let the bell badge update. The queue itself is durable, so a
+  // reminder that fired while the window was closed is still in the inbox.
+  useEffect(() => onNotification((n) => {
+    toast(`${n.title}${n.body ? `: ${n.body}` : ''}`, 'info');
+    useNotifications.getState().receive(n);
+  }), []);
 
   // The learning layer announces a pattern it noticed, so it reaches the user
   // where they are rather than waiting for the Memory view to be opened.
@@ -343,6 +353,7 @@ export default function App() {
           <Pane active={view === 'telegram'} label="telegram"><TelegramView /></Pane>
           <Pane active={view === 'terminal'} label="terminal"><TerminalView /></Pane>
           <Pane active={view === 'items'} label="items"><ItemsView /></Pane>
+          <Pane active={view === 'notifications'} label="notifications"><NotificationsView /></Pane>
           <Pane active={view === 'runs'} label="runs">
             <RunsConsole runs={runs} agents={agents} onOpenAgent={openAgent} onClear={clearRuns} />
           </Pane>
