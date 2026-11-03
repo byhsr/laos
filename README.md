@@ -12,7 +12,7 @@ with the [index](./docs/README.md) for the dev harness, ports, and a maintenance
 
 ## Run it
 
-1. Install [Ollama](https://ollama.com), then run `ollama pull qwen3:8b`.
+1. Install [Ollama](https://ollama.com), then run `ollama pull qwen3:2.5b`.
 2. Run `npm.cmd install`.
 3. Start the desktop application with `npm.cmd run tauri dev`.
 
