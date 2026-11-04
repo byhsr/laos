@@ -9,6 +9,14 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-04 — release 0.2.4
+
+Ships the custom API tool suites, the agent scratchpad and the split view (all below). Version
+`0.2.3` → `0.2.4` across `package.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and
+`src-tauri/tauri.conf.json`; tag `v0.2.4` drives the release workflow.
+
+---
+
 ## 2026-11-04 — custom API tool suites, agent scratchpad, split view
 
 Base: uncommitted on `8785eb9`. The custom-tool layer grew into a real "integration in a row",
