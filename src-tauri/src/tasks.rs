@@ -63,8 +63,8 @@ pub(crate) fn spawn_task(app: &AppHandle, t: NewTask) -> Result<String, String> 
   // Tell the UI the moment work is backgrounded, so its activity panel can show
   // the job while the chat carries on.
   let _ = app.emit("lumin-task-started", serde_json::json!({
-    "taskId": id, "chatAgentId": t.chat_agent_id, "sessionId": t.session_id,
-    "kind": t.kind, "tool": t.tool, "label": t.input,
+    "taskId": id, "chatAgentId": t.chat_agent_id, "assignedAgent": t.assigned_agent,
+    "sessionId": t.session_id, "kind": t.kind, "tool": t.tool, "label": t.input,
   }));
   let app = app.clone();
   let task_id = id.clone();
@@ -114,7 +114,7 @@ pub(crate) async fn run_task_inner(app: &AppHandle, task_id: &str) {
   if let Ok(conn) = db(app) { let _ = conn.execute("UPDATE tasks SET status='running' WHERE id=?1", params![task_id]); }
 
   let outcome = if kind == "tool" {
-    run_tool_task(app, &assigned_agent, &tool, &tool_args).await
+    run_tool_task(app, &assigned_agent, &tool, &tool_args, &session_id).await
   } else {
     run_agent_task(app, &assigned_agent, &input, &context).await
   };
@@ -142,8 +142,10 @@ async fn run_agent_task(app: &AppHandle, assigned_agent: &str, input: &str, cont
   run_agent_once_structured(app, &a, &prompt, None, &mut events, false).await.map(|(out, _, _)| out)
 }
 
-// Runs one captured tool call for the agent that asked for it.
-async fn run_tool_task(app: &AppHandle, assigned_agent: &str, tool: &str, tool_args: &str) -> Result<String, String> {
+// Runs one captured tool call for the agent that asked for it. The originating
+// chat is carried through, so a tool that needs its session (the scratchpad) still
+// has it when the call happens in the background.
+async fn run_tool_task(app: &AppHandle, assigned_agent: &str, tool: &str, tool_args: &str, session_id: &str) -> Result<String, String> {
   let tools = {
     let conn = db(app)?;
     let Some(a) = load_agent(&conn, assigned_agent)? else { return Err("Assigned agent not found.".into()) };
@@ -151,7 +153,8 @@ async fn run_tool_task(app: &AppHandle, assigned_agent: &str, tool: &str, tool_a
     build_tools(app, &conn, &a, &home)?
   };
   let args: serde_json::Value = serde_json::from_str(tool_args).unwrap_or_else(|_| serde_json::json!({}));
-  let out = crate::chat::execute_tool(app, &tools, false, tool, &args, None, "").await;
+  let sid = if session_id.is_empty() { None } else { Some(session_id) };
+  let out = crate::chat::execute_tool(app, &tools, false, tool, &args, sid, assigned_agent).await;
   Ok(out.text)
 }
 
@@ -172,7 +175,8 @@ fn finish(app: &AppHandle, task_id: &str, assigned_agent: &str, input: &str, ses
   }
   crate::notify::notify_and_push(app, "task", &format!("task {status}"), &format!("{assigned_agent}: {input}"), "task", task_id);
   let _ = app.emit("lumin-task-finished", serde_json::json!({
-    "taskId": task_id, "chatAgentId": chat_agent_id, "sessionId": session_id, "status": status, "result": result,
+    "taskId": task_id, "chatAgentId": chat_agent_id, "assignedAgent": assigned_agent,
+    "sessionId": session_id, "status": status, "result": result,
   }));
 }
 

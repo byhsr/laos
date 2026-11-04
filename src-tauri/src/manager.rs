@@ -104,6 +104,7 @@ manager_tool!(ManagerCreateTask, "create_task", "Create and run a task on an age
 manager_tool!(ManagerCancelTask, "cancel_task", "Cancel a task. Params: taskId (string).", serde_json::json!({ "taskId": { "type": "string" } }), serde_json::json!(["taskId"]));
 manager_tool!(ManagerListModels, "list_models", "List configured models.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerListTools, "list_tools", "List configured tools.", serde_json::json!({}), serde_json::json!([]));
+manager_tool!(ManagerCreateTool, "create_tool", "Create a custom API tool — how a REST integration is added without native code — and optionally attach it to an agent. Params: name (string), description (string), config (object), agentId (string, optional; attaches it to that agent in the same call). config is either a single endpoint { method, url (with {param} placeholders), body?, params? } or, like an integration, a suite { baseUrl, actions: [ { name, method, path, description?, body?, params? } ] }. Each param is { name, type ('string'|'integer'|'number'|'boolean'), description, required?, in? ('path'|'query'|'body'|'header') }. To have it authenticate, declare auth as { type: 'bearer'|'header'|'query', name? } — but NEVER pass the credential itself: the user enters the key in the workshop, and until they do its calls fail with 'No credential is stored'. approval ('never'|'writes'|'always', default 'writes') decides when it asks the user first. Tell the user when a tool you created still needs its key.", serde_json::json!({ "name": { "type": "string" }, "description": { "type": "string" }, "config": { "type": "object" }, "agentId": { "type": "string" } }), serde_json::json!(["name", "config"]));
 manager_tool!(ManagerWorkspaceStatus, "get_workspace_status", "Get a condensed workspace status: agents, integrations, active tasks, recent runs.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerRecallMemory, "recall_memory", "Recall what was discussed or done recently: long-term facts, the last chat summary, and today's/yesterday's condensed context. Call this when the user asks 'what have we done/talked about', to continue prior work, or to reference past decisions. Does NOT inject history into the conversation — it returns it as tool output.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerKnowledgeBase, "knowledge_base", "The shared knowledge base — durable REFERENCE material any agent may need later (company wiki, ICP, specs, policies, runbooks, product facts). Params: action ('list' | 'get' | 'search' | 'save'), title (string, for save/search), content (string, for save), id (string, for get/save). NOT for anything to do — tasks, chores, errands, reminders or one-off to-dos go to 'items' — and NOT for personal rules about the user (the 'remember' tool).", serde_json::json!({ "action": { "type": "string" }, "title": { "type": "string" }, "content": { "type": "string" }, "id": { "type": "string" } }), serde_json::json!(["action"]));
@@ -135,6 +136,7 @@ pub(crate) fn manager_tools() -> Vec<Box<dyn AgentTool>> {
     Box::new(ManagerCancelTask),
     Box::new(ManagerListModels),
     Box::new(ManagerListTools),
+    Box::new(ManagerCreateTool),
     Box::new(ManagerWorkspaceStatus),
     Box::new(ManagerRecallMemory),
     Box::new(ManagerKnowledgeBase),
@@ -165,7 +167,7 @@ pub(crate) async fn run_manager_tool(app: &AppHandle, tools: &[Box<dyn AgentTool
 
 // Builds the Manager's system prompt by enumerating its actual tools, so its
 // capabilities are always in sync with the code and never need hand-writing.
-pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_tool_ids: &[String], pc_control: bool) -> Result<String, String> {
+pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_tool_ids: &[String], pc_control: bool, network: bool) -> Result<String, String> {
   let context = build_workspace_context(conn)?;
   // Whether the Manager was opted into browser control (attached the `browser` tool).
   let has_browser = mcp_tool_ids.iter().any(|t| t == "browser");
@@ -176,13 +178,19 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
   // The remember and items tools are provided at runtime (not dispatch-by-name
   // builtins), so list them explicitly here.
   tool_list.push_str("- remember: Save a durable fact or standing rule about the user (\"never use emoji\", \"I prefer IST\") — kind 'policy' for a never/always rule, 'preference' for a taste, 'semantic' for a plain fact.\n");
-  tool_list.push_str("- items: The user's notes, todos, reminders, goals, resources and habits — anything with a when or a do. Full CRUD (add, list, update, complete, delete). Reminders are scheduled and pushed to Telegram.\n");
+  tool_list.push_str("- items: The USER's notes, todos, reminders, goals, resources and habits — anything with a when or a do. Full CRUD (add, list, update, complete, delete). Reminders are scheduled and pushed to Telegram. This is their store, not yours.\n");
+  tool_list.push_str("- scratchpad: Your own private working area for this chat — thinking, drafts, intermediate findings, anything you need to keep track of while you work. Keep your own working notes here, never in items. Actions: read, append, write, clear.\n");
   tool_list.push_str("- current_datetime: The current date and time in the user's configured timezone (plus tomorrow/yesterday). Use it before scheduling or reasoning about 'now'.\n");
   tool_list.push_str("- monid: Reach hundreds of external data tools (search/scraping/enrichment/media) through Monid. discover → inspect → run. Needs the Monid CLI installed and keyed.\n");
   tool_list.push_str("- yt_dlp: Download a video, or extract its audio (mp3), from a URL with the yt-dlp CLI. Needs yt-dlp on PATH.\n");
   // Only the MCP tools the Manager was explicitly opted into are listed (and
   // offered) — attaching them in its config is the opt-in.
   for t in mcp_tools_for(conn, mcp_tool_ids) {
+    tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
+  }
+  // Custom API tools the Manager holds — the same rows the runtime builds, so the
+  // list can never drift from what is actually callable.
+  for t in crate::agents::custom_tools_for(conn, mcp_tool_ids, network) {
     tool_list.push_str(&format!("- {}: {}\n", t.name(), t.description()));
   }
   // PC control tools, only when the Manager holds the pc_control permission.
@@ -319,12 +327,13 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   // Durable memory is injected, so the Manager starts each turn already knowing
   // what it has learned (recall_memory still works for a deeper pull).
   let pc_control = manager.permissions.iter().any(|p| p == "pc_control");
+  let network = manager.permissions.iter().any(|p| p == "network");
   // Route the turn's content before the model sees it, exactly as the streaming
   // chat path does — a standing rule or a timed reminder is filed, not described.
   let triage = crate::routing::triage(app, &manager.id, message, None).await;
   let scope = crate::agent_memory::scope_key("agent", &manager.id);
   let memory = crate::memory::memory_block(app, &manager.id, &scope, message).await;
-  let context = build_manager_system_prompt(&conn, &manager.name, &manager.tool_ids, pc_control)?;
+  let context = build_manager_system_prompt(&conn, &manager.name, &manager.tool_ids, pc_control, network)?;
   let prompt = format!("{context}{memory}\n\nUser message: {message}");
   // Tell the model what was already filed, so it doesn't file it a second time.
   let prompt = match &triage { Some(t) => format!("{prompt}{}", t.note), None => prompt };
@@ -335,6 +344,8 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     if pc_control { t.extend(crate::tools::desktop_tools()); }
     t.extend(crate::tools::script_tools(&conn));
     t.extend(mcp_tools_for(&conn, &manager.tool_ids));
+    // Custom API tools the Manager holds, matching the streaming chat path.
+    t.extend(crate::agents::custom_tools_for(&conn, &manager.tool_ids, network));
     // The integrations the Manager holds are callable, matching the streaming
     // chat path.
     t.extend(crate::agents::integration_tools(app, &conn, &manager.integrations));
@@ -342,6 +353,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     // todo/reminder becomes an item rather than a knowledge-base doc.
     t.push(crate::tools::remember_tool(app, &manager.id));
     t.push(crate::tools::items_tool(app, &manager.id));
+    t.push(crate::tools::scratchpad_tool(app));
     t.push(crate::tools::current_time_tool(app));
     t.push(Box::new(crate::tools::MonidTool));
     t.push(Box::new(crate::tools::YtDlpTool));
@@ -446,6 +458,25 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
 
 // Shared dispatch for manager tools; used by both the non-streaming manager_turn
 // and the streaming stream_chat manager path.
+// Cleans a model-proposed tool config: the shape is kept, the credential is not. A
+// declared auth keeps its type, so the tool fails with a clear "no credential"
+// message until the key is added in the workshop, while any value the model passed
+// is dropped; a secret-looking static header is removed outright. A model must
+// never be able to write a plaintext secret into the tool table.
+fn model_tool_config(name: &str, config: &serde_json::Value) -> serde_json::Value {
+  let mut config = config.clone();
+  if let Some(auth) = config.get_mut("auth").and_then(|a| a.as_object_mut()) {
+    auth.insert("value".into(), serde_json::json!(""));
+  }
+  if let Some(headers) = config.get_mut("headers").and_then(|h| h.as_array_mut()) {
+    headers.retain(|h| h.get("name").and_then(|n| n.as_str()).map(|n| !crate::vault::is_secret_name(n)).unwrap_or(true));
+  }
+  // The function name is also the prefix every suite action is named with, so it
+  // has to be a usable identifier rather than whatever the model wrote.
+  config["name"] = serde_json::json!(crate::tools::sanitize(&name.to_lowercase().replace(' ', "_")));
+  config
+}
+
 pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &serde_json::Value, session_id: Option<&str>, chat_agent_id: &str) -> Result<String, String> {
   let conn = db(app)?;
   match name {
@@ -507,11 +538,15 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
         pinned: false, avatar: String::new(), reasoning,
       };
       save_agent(app.clone(), agent)?;
+      // The roster only loads once at startup, so a new agent would stay invisible
+      // (sidebar, tool pickers, the split view) until a reload without this.
+      let _ = tauri::Emitter::emit(app, "lumin-agents-changed", serde_json::json!({ "id": id }));
       Ok(format!("Created agent '{name}' (id: {id})."))
     }
     "delete_agent" => {
       let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
       conn.execute("DELETE FROM agents WHERE id=?1 AND is_manager=0", params![agent_id]).map_err(|e| e.to_string())?;
+      let _ = tauri::Emitter::emit(app, "lumin-agents-changed", serde_json::json!({ "id": agent_id, "deleted": true }));
       Ok(format!("Deleted agent {agent_id}."))
     }
     "update_agent" => {
@@ -657,6 +692,48 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       for r in rows { out.push(r.map_err(|e| e.to_string())?); }
       Ok(if out.is_empty() { "No tools configured.".into() } else { out.join("\n") })
     }
+    "create_tool" => {
+      let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+      let description = args.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      if name.is_empty() { return Err("create_tool requires a name.".into()); }
+      let Some(config) = args.get("config").filter(|c| c.is_object()) else { return Err("create_tool requires a config object.".into()) };
+      let config = model_tool_config(&name, config);
+      let id = format!("tool-{}", chrono::Utc::now().timestamp_millis());
+      // Build it exactly the way the runtime will, so a definition that yields no
+      // callable tool is rejected here rather than saved and inert.
+      let mut used = std::collections::HashSet::new();
+      let built = crate::agents::api_tools_from_config(&id, &config, &mut used);
+      // A single endpoint with no url builds a tool that cannot be called, so the
+      // build alone is not enough to call it valid.
+      let suite = config.get("actions").and_then(|a| a.as_array()).is_some();
+      let has_url = config.get("url").and_then(|u| u.as_str()).map(|u| !u.trim().is_empty()).unwrap_or(false);
+      if built.is_empty() || (!suite && !has_url) {
+        return Err("That config is not callable. A single endpoint needs a `url`; a suite needs a `baseUrl` and at least one action with a `name`.".into());
+      }
+      let callable: Vec<String> = built.iter().map(|t| t.name()).collect();
+      crate::storage::save_tool(app.clone(), ToolRecord {
+        id: id.clone(), name: name.clone(), kind: "api".into(), integration_id: "http".into(),
+        description: if description.is_empty() { None } else { Some(description) },
+        enabled: true, config: config.clone(),
+      })?;
+      // Attach in the same call: update_agent replaces toolIds wholesale, and
+      // nothing lets the model read an agent's current list back to append to it.
+      let mut attached = String::new();
+      if let Some(agent_id) = args.get("agentId").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
+        let current: Option<String> = conn.query_row("SELECT tool_ids FROM agents WHERE id=?1", params![agent_id], |r| r.get(0)).ok();
+        let Some(json) = current else {
+          return Err(format!("Created tool '{name}' ({id}), but there is no agent '{agent_id}'. Attach it from an agent's config."));
+        };
+        let mut ids = parse_json_vec(&json);
+        if !ids.contains(&id) { ids.push(id.clone()); }
+        conn.execute("UPDATE agents SET tool_ids=?1 WHERE id=?2", params![serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into()), agent_id]).map_err(|e| e.to_string())?;
+        attached = format!(" and attached it to {agent_id}");
+      }
+      let credential = if config.get("auth").is_some() {
+        " It declares auth, so tell the user to add its key in the workshop — its calls fail with 'No credential is stored' until they do."
+      } else { "" };
+      Ok(format!("Created tool '{name}' (id: {id}){attached}. Callable as: {}.{credential}", callable.join(", ")))
+    }
     "get_workspace_status" => {
       let agents_n: i64 = conn.query_row("SELECT COUNT(*) FROM agents WHERE is_manager=0", [], |r| r.get(0)).unwrap_or(0);
       let tasks_n: i64 = conn.query_row("SELECT COUNT(*) FROM tasks WHERE status IN ('pending','running')", [], |r| r.get(0)).unwrap_or(0);
@@ -729,6 +806,7 @@ pub(crate) fn requires_confirmation(tool: &str) -> bool {
     "create_agent" | "update_agent" | "delete_agent"
     | "create_workflow" | "update_workflow" | "delete_workflow" | "run_workflow"
     | "configure_integration" | "create_task" | "cancel_task" | "delegate_task"
+    | "create_tool"
     | "run_command" | "run_script"
     // PC control: the coarse/system actions confirm; low-level input and
     // read-only actions do not (a vision loop needs many of them).
@@ -747,4 +825,67 @@ pub async fn confirm_manager_tool(app: AppHandle, request_id: String, approved: 
   let edited = args.unwrap_or_else(|| serde_json::json!({}));
   approvals().lock().map_err(|e| e.to_string())?.insert(request_id, Approval { approved, edited_args: edited });
   Ok(None)
+}
+
+#[cfg(test)]
+mod model_tool_tests {
+  use super::*;
+
+  #[test]
+  fn a_model_proposed_credential_is_never_written() {
+    let config = serde_json::json!({
+      "name": "Notion API",
+      "baseUrl": "https://api.notion.com/v1",
+      "auth": { "type": "bearer", "value": "ntn_secret123" },
+      "headers": [
+        { "name": "Notion-Version", "value": "2022-06-28" },
+        { "name": "X-API-Key", "value": "sk-live-123" }
+      ],
+      "actions": [{ "name": "search", "method": "POST", "path": "/search" }]
+    });
+    let cleaned = model_tool_config("Notion API", &config);
+    // The auth shape survives so the tool fails with a clear message; the value does not.
+    assert_eq!(cleaned["auth"]["type"], "bearer");
+    assert_eq!(cleaned["auth"]["value"], "");
+    // The harmless header survives; the credential-bearing one is dropped.
+    let kept: Vec<&str> = cleaned["headers"].as_array().unwrap().iter().filter_map(|h| h["name"].as_str()).collect();
+    assert_eq!(kept, vec!["Notion-Version"]);
+    // The display name becomes the identifier the actions are prefixed with.
+    assert_eq!(cleaned["name"], "notion_api");
+  }
+
+  #[test]
+  fn a_cleaned_config_still_builds_into_a_callable_tool() {
+    let config = serde_json::json!({
+      "name": "notion",
+      "baseUrl": "https://api.notion.com/v1",
+      "auth": { "type": "bearer", "value": "leak" },
+      "actions": [
+        { "name": "search", "method": "POST", "path": "/search" },
+        { "name": "get page", "method": "GET", "path": "/pages/{pageId}" }
+      ]
+    });
+    let cleaned = model_tool_config("Notion", &config);
+    let mut used = std::collections::HashSet::new();
+    let names: Vec<String> = crate::agents::api_tools_from_config("tool-1", &cleaned, &mut used).iter().map(|t| t.name()).collect();
+    assert_eq!(names, vec!["notion_search", "notion_get_page"]);
+  }
+
+  #[test]
+  fn an_endpoint_with_no_url_is_not_callable() {
+    // It still builds, which is why the dispatch arm checks the url as well as the
+    // build: a tool with nothing to call must not be saved.
+    let cleaned = model_tool_config("Empty", &serde_json::json!({ "method": "GET" }));
+    let mut used = std::collections::HashSet::new();
+    assert_eq!(crate::agents::api_tools_from_config("tool-1", &cleaned, &mut used).len(), 1);
+    let has_url = cleaned.get("url").and_then(|u| u.as_str()).map(|u| !u.trim().is_empty()).unwrap_or(false);
+    assert!(!has_url);
+  }
+
+  #[test]
+  fn a_suite_whose_actions_are_all_unnamed_builds_nothing() {
+    let cleaned = model_tool_config("NoActions", &serde_json::json!({ "baseUrl": "https://x.dev", "actions": [{ "name": "  " }] }));
+    let mut used = std::collections::HashSet::new();
+    assert!(crate::agents::api_tools_from_config("tool-2", &cleaned, &mut used).is_empty());
+  }
 }

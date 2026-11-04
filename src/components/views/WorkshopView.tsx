@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Integration, Project, Script, Skill, Tool } from '../../types';
+import { useToolsStore } from '../../hooks/useTools';
 import { SkillsView } from './SkillsView';
 import { ScriptsView } from './ScriptsView';
 import { ProjectsView } from './ProjectsView';
@@ -34,6 +35,11 @@ export function WorkshopView({
   onAddTool: () => void; onEditTool: (t: Tool) => void; onDeleteTool: (id: string) => Promise<void>;
 }) {
   const [tab, setTab] = useState<WorkshopTab>('skills');
+  // Tools can be created outside this view — by the Manager from a chat turn — so
+  // re-read them when the tab is opened instead of showing a stale list.
+  useEffect(() => {
+    if (tab === 'tools') void useToolsStore.getState().loadTools();
+  }, [tab]);
 
   return (
     <div className="flex h-full flex-col">

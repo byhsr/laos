@@ -23,14 +23,28 @@ export type ModelType = 'llm' | 'vision' | 'image' | 'video' | 'media' | 'multim
 export type ModelConfig = { id: string; provider: Provider; label: string; model: string; kind?: ModelType; voice?: string; host?: string; apiKey?: string; hasKey?: boolean; clearKey?: boolean; enabled: boolean; reasoning: Reasoning; vision?: boolean; transcribes?: boolean };
 export type IntegrationAction = { name: string; description: string };
 export type Integration = { id: string; name: string; provider: string; enabled: boolean; connected: boolean; config: Record<string, unknown>; actions: IntegrationAction[] };
-export type ToolParam = { name: string; type: string; description: string; required: boolean };
+// Where a parameter goes in the request. Absent means the original behaviour: a
+// raw {name} substitution wherever the placeholder appears.
+export type ToolParamIn = 'path' | 'query' | 'body' | 'header';
+export type ToolParam = { name: string; type: string; description: string; required: boolean; in?: ToolParamIn };
+export type ToolAuthType = 'none' | 'bearer' | 'header' | 'query';
+export type ToolAuth = { type: ToolAuthType; name?: string; value?: string };
+// One callable endpoint of a suite. The suite supplies the base URL, headers and
+// auth; the action supplies the rest.
+export type ToolAction = { name: string; description?: string; method?: string; path?: string; body?: string; params?: ToolParam[] };
+export type ToolApproval = 'never' | 'writes' | 'always';
 export type ToolConfig = {
-  [key: string]: string | number | boolean | undefined | ToolParam[] | { name: string; value: string }[];
+  [key: string]: string | number | boolean | undefined | ToolParam[] | ToolAction[] | ToolAuth | { name: string; value: string }[];
   method?: string;
   url?: string;
   body?: string;
   name?: string;
   serverName?: string;
+  // A suite: baseUrl + actions, expanded into one callable tool per action.
+  baseUrl?: string;
+  auth?: ToolAuth;
+  approval?: ToolApproval;
+  actions?: ToolAction[];
   params?: ToolParam[];
   headers?: { name: string; value: string }[];
 };
@@ -103,7 +117,7 @@ export type ChatStep = { kind: 'think' | 'tool' | 'write' | 'wait'; text: string
 
 export type ExecutionResult = { output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number };
 
-export const emptyTool = (): Tool => ({ id: '', name: '', kind: 'api', integrationId: 'http', description: '', enabled: true, config: { method: 'GET', url: '', headers: [], body: '', params: [] } });
+export const emptyTool = (): Tool => ({ id: '', name: '', kind: 'api', integrationId: 'http', description: '', enabled: true, config: { method: 'GET', url: '', headers: [], body: '', params: [], approval: 'writes' } });
 export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', kind: 'llm', host: '', apiKey: '', enabled: true, reasoning: 'auto' });
 export const emptySkill = (): Skill => ({ id: '', name: '', description: '', content: '', docs: '', scriptIds: [] });
 export const emptyScript = (): Script => ({ id: '', name: '', description: '', kind: 'command', command: '', cwd: '', prompt: '', model: '', updatedAt: '' });

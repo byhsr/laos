@@ -17,9 +17,11 @@ impl AgentTool for ItemsTool {
   fn name(&self) -> String { "items".into() }
 
   fn description(&self) -> String {
-    "The user's todo list, reminders and quick notes — anything with a when or a do. Use this (NOT the \
-knowledge base) for notes, todos, reminders, goals, resources and habits; reminders are scheduled \
-and pushed to the user on Telegram. Full CRUD: add, list, update, complete, delete. Params: action ('add' | \
+    "The USER's own todo list, reminders and quick notes — anything with a when or a do. Use this (NOT the \
+knowledge base) for their notes, todos, reminders, goals, resources and habits; reminders are scheduled \
+and pushed to the user on Telegram. This is their store — your own working notes, drafts and things you \
+are keeping track of while you work belong in the scratchpad tool, never here. Full CRUD: add, list, update, \
+complete, delete. Params: action ('add' | \
 'list' | 'update' | 'complete' | 'delete'), kind ('note' | 'todo' | 'reminder' | 'goal' | 'resource' | 'habit', \
 default 'note'), title (string), body (string, optional), due (string — a time like 'tomorrow 9am' or an \
 ISO-8601 instant; for reminders), cadence ('daily' | 'weekly' | 'monthly'; for habits), status ('active' | \

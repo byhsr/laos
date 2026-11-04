@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, ArrowLeft, CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RotateCcw, Settings, Trash2 } from 'lucide-react';
+import { Activity, ArrowLeft, CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RotateCcw, Settings, StickyNote, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from '../ui/ContextMenu';
 import type { Agent, Attachment, Integration, ModelConfig, Reasoning, Task, Tool } from '../../types';
 import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
@@ -23,7 +23,7 @@ import { MessageBubble } from '../chat/MessageBubble';
 import { ActivityPanel } from '../chat/ActivityPanel';
 import { useActivity } from '../../hooks/useActivity';
 import { toast } from '../../hooks/useToast';
-import { deleteChatSession, getChatSession, listChatSessions, rateTurn } from '../../runtime';
+import { deleteChatSession, getChatSession, getScratchpad, listChatSessions, rateTurn } from '../../runtime';
 
 const fieldLabel = `${FIELD_LABEL_CLS} mt-4`;
 
@@ -52,7 +52,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
   const scrollRef = useRef<HTMLDivElement>(null);
   const activityOpen = useActivity((s) => s.open);
   const toggleActivity = useActivity((s) => s.toggle);
-  const [panel, setPanel] = useState<'info' | 'config' | null>(null);
+  const [panel, setPanel] = useState<'info' | 'config' | 'scratchpad' | null>(null);
   const [mgrDraft, setMgrDraft] = useState<Agent | null>(null);
   const avatarRef = useRef<HTMLInputElement>(null);
 
@@ -71,6 +71,14 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
   const [viewingSession, setViewingSession] = useState<string | null>(null);
   const [viewMsgs, setViewMsgs] = useState<ChatEntry[]>([]);
   const sessionId = useManagerStore((s) => s.sessionIds[managerId] ?? null);
+  // The agent's own working pad for this chat, loaded only when it's peeked at.
+  const [scratchpad, setScratchpad] = useState('');
+  useEffect(() => {
+    if (panel !== 'scratchpad') return;
+    let alive = true;
+    void getScratchpad(sessionId, managerId).then((pad) => { if (alive) setScratchpad(pad); });
+    return () => { alive = false; };
+  }, [panel, sessionId, managerId]);
   const persistAgent = useAgentsStore((s) => s.persistAgent);
 
   const managerAgent = agents.find((a) => a.isManager) ?? {
@@ -83,8 +91,13 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
   // the agent window's picker. MCP tools are opt-in: attaching one offers it to
   // the Manager (and only then is it listed in, and sent with, its prompt).
   const enabledTools = tools.filter((t) => t.enabled);
+  // A suite is one row but many callable tools, so the picker says how many.
+  const toolLabel = (t: Tool) => {
+    const n = t.config?.actions?.length ?? 0;
+    return n > 1 ? `${t.name} (${n} actions)` : t.name;
+  };
   const toolOptions = [
-    ...enabledTools.filter((t) => t.kind !== 'mcp').map((t) => ({ value: t.id, label: t.name })),
+    ...enabledTools.filter((t) => t.kind !== 'mcp').map((t) => ({ value: t.id, label: toolLabel(t) })),
     ...enabledTools.filter((t) => t.kind === 'mcp')
       .map((t) => ({ value: t.id, label: t.name, group: `mcp · ${String(t.config?.serverName ?? t.integrationId)}` }))
       .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label)),
@@ -167,6 +180,8 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
     { key: 'chat', label: 'chat', icon: <MessageSquare size={13} />, active: panel === null, onSelect: () => setPanel(null) },
     { key: 'activity', label: 'activity panel', icon: <Activity size={13} />, active: activityOpen, onSelect: toggleActivity },
     { key: 'info', label: 'info', icon: <Info size={13} />, active: panel === 'info', onSelect: () => setPanel('info') },
+    // Hidden by default: the pad is the agent's own workspace, this is just a peek.
+    { key: 'scratchpad', label: 'scratchpad', icon: <StickyNote size={13} />, active: panel === 'scratchpad', onSelect: () => setPanel('scratchpad') },
     { key: 'config', label: 'config', icon: <Settings size={13} />, active: panel === 'config', onSelect: openConfig },
     { key: 'new', label: 'new chat', icon: <MessageSquarePlus size={13} />, dividerBefore: true, onSelect: () => {
       const m = agents.find((a) => a.id === managerId)?.model ?? models.find((x) => x.enabled)?.id ?? '';
@@ -217,6 +232,16 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
         </div>
         {activityOpen && <ActivityPanel agentId={managerId} />}
       </div>
+
+      {panel === 'scratchpad' && (
+        <SidePanel title="scratchpad" onClose={() => setPanel(null)}>
+          {scratchpad.trim() ? (
+            <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground/80">{scratchpad}</pre>
+          ) : (
+            <p className="m-0 px-1 font-mono text-[10px] text-muted">nothing scribbled in this chat yet</p>
+          )}
+        </SidePanel>
+      )}
 
       {panel === 'info' && (
         <SidePanel title="info" onClose={() => { setPanel(null); setViewingSession(null); }}>

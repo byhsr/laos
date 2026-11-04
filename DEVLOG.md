@@ -9,6 +9,92 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-04 — custom API tool suites, agent scratchpad, split view
+
+Base: uncommitted on `8785eb9`. The custom-tool layer grew into a real "integration in a row",
+the agent got its own private pad, and the agent windows learned to sit side by side.
+
+### 1. Custom API tools become suites
+
+- **An `api` row can be a suite.** A config with a `baseUrl` and an `actions[]` list (plus shared
+  `headers`/`auth` and an `approval` setting) expands at build time into one `ApiTool` per action,
+  named `<tool>_<action>` through `unique_name`, so two suites exposing the same action name don't
+  collide. A row *without* `actions` is the original single-endpoint tool, unchanged. The expansion
+  is `agents::api_tools_from_config`, extracted so the runtime, the Manager prompt and the test
+  button all build from the same code rather than three lookalikes.
+- **Params route themselves.** A parameter's `in` (`path | query | body | header`; absent = the
+  legacy raw `{name}` substitution) decides where it lands — path values are percent-encoded into
+  their segment so a `/` or space can't break out, query values go through `Url::query_pairs_mut`
+  so they're encoded (and a value already written into the URL isn't appended twice), and body
+  values keep their JSON type. `fill_template` now only treats *declared* params as placeholders,
+  so a JSON body's structural braces survive (the old "any brace is a placeholder" check rejected
+  every JSON body ever configured).
+- **Auth + approval.** `auth` is `none | bearer | header | query`, its secret resolved from the
+  vault under `tool/{id}/auth`; `save_tool` masks it like the header secrets and a deleted tool
+  drops it. A configured credential that's no longer stored becomes `Missing`, so the call fails
+  with something actionable instead of going out unauthenticated. `approval`
+  (`never | writes | always`) decides when it asks first — `writes` gates
+  `POST | PUT | PATCH | DELETE`, `never` gates nothing, `always` gates everything.
+- **The Manager can author tools.** New `create_tool` Manager tool: `manager::model_tool_config`
+  strips any credential the model tried to write (it keeps the auth *shape*, drops the value, and
+  removes secret-looking static headers) and sanitises the name; the config is built through the
+  real builder and rejected if it yields nothing callable; the tool is saved and optionally
+  attached to an agent in the same call (nothing lets the model read an agent's current toolIds
+  back to append to them). `storage::test_tool` + a ToolsView test button run one action straight
+  from the form.
+- **The Manager chat path can call custom tools.** `agents::custom_tools_for` is now extended into
+  `chat::stream_chat_inner` and `manager_turn` (and listed in the Manager prompt), so an API tool
+  attached to the lead agent is callable rather than a dead row.
+
+### 2. Agent scratchpad
+
+- **`scratchpad.rs`** *(new)* + **`tools/scratchpad.rs`** *(new)*: a per-chat private pad
+  (`read` / `append` / `write` / `clear`), scoped `session:<id>` for a chat and `agent:<id>` for a
+  session-less turn, trimmed from the front past 24k chars. It's the answer to "keep your working
+  notes out of the user's notes" — `routing.rs` rules and the `items` tool description now say so
+  in as many words.
+- To make it per-session, `AgentTool` gained **`run_ctx`** with a `ToolCtx { agent_id, session_id }`
+  (the default drops the ctx and defers to `run_with_images`, so every other tool is untouched).
+  `chat::execute_tool` passes the ctx, and `tasks::run_tool_task` threads the originating session so
+  a backgrounded call still has it. The turn's system prompt carries the pad's tail
+  (`scratchpad::block`), and the UI got a read-only peek panel in both `AgentWindow` and
+  `ManagerView` via a new `get_scratchpad` command.
+
+### 3. Agent windows side by side
+
+- `App.tsx` renders up to **three** agent panes at once; a fourth takes over the focused pane.
+  Focus, the close button and the identity strip (`PaneBar`) only exist once the row is wider than
+  one, so a single window looks exactly as it always has; only the focused pane docks the (global)
+  activity panel. `AgentWindow` gained `docked` and `onNavigate` props.
+- **The Manager creates and deletes agents from a chat turn**, but the roster only loaded at
+  startup, so a new `lumin-agents-changed` event + `onAgentsChanged` reload it (and open the new
+  agent's window). Work delegated to another agent (`assignedAgent` on the task start/finish
+  events) also opens that agent's window.
+
+### 4. Small fixes
+
+- `runtime.ts` event listeners were registered with a race — unsubscribing before `listen()`
+  resolved leaked the listener. All of them now carry a `disposed` flag.
+- The tool picker shows `<name> (N actions)` for a suite; `AgentWindow` re-reads the roster and the
+  tool list when the config panel opens (the Manager can rewrite either mid-turn), and the Workshop
+  tools tab re-reads tools when opened.
+- `App.tsx` handles each `lumin-task-finished` once (a `handledTasks` ref), so one finished job
+  can't trigger two follow-up summaries.
+
+**Verified:** `cargo test` — **95 pass** (was 78; +4 `agents::api_tool_tests`, +4
+`manager::model_tool_tests`, +9 `tools::api`). `npm run build` — `tsc -b` + `vite build` clean
+(only the two pre-existing warnings: the `lottie-web` eval notice and the chunk-size hint). One
+pre-existing warning left alone: `unused import: clip` in `tools/monid.rs`.
+
+**Open / to confirm at runtime:** the split view, the scratchpad panel, tool authoring from a chat
+turn and the test button were code + tests only — no GUI run this session. **One behaviour change
+to expect:** because an absent `approval` parses as `writes`, an *existing* custom API tool whose
+method is `POST`/`PUT`/`PATCH`/`DELETE` now asks for confirmation, where before only the Manager's
+own tools did. New tools default to the same policy (`emptyTool()` sets `approval: 'writes'`).
+`next-iteration.md` (the build brief) stays untracked.
+
+---
+
 ## 2026-11-03 — release 0.2.3
 
 Ships the yt-dlp download tool and skill import / export (both below). Version `0.2.2` → `0.2.3`

@@ -14,8 +14,11 @@ use tauri::AppHandle;
 
 /// The contract, injected into every agent and Manager prompt.
 pub(crate) const ROUTING_RULES: &str = "\nWhere things go (do not mix these up):\n\
-- items — anything with a when or a do: notes, todos, reminders, goals, resources and habits. \
+- items — THE USER'S anything with a when or a do: their notes, todos, reminders, goals, resources and habits. \
 Use the items tool ('add' to record, 'list' to show, 'update' to change, 'complete' to tick off, 'delete' to remove). Reminders are scheduled and pushed to Telegram.\n\
+- scratchpad — YOUR OWN private working area for this chat: thinking, drafts, intermediate findings, anything \
+you need to keep track of while you work. Keep your own working notes here — never file them as items, which \
+belong to the user.\n\
 - remember — durable facts and standing RULES about the user (\"never use emoji or em dashes\", \
 \"prefers IST\", \"my name is Ranas\"). kind='policy' for a never/always rule, 'preference' for a taste, \
 'semantic' for a plain fact. These are injected into every future prompt.\n\

@@ -81,6 +81,12 @@ export async function closeSession(sessionId: string, agentId: string, model: st
   try { await invoke('close_session', { sessionId, agentId, model }); } catch { /* best-effort */ }
 }
 
+// The agent's own working pad for a chat — read-only here, the agent owns it.
+// Purely a peek: nothing in it is the user's to keep.
+export async function getScratchpad(sessionId: string | null, agentId: string): Promise<string> {
+  try { return await invoke('get_scratchpad', { sessionId: sessionId ?? null, agentId }); } catch { return ''; }
+}
+
 export async function confirmManagerTool(requestId: string, approved: boolean, tool: string, args: Record<string, unknown>): Promise<string | null> {
   try {
     return await invoke<string | null>('confirm_manager_tool', { requestId, approved, tool, args });
@@ -324,10 +330,11 @@ export async function brainEval(): Promise<BrainEval | null> {
 export type BrainNotice = { kind: string; count: number; title: string };
 export function onBrainNotice(cb: (n: BrainNotice) => void): () => void {
   let unlisten: (() => void) | null = null;
+  let disposed = false;
   listen<BrainNotice>('brain-notice', (e) => cb(e.payload))
-    .then((un) => { unlisten = un; })
+    .then((un) => { if (disposed) un(); else unlisten = un; })
     .catch(() => {});
-  return () => { unlisten?.(); };
+  return () => { disposed = true; unlisten?.(); };
 }
 // Model roles (classifier / embedding).
 export async function listModelRoles(): Promise<ModelRoles> {
@@ -400,6 +407,13 @@ export async function saveTool(tool: Tool): Promise<void> {
 
 export async function deleteTool(id: string): Promise<void> {
   await invoke('delete_tool', { id });
+}
+
+// Runs one action of a tool through the same builder the runtime uses, so what the
+// form shows is what an agent would get. `action` names a suite action; omit it for
+// a single-endpoint tool.
+export async function testTool(tool: Tool, action?: string, args?: Record<string, unknown>): Promise<string> {
+  return await invoke<string>('test_tool', { tool, action: action ?? null, args: args ?? null });
 }
 
 export async function listSkills(): Promise<Skill[]> {
@@ -693,10 +707,11 @@ export async function voiceSpeak(text: string): Promise<string | null> {
 // The global hotkey asks the frontend to toggle live voice mode.
 export function onVoiceToggle(cb: () => void): () => void {
   let unlisten: (() => void) | null = null;
+  let disposed = false;
   listen<unknown>('voice-toggle', () => cb())
-    .then((un) => { unlisten = un; })
+    .then((un) => { if (disposed) un(); else unlisten = un; })
     .catch(() => {});
-  return () => { unlisten?.(); };
+  return () => { disposed = true; unlisten?.(); };
 }
 
 // Capture / Lumin: notes, todos, reminders, goals, links and habits.
@@ -756,32 +771,49 @@ export async function clearNotifications(): Promise<void> { await invoke('clear_
 // Fires when the backend queues a new notification (reminder, insight, finished work).
 export function onNotification(cb: (n: { id: number; kind: string; title: string; body: string; refKind: string; refId: string }) => void): () => void {
   let unlisten: (() => void) | null = null;
+  let disposed = false;
   listen<{ id: number; kind: string; title: string; body: string; refKind: string; refId: string }>('lumin-notification', (e) => cb(e.payload))
-    .then((un) => { unlisten = un; })
+    .then((un) => { if (disposed) un(); else unlisten = un; })
     .catch(() => {});
-  return () => { unlisten?.(); };
+  return () => { disposed = true; unlisten?.(); };
 }
 
 // Fires when the backend finishes a background task. The chat that asked for it
-// uses this to run the agent's follow-up summary.
-export type TaskFinished = { taskId: string; chatAgentId: string; sessionId: string; status: string; result: string };
+// uses this to run the agent's follow-up summary. `assignedAgent` is the agent the
+// work actually went to, which is how a delegated agent's window gets opened.
+export type TaskFinished = { taskId: string; chatAgentId: string; assignedAgent?: string; sessionId: string; status: string; result: string };
 export function onTaskFinished(cb: (t: TaskFinished) => void): () => void {
   let unlisten: (() => void) | null = null;
+  let disposed = false;
   listen<TaskFinished>('lumin-task-finished', (e) => cb(e.payload))
-    .then((un) => { unlisten = un; })
+    .then((un) => { if (disposed) un(); else unlisten = un; })
     .catch(() => {});
-  return () => { unlisten?.(); };
+  return () => { disposed = true; unlisten?.(); };
 }
 
 // Fires when the backend starts a background task, so the activity panel can show
 // it while the chat carries on.
-export type TaskStarted = { taskId: string; chatAgentId: string; sessionId: string; kind: string; tool: string; label: string };
+export type TaskStarted = { taskId: string; chatAgentId: string; assignedAgent?: string; sessionId: string; kind: string; tool: string; label: string };
 export function onTaskStarted(cb: (t: TaskStarted) => void): () => void {
   let unlisten: (() => void) | null = null;
+  let disposed = false;
   listen<TaskStarted>('lumin-task-started', (e) => cb(e.payload))
-    .then((un) => { unlisten = un; })
+    .then((un) => { if (disposed) un(); else unlisten = un; })
     .catch(() => {});
-  return () => { unlisten?.(); };
+  return () => { disposed = true; unlisten?.(); };
+}
+
+// Fires when an agent is created or deleted outside the UI — the Manager does both
+// from a chat turn. The roster only loads once at startup, so without this a new
+// agent would not appear anywhere until the app was reloaded.
+export type AgentsChanged = { id: string; deleted?: boolean };
+export function onAgentsChanged(cb: (a: AgentsChanged) => void): () => void {
+  let unlisten: (() => void) | null = null;
+  let disposed = false;
+  listen<AgentsChanged>('lumin-agents-changed', (e) => cb(e.payload))
+    .then((un) => { if (disposed) un(); else unlisten = un; })
+    .catch(() => {});
+  return () => { disposed = true; unlisten?.(); };
 }
 
 // Identity: who the assistant is and who it's talking to.
@@ -820,10 +852,11 @@ export async function browserState(): Promise<{ open: boolean; visible: boolean;
 }
 export function onBrowserEvent(cb: (s: BrowserState) => void): () => void {
   let unlisten: (() => void) | null = null;
+  let disposed = false;
   listen<BrowserState>('lup-browser', (e) => cb(e.payload))
-    .then((un) => { unlisten = un; })
+    .then((un) => { if (disposed) un(); else unlisten = un; })
     .catch(() => {});
-  return () => { unlisten?.(); };
+  return () => { disposed = true; unlisten?.(); };
 }
 
 // Resource / connection / adapter layer. An adapter is a descriptor (built-in or

@@ -70,6 +70,18 @@ Unknown or disabled tools are skipped. `ApiTool` supports a URL template with `{
 placeholders, headers, an optional JSON body, and a manual parameter list that becomes the
 LLM's argument schema; responses are pretty-printed JSON and clipped.
 
+An `api` row may also be a **suite**: a `baseUrl`, shared `headers`/`auth`, an `approval`
+setting, and an `actions[]` list. `agents::api_tools_from_config` expands it into one
+`ApiTool` per action, named `<tool>_<action>` (through `unique_name`, so two suites with the
+same action name don't collide), sharing the base URL and auth. A row *without* `actions` is
+the original single-endpoint tool, unchanged. Each parameter carries an `in` of
+`path | query | body | header` (absent = the original raw `{name}` substitution): path values
+are percent-encoded into their segment, query values are appended through `Url::query_pairs_mut`
+so they are encoded properly, and body values keep their JSON type. `auth` is
+`none | bearer | header | query`, its secret resolved from the vault under `tool/{id}/auth`;
+a configured credential that is no longer stored fails the call rather than being sent
+unauthenticated.
+
 ## Permission gating (`build_tools`)
 
 `agent.permissions` is a list; the four recognized values are `network`, `files`,

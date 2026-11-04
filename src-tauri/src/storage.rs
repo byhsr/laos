@@ -368,6 +368,12 @@ fn mask_tool_config(config: &serde_json::Value) -> serde_json::Value {
       }
     }
   }
+  // A tool's own auth holds one credential, under `tool/{id}/auth`.
+  if let Some(auth) = cfg.get_mut("auth").and_then(|a| a.as_object_mut()) {
+    if auth.get("value").and_then(|v| v.as_str()).map(|v| !v.is_empty()).unwrap_or(false) {
+      auth.insert("value".into(), serde_json::json!(crate::vault::MASK));
+    }
+  }
   cfg
 }
 
@@ -409,6 +415,21 @@ pub fn save_tool(app: AppHandle, tool: ToolRecord) -> Result<(), String> {
       }
     }
   }
+  // A tool's own credential, if it has one. Type 'none' clears it; an untouched
+  // field keeps the reference only while a secret is actually stored.
+  if let Some(auth) = config.get_mut("auth").and_then(|a| a.as_object_mut()) {
+    let kind = auth.get("type").and_then(|t| t.as_str()).unwrap_or("none").to_string();
+    let value = auth.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let account = format!("tool/{}/auth", tool.id);
+    if kind.is_empty() || kind == "none" {
+      auth.insert("value".into(), serde_json::json!(""));
+    } else if value == crate::vault::MASK {
+      auth.insert("value".into(), serde_json::json!(if crate::vault::get(&account).is_some() { crate::vault::REF } else { "" }));
+    } else if !value.is_empty() {
+      crate::vault::put(&account, &value)?;
+      auth.insert("value".into(), serde_json::json!(crate::vault::REF));
+    }
+  }
   let config_json = serde_json::to_string(&config).unwrap_or_else(|_| "{}".into());
   conn.execute(
     "INSERT INTO tools (id, name, kind, integration_id, description, enabled, config_json) VALUES (?1,?2,?3,?4,?5,?6,?7)
@@ -421,8 +442,42 @@ pub fn save_tool(app: AppHandle, tool: ToolRecord) -> Result<(), String> {
 #[tauri::command]
 pub fn delete_tool(app: AppHandle, id: String) -> Result<(), String> {
   let conn = db(&app)?;
+  // Credentials live in the OS store, not the row, so drop the ones this tool's
+  // config names — a deleted tool would otherwise leave its secrets behind for good.
+  if let Ok(config_json) = conn.query_row("SELECT config_json FROM tools WHERE id=?1", params![id], |r| r.get::<_, String>(0)) {
+    if let Ok(config) = serde_json::from_str::<serde_json::Value>(&config_json) {
+      if let Some(headers) = config.get("headers").and_then(|h| h.as_array()) {
+        for h in headers {
+          if let Some(name) = h.get("name").and_then(|n| n.as_str()) {
+            let _ = crate::vault::delete(&format!("tool/{id}/{name}"));
+          }
+        }
+      }
+      if config.get("auth").is_some() {
+        let _ = crate::vault::delete(&format!("tool/{id}/auth"));
+      }
+    }
+  }
   conn.execute("DELETE FROM tools WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
   Ok(())
+}
+
+// Runs one action of a tool straight from its unsaved or saved config, so the
+// form can show the user what the agent will actually get. It goes through the
+// same builder the runtime uses — testing a second implementation would only
+// prove that the second implementation works.
+#[tauri::command]
+pub async fn test_tool(tool: ToolRecord, action: Option<String>, args: Option<serde_json::Value>) -> Result<String, String> {
+  // No DB or app handle needed: the config to build from is the one passed in, and
+  // credentials resolve straight from the vault.
+  let mut used = std::collections::HashSet::new();
+  let tools = crate::agents::api_tools_from_config(&tool.id, &tool.config, &mut used);
+  if tools.is_empty() { return Err("This tool has no callable actions yet.".into()); }
+  let wanted = action.unwrap_or_default();
+  // A suite action is named `<tool>_<action>`; a single-endpoint tool has one name.
+  let found = tools.iter().find(|t| wanted.is_empty() || t.name() == wanted || t.name().ends_with(&format!("_{wanted}")));
+  let Some(found) = found else { return Err(format!("No action named '{wanted}' on this tool.")) };
+  found.run(&args.unwrap_or_else(|| serde_json::json!({}))).await
 }
 
 pub(crate) fn parse_json_vec(s: &str) -> Vec<String> {

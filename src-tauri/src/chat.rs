@@ -10,7 +10,7 @@ use futures_util::StreamExt;
 use rusqlite::params;
 use tauri::{AppHandle, Manager};
 
-use crate::agents::{build_tools, integration_tools, mcp_tools_for, skills_prompt, tool_schemas};
+use crate::agents::{build_tools, custom_tools_for, integration_tools, mcp_tools_for, skills_prompt, tool_schemas};
 use crate::db::db;
 use crate::http;
 use crate::manager::{
@@ -23,7 +23,7 @@ use crate::memory::{
 };
 use crate::models::*;
 use crate::provider;
-use crate::tools::{AgentTool, ToolOutput, MAX_TOOL_ROUNDS};
+use crate::tools::{AgentTool, ToolCtx, ToolOutput, MAX_TOOL_ROUNDS};
 use crate::tooltext::{parse_text_tool_calls, ToolCallLeakFilter};
 
 // Turns the user asked to cancel, keyed by a per-turn id the frontend generates,
@@ -135,6 +135,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   // opted into; a regular agent gets its own.
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
   let pc_control = agent.permissions.iter().any(|p| p == "pc_control");
+  let has_network = agent.permissions.iter().any(|p| p == "network");
   let has_browser = agent.tool_ids.iter().any(|t| t == "browser");
   let tools: Vec<Box<dyn AgentTool>> = if is_manager {
     let mut manager = manager_tools();
@@ -142,6 +143,9 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     if has_browser { manager.extend(crate::tools::browser_tools()); }
     manager.extend(crate::tools::script_tools(&conn));
     manager.extend(mcp_tools_for(&conn, &agent.tool_ids));
+    // Custom API tools the Manager was given. Without this a tool attached to the
+    // lead agent was listed nowhere and callable never.
+    manager.extend(custom_tools_for(&conn, &agent.tool_ids, has_network));
     // The Manager is an agent too: the integrations it holds are callable, not
     // just listed in its context.
     manager.extend(integration_tools(&app, &conn, &agent.integrations));
@@ -150,6 +154,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     // tools it holds).
     manager.push(crate::tools::remember_tool(&app, &agent.id));
     manager.push(crate::tools::items_tool(&app, &agent.id));
+    manager.push(crate::tools::scratchpad_tool(&app));
     manager.push(crate::tools::current_time_tool(&app));
     manager.push(Box::new(crate::tools::MonidTool));
     manager.push(Box::new(crate::tools::YtDlpTool));
@@ -159,7 +164,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   };
 
   let system = if is_manager {
-    build_manager_system_prompt(&conn, &agent.name, &agent.tool_ids, pc_control)?
+    build_manager_system_prompt(&conn, &agent.name, &agent.tool_ids, pc_control, has_network)?
   } else {
     // The conversation itself is the rolling window; no memory is injected.
     let tool_note = if tools.is_empty() { String::new() } else { "\nYou have tools available: call one when it helps, wait for the result, then continue.".to_string() };
@@ -211,6 +216,9 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   let system = format!("{system}{memory}");
   // Tell the model what the triage already filed, so it doesn't file it again.
   let system = match &triage { Some(t) => format!("{system}{}", t.note), None => system };
+  // This chat's scratchpad, so the agent starts the turn already seeing what it
+  // wrote down — and knows its own working notes don't belong in the user's items.
+  let system = format!("{system}{}", crate::scratchpad::block(&conn, session_id.as_deref(), &agent.id));
 
   let window: Vec<serde_json::Value> = history.iter().rev().take(ROLLING_WINDOW).cloned().collect::<Vec<_>>().into_iter().rev().collect();
   let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({ "role": "system", "content": system })];
@@ -304,7 +312,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
         // own call back, then each result as a user turn.
         messages.push(serde_json::json!({ "role": "assistant", "content": content }));
         for call in text_calls {
-          if should_background(&app, &call.name) {
+          if should_background(&app, &tools, &call.name) {
             messages.push(serde_json::json!({ "role": "user", "content": format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, background_tool_result(&app, &agent.id, session_id.as_deref(), &call.name, &call.args, &on_event)?) }));
             continue;
           }
@@ -325,7 +333,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
       for (call_id, name, args) in tool_calls {
         // A slow tool runs as a background task instead of blocking the turn; the
         // model is told it started and its result is pushed back into the chat.
-        if should_background(&app, &name) {
+        if should_background(&app, &tools, &name) {
           let mut tool_msg = serde_json::json!({ "role": "tool", "content": background_tool_result(&app, &agent.id, session_id.as_deref(), &name, &args, &on_event)? });
           if !call_id.is_empty() { tool_msg["tool_call_id"] = serde_json::json!(call_id); }
           messages.push(tool_msg);
@@ -510,11 +518,22 @@ fn is_slow_tool(name: &str) -> bool {
     || name.ends_with("_search")
 }
 
+// Whether a call should ask the user first. The builtin list covers the
+// app-control tools; a tool that isn't in it — a user-defined API tool — declares
+// its own need, so a custom `POST` can be gated without being special-cased here.
+fn asks_first(tools: &[Box<dyn AgentTool>], name: &str) -> bool {
+  if requires_confirmation(name) { return true; }
+  tools.iter().find(|t| t.name() == name).map(|t| t.requires_approval()).unwrap_or(false)
+}
+
 // Only background a slow tool when it wouldn't otherwise need the approval popup:
 // the background runner has no way to ask, so an approval-gated tool must stay
-// inline where the popup can appear.
-fn should_background(app: &AppHandle, name: &str) -> bool {
-  is_slow_tool(name) && (crate::app_settings::autonomy(app) || !requires_confirmation(name))
+// inline where the popup can appear. That includes custom tools, whose names the
+// heuristics below never knew — hence the tool's own `is_long_running`.
+fn should_background(app: &AppHandle, tools: &[Box<dyn AgentTool>], name: &str) -> bool {
+  let tool = tools.iter().find(|t| t.name() == name);
+  let slow = tool.map(|t| t.is_long_running()).unwrap_or(false) || is_slow_tool(name);
+  slow && (crate::app_settings::autonomy(app) || !asks_first(tools, name))
 }
 
 // Starts a slow tool as a background task and returns the tool result to hand the
@@ -591,7 +610,7 @@ fn build_stream_body(resolved: &provider::Resolved, messages: &[serde_json::Valu
 async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value, on_event: &tauri::ipc::Channel<String>, stream_id: Option<&str>, session_id: Option<&str>, agent_id: &str) -> Result<ToolOutput, String> {
   // Autonomy (the default) runs state-changing tools straight away; otherwise the
   // state-changing ones go through the approval popup first.
-  if crate::app_settings::autonomy(app) || !requires_confirmation(name) {
+  if crate::app_settings::autonomy(app) || !asks_first(tools, name) {
     return Ok(execute_tool(app, tools, is_manager, name, args, session_id, agent_id).await);
   }
   let request_id = format!("req-{}", chrono::Utc::now().timestamp_millis());
@@ -620,13 +639,15 @@ pub(crate) async fn execute_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], 
     // and the PC control tools — runs like any agent tool (and may return images).
     if !crate::manager::is_manager_builtin(name) {
       if let Some(t) = tools.iter().find(|t| t.name() == name) {
-        return t.run_with_images(args).await.unwrap_or_else(|e| ToolOutput::text(format!("Error: {e}")));
+        let ctx = ToolCtx { agent_id, session_id };
+        return t.run_ctx(args, &ctx).await.unwrap_or_else(|e| ToolOutput::text(format!("Error: {e}")));
       }
     }
     ToolOutput::text(run_manager_tool(app, tools, name, args, session_id, agent_id).await.unwrap_or_else(|e| e))
   } else {
+    let ctx = ToolCtx { agent_id, session_id };
     match tools.iter().find(|t| t.name() == name) {
-      Some(t) => t.run_with_images(args).await.unwrap_or_else(|e| ToolOutput::text(format!("Error: {e}"))),
+      Some(t) => t.run_ctx(args, &ctx).await.unwrap_or_else(|e| ToolOutput::text(format!("Error: {e}"))),
       None => ToolOutput::text(format!("Unknown tool '{name}'.")),
     }
   }

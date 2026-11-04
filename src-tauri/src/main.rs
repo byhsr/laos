@@ -32,6 +32,7 @@ mod refile;
 mod reminders;
 mod retrieve;
 mod routing;
+mod scratchpad;
 mod storage;
 mod tasks;
 mod telegram;
@@ -158,6 +159,7 @@ fn main() {
       storage::list_tools,
       storage::save_tool,
       storage::delete_tool,
+      storage::test_tool,
       storage::list_agents,
       storage::save_agent,
       storage::delete_agent,
@@ -270,6 +272,8 @@ fn main() {
       memory::delete_chat_session,
       memory::rename_chat_session,
       memory::close_session,
+      // The agent's own per-chat scratchpad (read-only peek for the UI).
+      scratchpad::get_scratchpad,
       // Updater (in-app, Rust-side — no JS plugin packages needed)
       updater::check_for_update,
       updater::install_update,

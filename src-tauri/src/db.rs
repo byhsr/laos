@@ -109,6 +109,9 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   conn.execute("CREATE TABLE IF NOT EXISTS resources (id TEXT PRIMARY KEY, connection_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', external_id TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', meta TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
   // Native agent-memory tables (was the fox MCP server).
   crate::agent_memory::ensure_schema(&conn)?;
+  // Each chat's private workspace for an agent: thinking, drafts and working notes,
+  // kept out of the user's own items. Keyed by scope (`session:<id>` / `agent:<id>`).
+  conn.execute("CREATE TABLE IF NOT EXISTS scratchpads (scope TEXT PRIMARY KEY, content TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
   // Model roles: pin classifier / embedding to a specific model (see provider.rs).
   conn.execute("CREATE TABLE IF NOT EXISTS model_roles (role TEXT PRIMARY KEY, model_id TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
   // Custom provider adapters (Settings → Providers). Built-ins live in code; this

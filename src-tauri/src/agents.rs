@@ -13,8 +13,9 @@ use crate::models::*;
 use crate::provider;
 use crate::tasks::list_tasks;
 use crate::tools::{
-  browser_tools, desktop_tools, script_tools, unique_name, AgentTool, ApiParam, ApiTool, HttpTool, IntegrationTool, McpTool,
-  ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool, MAX_TOOL_ROUNDS,
+  browser_tools, desktop_tools, sanitize, script_tools, unique_name, AgentTool, ApiAuth, ApiParam, ApiTool, Approval,
+  HttpTool, IntegrationTool, McpTool, ParamIn, ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool,
+  WriteFileTool, MAX_TOOL_ROUNDS,
 };
 use crate::tooltext::parse_text_tool_calls;
 
@@ -57,39 +58,9 @@ pub(crate) fn build_tools(app: &AppHandle, conn: &Connection, agent: &AgentReque
     let Some(Ok((kind, enabled, config_json))) = rows.next() else { continue }; // unknown or missing â†’ skip
     if !enabled { continue; }
     let config: serde_json::Value = serde_json::from_str(&config_json).unwrap_or_else(|_| serde_json::json!({}));
-    let str_cfg = |k: &str| config.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
     match kind.as_str() {
       "http_get" if has_network => tools.push(Box::new(HttpTool)),
-      "api" if has_network => {
-        let params = config.get("params").and_then(|p| p.as_array()).map(|arr| arr.iter().filter_map(|p| {
-          Some(ApiParam {
-            name: p.get("name")?.as_str()?.to_string(),
-            param_type: p.get("type").and_then(|t| t.as_str()).unwrap_or("string").to_string(),
-            description: p.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
-            required: p.get("required").and_then(|r| r.as_bool()).unwrap_or(false),
-          })
-        }).collect::<Vec<_>>()).unwrap_or_default();
-        let headers = config.get("headers").and_then(|h| h.as_array()).map(|arr| arr.iter().filter_map(|h| {
-          let name = h.get("name")?.as_str()?.to_string();
-          let value = h.get("value")?.as_str()?.to_string();
-          // A secret header stores only the sentinel; resolve it here, and drop
-          // the header entirely if the credential store no longer holds it.
-          let value = if crate::vault::is_ref(&value) {
-            crate::vault::get(&format!("tool/{tool_id}/{name}"))?
-          } else { value };
-          Some((name, value))
-        }).collect::<Vec<_>>()).unwrap_or_default();
-        let name = if str_cfg("name").is_empty() { format!("api_{}", tool_id) } else { str_cfg("name") };
-        tools.push(Box::new(ApiTool {
-          name,
-          description: str_cfg("description"),
-          method: str_cfg("method").to_uppercase(),
-          url_template: str_cfg("url"),
-          headers,
-          body_template: if str_cfg("body").is_empty() { None } else { Some(str_cfg("body")) },
-          params,
-        }));
-      }
+      "api" if has_network => tools.extend(api_tools_from_config(tool_id, &config, &mut used)),
       "read_file" if has_files => tools.push(Box::new(ReadFileTool { home: home.to_path_buf() })),
       "write_file" if has_files => tools.push(Box::new(WriteFileTool { home: home.to_path_buf() })),
       // Browser control: attaching the `browser` tool opts the agent in, exactly
@@ -130,13 +101,206 @@ pub(crate) fn build_tools(app: &AppHandle, conn: &Connection, agent: &AgentReque
   // Every agent gets the shared knowledge base (one store any agent can read and
   // write), the remember tool (an explicit "remember this" becomes durable memory
   // in the agent's own scope) and the items tool (todos/reminders — the store the
-  // knowledge base was standing in for).
+  // knowledge base was standing in for). The scratchpad is the agent's own pad for
+  // the chat, so its working notes never land in the user's items.
   tools.push(crate::tools::knowledge_tool(app));
   tools.push(crate::tools::remember_tool(app, &agent.id));
   tools.push(crate::tools::items_tool(app, &agent.id));
+  tools.push(crate::tools::scratchpad_tool(app));
   // And the clock, so a turn that depends on "now" doesn't have to guess the date.
   tools.push(crate::tools::current_time_tool(app));
   Ok(tools)
+}
+
+// Builds the runtime tools for one `api` tool row.
+//
+// A row carrying `actions` is an API *suite*: a base URL, shared headers and auth,
+// and one callable tool per action — which is how a user-defined tool stands in
+// for what used to require a native integration. A row without `actions` is the
+// original single-endpoint tool, and behaves exactly as it always has.
+pub(crate) fn api_tools_from_config(tool_id: &str, config: &serde_json::Value, used: &mut std::collections::HashSet<String>) -> Vec<Box<dyn AgentTool>> {
+  let str_cfg = |k: &str| config.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+  let headers = api_headers(config, tool_id);
+  let auth = api_auth(config, tool_id);
+  let approval = Approval::parse(&str_cfg("approval"));
+  let label = str_cfg("name");
+  let slug = if label.is_empty() { format!("api_{tool_id}") } else { label };
+
+  if let Some(actions) = config.get("actions").and_then(|a| a.as_array()) {
+    let base = str_cfg("baseUrl");
+    // The model-facing name must survive the provider's [a-zA-Z0-9_-] rule, so the
+    // display name the user typed is sanitised rather than trusted.
+    let safe_slug = sanitize(&slug);
+    return actions.iter().filter_map(|a| {
+      let raw = a.get("name")?.as_str()?.trim();
+      if raw.is_empty() { return None; }
+      // Unique across every tool an agent holds, so two suites exposing the same
+      // action name (two Notion accounts) can't silently collide.
+      let candidate: String = format!("{safe_slug}_{}", sanitize(raw)).chars().take(64).collect();
+      let name = unique_name(candidate, used);
+      used.insert(name.clone());
+      Some(Box::new(ApiTool {
+        name,
+        description: a.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+        method: a.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_uppercase(),
+        url_template: format!("{base}{}", a.get("path").and_then(|p| p.as_str()).unwrap_or("")),
+        headers: headers.clone(),
+        body_template: a.get("body").and_then(|b| b.as_str()).filter(|b| !b.trim().is_empty()).map(str::to_string),
+        params: api_params(a),
+        auth: auth.clone(),
+        approval,
+      }) as Box<dyn AgentTool>)
+    }).collect();
+  }
+
+  vec![Box::new(ApiTool {
+    name: slug,
+    description: str_cfg("description"),
+    method: str_cfg("method").to_uppercase(),
+    url_template: str_cfg("url"),
+    headers,
+    body_template: if str_cfg("body").is_empty() { None } else { Some(str_cfg("body")) },
+    params: api_params(config),
+    auth,
+    approval,
+  })]
+}
+
+// The `api` tool rows an agent holds. The Manager does not go through
+// `build_tools`, so without this an API tool attached to the lead agent was
+// silently dead — the row existed and nothing callable came of it.
+pub(crate) fn custom_tools_for(conn: &Connection, tool_ids: &[String], has_network: bool) -> Vec<Box<dyn AgentTool>> {
+  let mut out: Vec<Box<dyn AgentTool>> = Vec::new();
+  if !has_network { return out; }
+  let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+  let Ok(mut stmt) = conn.prepare("SELECT config_json FROM tools WHERE id=?1 AND kind='api' AND enabled=1") else { return out };
+  for id in tool_ids {
+    let Ok(mut rows) = stmt.query_map(params![id], |row| row.get::<_, String>(0)) else { continue };
+    let Some(Ok(config_json)) = rows.next() else { continue };
+    let config: serde_json::Value = serde_json::from_str(&config_json).unwrap_or_else(|_| serde_json::json!({}));
+    out.extend(api_tools_from_config(id, &config, &mut used));
+  }
+  out
+}
+
+// Static headers for a tool. A secret header stores only the sentinel; resolve it
+// here, and drop the header if the credential store no longer holds it.
+fn api_headers(config: &serde_json::Value, tool_id: &str) -> Vec<(String, String)> {
+  config.get("headers").and_then(|h| h.as_array()).map(|arr| arr.iter().filter_map(|h| {
+    let name = h.get("name")?.as_str()?.to_string();
+    let value = h.get("value")?.as_str()?.to_string();
+    // The sentinel when the config came from the store, the mask when it came back
+    // through the UI: both mean "look the real secret up".
+    let value = if crate::vault::is_ref(&value) || value == crate::vault::MASK {
+      crate::vault::get(&format!("tool/{tool_id}/{name}"))?
+    } else { value };
+    Some((name, value))
+  }).collect::<Vec<_>>()).unwrap_or_default()
+}
+
+fn api_params(config: &serde_json::Value) -> Vec<ApiParam> {
+  config.get("params").and_then(|p| p.as_array()).map(|arr| arr.iter().filter_map(|p| {
+    Some(ApiParam {
+      name: p.get("name")?.as_str()?.to_string(),
+      param_type: p.get("type").and_then(|t| t.as_str()).unwrap_or("string").to_string(),
+      description: p.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+      required: p.get("required").and_then(|r| r.as_bool()).unwrap_or(false),
+      // An absent `in` is the legacy behaviour: a raw {name} substitution.
+      in_: ParamIn::parse(p.get("in").and_then(|i| i.as_str()).unwrap_or("")),
+    })
+  }).collect::<Vec<_>>()).unwrap_or_default()
+}
+
+// A tool's auth, with the secret resolved from the credential store. A credential
+// that is configured but no longer stored becomes `Missing`, so the call fails
+// with something the user can act on rather than being sent unauthenticated.
+fn api_auth(config: &serde_json::Value, tool_id: &str) -> ApiAuth {
+  let Some(auth) = config.get("auth") else { return ApiAuth::None };
+  let kind = auth.get("type").and_then(|t| t.as_str()).unwrap_or("none");
+  if kind.is_empty() || kind == "none" { return ApiAuth::None; }
+  let raw = auth.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
+  // The sentinel when the config came from the store, the mask when it came back
+  // through the UI: both mean "look the real secret up".
+  let secret = if crate::vault::is_ref(&raw) || raw == crate::vault::MASK {
+    crate::vault::get(&format!("tool/{tool_id}/auth"))
+  } else if raw.trim().is_empty() {
+    None
+  } else {
+    Some(raw)
+  };
+  let Some(secret) = secret else {
+    let label = config.get("name").and_then(|v| v.as_str()).filter(|n| !n.trim().is_empty()).unwrap_or(tool_id);
+    return ApiAuth::Missing(format!("the {label} tool"));
+  };
+  let named = |fallback: &str| auth.get("name").and_then(|n| n.as_str()).filter(|n| !n.trim().is_empty()).unwrap_or(fallback).to_string();
+  match kind {
+    "bearer" => ApiAuth::Bearer(secret),
+    "header" => ApiAuth::Header(named("x-api-key"), secret),
+    "query" => ApiAuth::Query(named("api_key"), secret),
+    _ => ApiAuth::None,
+  }
+}
+
+#[cfg(test)]
+mod api_tool_tests {
+  use super::*;
+
+  fn fresh() -> std::collections::HashSet<String> { std::collections::HashSet::new() }
+
+  #[test]
+  fn a_legacy_row_builds_one_tool_as_before() {
+    let config = serde_json::json!({
+      "name": "gh", "description": "GitHub", "method": "get",
+      "url": "https://api.github.com/users/{user}",
+      "headers": [{ "name": "Accept", "value": "application/vnd.github+json" }],
+      "params": [{ "name": "user", "type": "string", "description": "who", "required": true }]
+    });
+    let tools = api_tools_from_config("tool-1", &config, &mut fresh());
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name(), "gh");
+    assert_eq!(tools[0].description(), "GitHub");
+    // The legacy shape has no approval setting, so nothing new starts asking.
+    assert!(!tools[0].requires_approval());
+  }
+
+  #[test]
+  fn a_suite_expands_into_one_tool_per_action() {
+    let config = serde_json::json!({
+      "name": "notion", "baseUrl": "https://api.notion.com/v1", "approval": "writes",
+      "auth": { "type": "bearer", "value": "plaintext-for-test" },
+      "actions": [
+        { "name": "search", "description": "Search pages", "method": "POST", "path": "/search" },
+        { "name": "get_page", "method": "GET", "path": "/pages/{pageId}",
+          "params": [{ "name": "pageId", "in": "path", "required": true }] }
+      ]
+    });
+    let tools = api_tools_from_config("tool-1", &config, &mut fresh());
+    let names: Vec<String> = tools.iter().map(|t| t.name()).collect();
+    assert_eq!(names, vec!["notion_search", "notion_get_page"]);
+    // `writes` asks for the POST and lets the GET run.
+    assert!(tools[0].requires_approval());
+    assert!(!tools[1].requires_approval());
+    assert!(tools[1].is_long_running());
+  }
+
+  #[test]
+  fn suite_names_do_not_collide_across_tools() {
+    let config = serde_json::json!({ "name": "notion", "baseUrl": "https://x.dev", "actions": [{ "name": "search" }] });
+    let mut used = fresh();
+    let first = api_tools_from_config("tool-1", &config, &mut used);
+    let second = api_tools_from_config("tool-2", &config, &mut used);
+    assert_eq!(first[0].name(), "notion_search");
+    assert_eq!(second[0].name(), "notion_search_2");
+  }
+
+  #[test]
+  fn a_credential_that_vanished_is_reported() {
+    let configured = serde_json::json!({ "name": "notion", "auth": { "type": "bearer", "value": crate::vault::REF } });
+    assert!(matches!(api_auth(&configured, "tool-nothing-stored"), ApiAuth::Missing(_)));
+    // An unconfigured or explicitly disabled auth is not an error.
+    assert!(matches!(api_auth(&serde_json::json!({}), "t"), ApiAuth::None));
+    assert!(matches!(api_auth(&serde_json::json!({ "auth": { "type": "none" } }), "t"), ApiAuth::None));
+  }
 }
 
 // Builds one MCP tool from a registry row's config. None when the row is missing

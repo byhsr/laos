@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { X } from 'lucide-react';
 import type { Agent, CreateKind, DrawerForm, View } from './types';
 import { emptyModel, emptyProject, emptyScript, emptySkill, emptyTool } from './types';
 import { useAgentsStore } from './hooks/useAgents';
@@ -39,6 +40,8 @@ import { ScriptFormDrawer } from './components/views/ScriptsView';
 import { ProjectFormDrawer } from './components/views/ProjectsView';
 import { Toaster } from './components/ui/Toaster';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { GHOST_BTN } from './components/ui/Button';
+import { AgentAvatar } from './components/ui/AgentAvatar';
 import { ConfirmDialog } from './components/ui/ConfirmDialog';
 import { UpdatePrompt } from './components/ui/UpdatePrompt';
 import { BrowserPanel } from './components/BrowserPanel';
@@ -51,7 +54,7 @@ import { useManagerStore } from './hooks/useManager';
 import { useActivity } from './hooks/useActivity';
 import { useVoice } from './hooks/useVoice';
 import { useNotifications } from './hooks/useNotifications';
-import { checkForUpdate, getAppSettings, onBrainNotice, onBrowserEvent, onNotification, onTaskFinished, onTaskStarted, onVoiceToggle, type UpdateInfo } from './runtime';
+import { checkForUpdate, getAppSettings, onAgentsChanged, onBrainNotice, onBrowserEvent, onNotification, onTaskFinished, onTaskStarted, onVoiceToggle, type UpdateInfo } from './runtime';
 
 // Every view lives in a pane that scrolls internally — the shell itself never
 // scrolls, so there is never a double scrollbar or a page that jumps.
@@ -63,6 +66,23 @@ const pane = (active: boolean) =>
 // error in place and the rest of the app keeps working.
 function Pane({ active, label, children }: { active: boolean; label: string; children: ReactNode }) {
   return <div className={pane(active)}><ErrorBoundary label={label}>{children}</ErrorBoundary></div>;
+}
+
+// At most three agents share the window at once.
+const MAX_PANES = 3;
+
+// A split needs its own identity strip: which agent this column is, whether it is
+// the focused one, and how to close it. Only rendered once more than one window is
+// open — a single agent is the ordinary view and needs no chrome restating it.
+// Focus reads as brightness, never as color; the border is the separator.
+function PaneBar({ agent, focused, onFocus, onClose }: { agent: Agent; focused: boolean; onFocus: () => void; onClose: () => void }) {
+  return (
+    <header onMouseDown={onFocus} className={`flex shrink-0 items-center gap-2 border-b border-border bg-surface px-2 py-1 ${focused ? '' : 'opacity-60'}`}>
+      <AgentAvatar agent={agent} size={14} />
+      <span className={`min-w-0 flex-1 truncate font-mono text-[11px] ${focused ? 'text-foreground' : 'text-muted'}`}>{agent.name}</span>
+      <button type="button" className={GHOST_BTN} onClick={onClose} aria-label={`close ${agent.name}`}><X size={12} /></button>
+    </header>
+  );
 }
 
 export default function App() {
@@ -108,6 +128,46 @@ export default function App() {
   const runWorkflow = useWorkflowsStore((s) => s.runWorkflow);
   const loadWorkflows = useWorkflowsStore((s) => s.loadWorkflows);
   const loadRuns = useRunsStore((s) => s.loadRuns);
+
+  // Which agent window is in front. The sidebar's selection, the voice target and
+  // every agent link follow this, so nothing else in the app needs to know that a
+  // split can exist — a split is simply more than one pane in `paneIds`.
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  // The agent windows open side by side, in order.
+  const [paneIds, setPaneIds] = useState<string[]>([]);
+
+  // Show an agent: focus it if its window is already open, otherwise add one. A
+  // fourth agent takes over the focused window rather than widening the row, which
+  // is what split views do everywhere and keeps the cap of three discoverable.
+  function showAgent(id: string) {
+    setPaneIds((prev) => {
+      if (prev.includes(id)) return prev;
+      if (prev.length < MAX_PANES) return [...prev, id];
+      const at = selectedAgentId ? prev.indexOf(selectedAgentId) : 0;
+      const next = [...prev];
+      next[at < 0 ? 0 : at] = id;
+      return next;
+    });
+    setSelectedAgentId(id);
+  }
+
+  // A window opened by work rather than by the user. It only takes a free slot: this
+  // arrives mid-turn, and replacing or de-focusing whatever the user is looking at
+  // would be hostile. Focus is taken only if the row was empty, so the panes are
+  // never left without one.
+  function showWork(id: string) {
+    setPaneIds((prev) => (prev.includes(id) || prev.length >= MAX_PANES ? prev : [...prev, id]));
+    setSelectedAgentId((cur) => cur ?? id);
+  }
+
+  // Closing hands focus to the window that slid into its place, so the row is never
+  // left without one.
+  function closePane(id: string) {
+    const at = paneIds.indexOf(id);
+    const next = paneIds.filter((x) => x !== id);
+    setPaneIds(next);
+    if (id === selectedAgentId) setSelectedAgentId(next[Math.min(at, next.length - 1)] ?? null);
+  }
 
   useEffect(() => {
     loadAgents(); loadModels(); loadTools(); loadSkills(); loadScripts(); loadProjects(); loadWorkflows(); loadIntegrations(); loadRuns(); loadProviders();
@@ -155,17 +215,38 @@ export default function App() {
   // where they are rather than waiting for the Memory view to be opened.
   useEffect(() => onBrainNotice((n) => toast(`${n.title} (${n.count})`, 'info')), []);
 
-  // A background job shows in the chat's activity panel the moment it starts.
+  // A background job shows in the chat's activity panel the moment it starts, and a
+  // job the Manager handed to another agent also opens that agent's window — work
+  // farmed out is watchable while it runs instead of only reported when it lands.
+  // The view is deliberately left alone: being pulled out of the Manager's chat
+  // mid-turn would be worse than having to glance at the row.
   useEffect(() => onTaskStarted((t) => {
     useActivity.getState().startTask(t);
     useActivity.getState().openPanel();
-  }), []);
+    if (!t.assignedAgent || t.assignedAgent === t.chatAgentId) return;
+    // The agent may have been created earlier in this same turn, so it can still be
+    // missing from the roster.
+    if (!agents.some((a) => a.id === t.assignedAgent)) void loadAgents();
+    showWork(t.assignedAgent);
+  }), [agents]);
+
+  // The Manager creates and deletes agents from a chat turn, and the roster is only
+  // read at startup — without this its change stays invisible until a reload. A new
+  // agent also gets a window, so one the Manager spun up can be watched and steered.
+  useEffect(() => onAgentsChanged((a) => {
+    void loadAgents();
+    if (!a.deleted) showWork(a.id);
+  }), [loadAgents]);
 
   // A background task finishing marks its card (and fires the burst); the agent
-  // then writes the follow-up summary itself, streaming into the chat.
+  // then writes the follow-up summary itself, streaming into the chat. One
+  // follow-up per task, however many times the completion event arrives.
+  const handledTasks = useRef<Set<string>>(new Set());
   useEffect(() => onTaskFinished((t) => {
     useActivity.getState().finishTask(t);
     if (t.status === 'cancelled') return;
+    if (handledTasks.current.has(t.taskId)) return;
+    handledTasks.current.add(t.taskId);
     const agent = agents.find((a) => a.id === t.chatAgentId) ?? agents.find((a) => a.isManager);
     if (agent) void useManagerStore.getState().takeTaskResult(agent, t.sessionId, t.result);
   }), [agents]);
@@ -200,7 +281,6 @@ export default function App() {
   // The skills import/export modal (Workshop → skills). Separate from `drawerForm`
   // because it is not a create/edit drawer.
   const [skillTransfer, setSkillTransfer] = useState<'import' | 'export' | null>(null);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [workflowToOpen, setWorkflowToOpen] = useState<string | null>(null);
   const building = view === 'builder';
 
@@ -220,8 +300,15 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoCollapseSidebar]);
 
-  const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
+  // Resolve the open windows against the roster, so an agent deleted from a chat
+  // turn drops its pane instead of leaving an empty column behind.
+  const panes = useMemo(() => paneIds.map((id) => agents.find((a) => a.id === id)).filter((a): a is Agent => !!a), [paneIds, agents]);
   const leadAgent = useMemo(() => agents.find((a) => a.isManager) ?? null, [agents]);
+
+  // If the focused agent disappears, focus what is left of the row.
+  useEffect(() => {
+    if (panes.length && !panes.some((p) => p.id === selectedAgentId)) setSelectedAgentId(panes[0].id);
+  }, [panes, selectedAgentId]);
 
   // Remember which chat is in front of the user so the voice hotkey talks to it
   // (and falls back to the lead agent when no chat is open).
@@ -252,7 +339,7 @@ export default function App() {
     const target = agents.find((a) => a.id === id);
     if (!target) return;
     if (target.isManager) setView('manager');
-    else { setSelectedAgentId(id); setView('agent'); }
+    else { showAgent(id); setView('agent'); }
     setConfigRequest((r) => ({ id, n: r.n + 1, tab: 'config' }));
   };
 
@@ -262,7 +349,7 @@ export default function App() {
       setView('manager');
       return;
     }
-    setSelectedAgentId(id);
+    showAgent(id);
     setView('agent');
     // Reopening a row always lands on the chat, even if Settings was open.
     setConfigRequest((r) => ({ id, n: r.n + 1, tab: 'chat' }));
@@ -270,7 +357,7 @@ export default function App() {
 
   const addAgent = async () => {
     const agent = await createAgent({});
-    setSelectedAgentId(agent.id);
+    showAgent(agent.id);
     setView('agent');
     toast(`agent "${agent.name}" created`, 'success');
   };
@@ -407,9 +494,21 @@ export default function App() {
               onNavigate={setView}
             />
           </Pane>
-          {selectedAgent && (
-            <div className={`h-full pb-4 ${view === 'agent' ? '' : 'hidden'}`}><ErrorBoundary label="agent"><AgentWindow key={selectedAgent.id} agent={selectedAgent} tools={tools} skills={skills} models={models} integrations={integrations} runs={runs} onSave={persistAgent} onDelete={async (id) => { await deleteAgent(id); setSelectedAgentId(null); setView('agents'); }} onRun={handleRun} tabRequest={{ tab: configRequest.tab, n: configRequest.id === selectedAgent.id ? configRequest.n : 0 }} /></ErrorBoundary></div>
-          )}
+          {/* Agent windows, one to three, side by side. A single window is the
+              ordinary agent view and looks exactly as it always has; the identity
+              strip only appears once the row is wider than one. */}
+          <div className={`h-full min-h-0 pb-4 ${view === 'agent' ? 'flex flex-row' : 'hidden'}`}>
+            {panes.map((a, i) => (
+              <div key={a.id} className={`flex h-full min-h-0 min-w-0 flex-1 flex-col ${i > 0 ? 'border-l border-border' : ''}`}>
+                {panes.length > 1 && <PaneBar agent={a} focused={a.id === selectedAgentId} onFocus={() => setSelectedAgentId(a.id)} onClose={() => closePane(a.id)} />}
+                <div className="min-h-0 flex-1">
+                  <ErrorBoundary label="agent">
+                    <AgentWindow key={a.id} agent={a} tools={tools} skills={skills} models={models} integrations={integrations} runs={runs} onSave={persistAgent} docked={a.id === selectedAgentId} onDelete={async (id) => { await deleteAgent(id); closePane(id); if (paneIds.filter((p) => p !== id).length === 0) setView('agents'); }} onRun={handleRun} onNavigate={setView} tabRequest={{ tab: configRequest.tab, n: configRequest.id === a.id ? configRequest.n : 0 }} />
+                  </ErrorBoundary>
+                </div>
+              </div>
+            ))}
+          </div>
         </main>
       </div>
 

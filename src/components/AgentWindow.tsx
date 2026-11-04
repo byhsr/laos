@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, AlertTriangle, ArrowLeft, Check, ChevronRight, History, Info, Lock, MessageSquare, MessageSquarePlus, PanelRight, RotateCcw, Settings, Trash2 } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowLeft, Check, ChevronRight, History, Info, Lock, MessageSquare, MessageSquarePlus, PanelRight, Plug, Plus, RotateCcw, Settings, StickyNote, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from './ui/ContextMenu';
-import type { Agent, Attachment, ChatMessage, ChatStep, ExecutionResult, Integration, ModelConfig, Reasoning, Run, Skill, Tool } from '../types';
+import type { Agent, Attachment, ChatMessage, ChatStep, ExecutionResult, Integration, ModelConfig, Reasoning, Run, Skill, Tool, View } from '../types';
+import { ToolFormDrawer } from './views/ToolsView';
+import { emptyTool } from '../types';
+import { useToolsStore } from '../hooks/useTools';
+import { useAgentsStore } from '../hooks/useAgents';
 import { Select } from './ui/Select';
 import { Slider } from './ui/Slider';
 import { REASONING_STOPS } from '../reasoning';
@@ -18,7 +22,7 @@ import { MessageBubble, EMPTY_REPLY } from './chat/MessageBubble';
 import { ActivityPanel } from './chat/ActivityPanel';
 import { useActivity } from '../hooks/useActivity';
 import { toast } from '../hooks/useToast';
-import { listChatSessions, getChatSession, createChatSession, deleteChatSession, closeSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, type StreamStep } from '../runtime';
+import { listChatSessions, getChatSession, getScratchpad, createChatSession, deleteChatSession, closeSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, type StreamStep } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
 import { useAgentChatBackdrop, useAgentBackdrop } from '../hooks/useAgentBackdrop';
 import { readBackgroundImage } from '../hooks/useGlass';
@@ -43,9 +47,9 @@ const PERMISSIONS = [
 
 // Secondary views, opened as a side window from the ⋯ menu rather than as
 // full-screen tabs — chat is always the surface behind them.
-type Panel = 'runs' | 'info' | 'config' | 'history';
+type Panel = 'runs' | 'info' | 'config' | 'history' | 'scratchpad';
 
-const PANEL_TITLES: Record<Panel, string> = { runs: 'runs', info: 'info', config: 'settings', history: 'history' };
+const PANEL_TITLES: Record<Panel, string> = { runs: 'runs', info: 'info', config: 'settings', history: 'history', scratchpad: 'scratchpad' };
 
 // Safe date formatting — DB timestamps can be empty/malformed, and new Date('')
 // throws, which would blank the whole screen.
@@ -66,10 +70,16 @@ const runDuration = (r: Run) => {
   return `${(ms / 1000).toFixed(1)}s`;
 };
 
-export function AgentWindow({ agent, tools, skills, models, integrations, runs, onSave, onDelete, onRun, tabRequest }: {
+export function AgentWindow({ agent, tools, skills, models, integrations, runs, onSave, onDelete, onRun, onNavigate, tabRequest, docked = true }: {
   agent: Agent; tools: Tool[]; skills: Skill[]; models: ModelConfig[]; integrations: Integration[]; runs: Run[];
   onSave: (a: Agent) => Promise<void>; onDelete: (id: string) => Promise<void>; onRun: (input: string, agent: Agent) => Promise<ExecutionResult>;
+  // Tools and MCP servers can be created right here; MCP servers live in the
+  // connections view, so this is how the affordance gets there.
+  onNavigate?: (view: View) => void;
   tabRequest?: { tab: 'chat' | 'config'; n: number };
+  // The activity panel's open flag and width are global, so only one window may own
+  // it — in a split the focused pane docks it and the others stay clear of it.
+  docked?: boolean;
 }) {
   const complete = isComplete(agent);
   const [panel, setPanel] = useState<Panel | null>(complete ? null : 'config');
@@ -92,6 +102,22 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   const turnItemRef = useRef<string | null>(null);
   const activityOpen = useActivity((s) => s.open);
   const toggleActivity = useActivity((s) => s.toggle);
+  // The agent's own working pad for this chat, loaded only when it's peeked at.
+  const [scratchpad, setScratchpad] = useState('');
+  useEffect(() => {
+    if (panel !== 'scratchpad') return;
+    let alive = true;
+    const sid = useManagerStore.getState().sessionIds[agent.id] ?? null;
+    void getScratchpad(sid, agent.id).then((pad) => { if (alive) setScratchpad(pad); });
+    return () => { alive = false; };
+  }, [panel, agent.id]);
+
+  // The tool list lives in the app store and can change without this component
+  // knowing — the Manager can create a tool from a chat turn — so re-read it when
+  // the config panel opens rather than offering a stale picker.
+  useEffect(() => {
+    if (panel === 'config') void useToolsStore.getState().loadTools();
+  }, [panel]);
 
   // A voice turn targeting this agent runs through the store, so the store's
   // in-flight state (not this component's local `running`) drives the live caret.
@@ -106,12 +132,37 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState<Agent>(agent);
+  // The Manager can rewrite this agent from a chat turn — creating it, attaching a
+  // tool — and the roster is not re-read afterwards, so the record seeded above can
+  // be older than the database. Saving that stale draft would undo the change, so
+  // re-read the roster and re-seed whenever the panel is opened.
+  useEffect(() => {
+    if (panel !== 'config') return;
+    void useAgentsStore.getState().loadAgents().then(() => {
+      const fresh = useAgentsStore.getState().agents.find((a) => a.id === agent.id);
+      if (fresh) setDraft(fresh);
+    });
+  }, [panel, agent.id]);
+  // Authoring a tool from here: the drawer is the same one the workshop uses, and
+  // saving attaches it, so adding a capability is one step rather than three.
+  const [newTool, setNewTool] = useState<Tool | null>(null);
+  const createAndAttachTool = async (t: Tool) => {
+    await useToolsStore.getState().saveTool(t);
+    setDraft((d) => ({ ...d, toolIds: d.toolIds.includes(t.id) ? d.toolIds : [...d.toolIds, t.id] }));
+    setNewTool(null);
+    toast(`${t.name} attached`, 'success');
+  };
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
   const enabledTools = tools.filter((t) => t.enabled);
+  // A suite is one row but many callable tools, so the picker says how many.
+  const toolLabel = (t: Tool) => {
+    const n = t.config?.actions?.length ?? 0;
+    return n > 1 ? `${t.name} (${n} actions)` : t.name;
+  };
   // MCP tools are grouped under their server so the picker reads by source
   // instead of a flat wall of raw tool names. Ungrouped tools come first.
   const toolOptions = [
-    ...enabledTools.filter((t) => t.kind !== 'mcp').map((t) => ({ value: t.id, label: t.name })),
+    ...enabledTools.filter((t) => t.kind !== 'mcp').map((t) => ({ value: t.id, label: toolLabel(t) })),
     ...enabledTools.filter((t) => t.kind === 'mcp')
       .map((t) => ({ value: t.id, label: t.name, group: `mcp · ${String(t.config?.serverName ?? t.integrationId)}` }))
       .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label)),
@@ -293,6 +344,8 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     { key: 'activity', label: 'activity panel', icon: <PanelRight size={13} />, active: activityOpen, onSelect: toggleActivity },
     { key: 'runs', label: 'runs', icon: <Activity size={13} />, active: panel === 'runs', onSelect: () => setPanel('runs') },
     { key: 'info', label: 'info', icon: <Info size={13} />, active: panel === 'info', onSelect: () => setPanel('info') },
+    // Hidden by default: the pad is the agent's own workspace, this is just a peek.
+    { key: 'scratchpad', label: 'scratchpad', icon: <StickyNote size={13} />, active: panel === 'scratchpad', onSelect: () => setPanel('scratchpad') },
     { key: 'settings', label: 'settings', icon: <Settings size={13} />, active: panel === 'config', onSelect: () => setPanel('config') },
     { key: 'history', label: 'history', icon: <History size={13} />, active: panel === 'history', onSelect: () => setPanel('history') },
     { key: 'new', label: 'new chat', icon: <MessageSquarePlus size={13} />, dividerBefore: true, onSelect: () => { void newChat(); } },
@@ -364,7 +417,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               onReasoningChange={(r) => void onSave({ ...agent, reasoning: r })}
             />
           </div>
-          {activityOpen && <ActivityPanel agentId={agent.id} />}
+          {docked && activityOpen && <ActivityPanel agentId={agent.id} />}
         </div>
       )}
 
@@ -383,6 +436,14 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             </Button>
           ) : undefined}
         >
+          {panel === 'scratchpad' && (
+            scratchpad.trim() ? (
+              <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground/80">{scratchpad}</pre>
+            ) : (
+              <p className="m-0 px-1 font-mono text-[10px] text-muted">nothing scribbled in this chat yet</p>
+            )
+          )}
+
           {panel === 'runs' && (
             <div className="font-mono text-[11px] leading-relaxed">
               {agentRuns.length === 0 ? (
@@ -559,6 +620,10 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                   onChange={(v) => setDraft({ ...draft, toolIds: v })}
                   placeholder="none attached"
                 />
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  <Button icon={<Plus size={12} />} onClick={() => setNewTool(emptyTool())}>new tool</Button>
+                  <Button icon={<Plug size={12} />} onClick={() => onNavigate?.('connections')}>add mcp server</Button>
+                </div>
 
                 <label className={`${FIELD_LABEL_CLS} mt-4`}>skills</label>
                 <MultiDropdown
@@ -604,6 +669,16 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
             </div>
           )}
         </SidePanel>
+      )}
+
+      {newTool && (
+        <ToolFormDrawer
+          editing={newTool}
+          isNew
+          integrations={integrations}
+          onClose={() => setNewTool(null)}
+          onSave={createAndAttachTool}
+        />
       )}
 
       {confirmDelete && (
