@@ -366,6 +366,12 @@ html:root[data-theme="paper"] {
   animation: ip-slide-left 160ms var(--ease-panel) both;
 }
 
+/* A finished background job "bursts": one soft ring that expands and fades, so a
+   result landing in the activity panel reads as an event, not just a state flip. */
+@utility activity-burst {
+  animation: activity-burst 900ms var(--ease-panel) both;
+}
+
 /* ---------------------------------------------------------------------------
    Motion — short and tactile. Nothing over 250ms except brand moments.
    Springs for scale, tweens for opacity/position.
@@ -376,6 +382,10 @@ html:root[data-theme="paper"] {
 @keyframes ip-slide { from { opacity: 0; translate: 24px 0; } to { opacity: 1; translate: 0 0; } }
 @keyframes ip-slide-left { from { opacity: 0; translate: -24px 0; } to { opacity: 1; translate: 0 0; } }
 @keyframes ip-toast { from { opacity: 0; translate: 0 -12px; } to { opacity: 1; translate: 0 0; } }
+@keyframes activity-burst {
+  from { box-shadow: 0 0 0 0 rgba(140, 140, 140, 0.55); }
+  to { box-shadow: 0 0 0 12px rgba(140, 140, 140, 0); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

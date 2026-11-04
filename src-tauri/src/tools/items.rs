@@ -18,9 +18,9 @@ impl AgentTool for ItemsTool {
 
   fn description(&self) -> String {
     "The user's todo list, reminders and quick notes — anything with a when or a do. Use this (NOT the \
-knowledge base) for notes, todos, reminders, goals, links and habits; reminders are scheduled \
+knowledge base) for notes, todos, reminders, goals, resources and habits; reminders are scheduled \
 and pushed to the user on Telegram. Full CRUD: add, list, update, complete, delete. Params: action ('add' | \
-'list' | 'update' | 'complete' | 'delete'), kind ('note' | 'todo' | 'reminder' | 'goal' | 'link' | 'habit', \
+'list' | 'update' | 'complete' | 'delete'), kind ('note' | 'todo' | 'reminder' | 'goal' | 'resource' | 'habit', \
 default 'note'), title (string), body (string, optional), due (string — a time like 'tomorrow 9am' or an \
 ISO-8601 instant; for reminders), cadence ('daily' | 'weekly' | 'monthly'; for habits), status ('active' | \
 'done', for 'update'), query (string — which item, for 'update' / 'complete' / 'delete'). Items you file are \

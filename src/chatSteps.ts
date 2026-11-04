@@ -5,7 +5,8 @@ import type { StreamStep } from './runtime';
 // the Manager so both chat surfaces report activity the same way.
 export const mergeStep = (prev: ChatStep[], ev: StreamStep): ChatStep[] => {
   const last = prev[prev.length - 1];
-  const time = new Date().toLocaleTimeString();
+  const now = Date.now();
+  const time = new Date(now).toLocaleTimeString();
 
   // The model's reasoning arrives token by token, so it grows one step rather
   // than adding a line per token.
@@ -15,10 +16,10 @@ export const mergeStep = (prev: ChatStep[], ev: StreamStep): ChatStep[] => {
     }
     // The first real chunk replaces the generic "Thinking…" phase.
     const base = last && last.kind === 'think' && !last.streaming ? prev.slice(0, -1) : prev;
-    return [...base, { kind: 'think', text: ev.text, time, streaming: true }];
+    return [...base, { kind: 'think', text: ev.text, time, at: now, streaming: true }];
   }
 
   // Each tool round re-announces its phase — collapse the repeats.
   if (last && last.kind === ev.kind && last.text === ev.text) return prev;
-  return [...prev, { kind: ev.kind as ChatStep['kind'], text: ev.text, time }];
+  return [...prev, { kind: ev.kind as ChatStep['kind'], text: ev.text, time, at: now }];
 };

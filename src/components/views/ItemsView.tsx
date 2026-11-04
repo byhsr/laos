@@ -34,7 +34,7 @@ const fmtWhen = (iso: string) => {
     : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
-// The Lumin inbox: everything captured — notes, todos, reminders, goals, links
+// The Lumin inbox: everything captured — notes, todos, reminders, goals, resources
 // and habits — plus the insights the learning layer proposes.
 export function ItemsView() {
   const [items, setItems] = useState<Item[]>([]);
@@ -127,28 +127,34 @@ export function ItemsView() {
           <button key={k} className={tabCls(filter === k)} onClick={() => setFilter(k)}>{k}</button>
         ))}
         {!showInsights && (
-          <div className="ml-auto w-[180px]">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="search…"
-              className={INPUT_CLS}
-            />
+          <div className="ml-auto flex items-center gap-2">
+            {(owners.length > 0 || owner !== 'all') && (
+              <>
+                <span className="font-mono text-[10px] tracking-wider text-muted uppercase">filed by</span>
+                <div className="w-[150px]">
+                  <Select
+                    value={owner}
+                    options={[
+                      { value: 'all', label: 'all' },
+                      { value: 'mine', label: 'mine' },
+                      ...owners.map((o) => ({ value: o, label: ownerName(o) })),
+                    ]}
+                    onChange={setOwner}
+                  />
+                </div>
+              </>
+            )}
+            <div className="w-[180px]">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="search…"
+                className={INPUT_CLS}
+              />
+            </div>
           </div>
         )}
       </div>
-
-      {/* Agent-filed items are kept apart from your own list. */}
-      {!showInsights && (owners.length > 0 || owner !== 'all') && (
-        <div className="mb-3 flex shrink-0 flex-wrap items-center gap-1">
-          <span className="mr-1 font-mono text-[10px] tracking-wider text-muted uppercase">filed by</span>
-          <button className={tabCls(owner === 'all')} onClick={() => setOwner('all')}>all</button>
-          <button className={tabCls(owner === 'mine')} onClick={() => setOwner('mine')}>mine</button>
-          {owners.map((o) => (
-            <button key={o} className={tabCls(owner === o)} onClick={() => setOwner(o)}>{ownerName(o)}</button>
-          ))}
-        </div>
-      )}
 
       {showInsights ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -227,9 +233,9 @@ export function ItemsView() {
                 </p>
               </div>
             )}
-            <div className="grid gap-1.5">
+            <div className="grid w-full max-w-full grid-cols-1 gap-2.5 overflow-hidden p-2.5">
               {visible.map((it) => (
-                <div key={it.id} className="group flex items-center gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2">
+                <div key={it.id} className="group relative flex min-w-0 items-center gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2">
                   <button
                     className={`focus-ring grid h-4 w-4 shrink-0 cursor-pointer place-items-center rounded border font-mono text-[9px] ${it.status === 'done' ? 'border-foreground/40 bg-foreground/10 text-foreground' : 'border-border text-transparent hover:border-foreground/30'}`}
                     onClick={() => void toggle(it)}
@@ -252,11 +258,12 @@ export function ItemsView() {
                   )}
                   {it.streak > 0 && <span className="shrink-0 font-mono text-[10px] text-muted">{it.streak}🔥</span>}
                   {it.due_at && <span className="shrink-0 font-mono text-[10px] text-muted">{fmtDue(it.due_at)}</span>}
-                  {/* The title keeps the row; the rest appears on hover so a row
-                      with tags and a destination can't crush it. */}
-                  <div className="flex shrink-0 items-center gap-2 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                  {/* The title keeps the row; the actions overlay on the right
+                      on hover so a row with tags and a destination can't
+                      stretch past the container and clip. */}
+                  <div className="absolute inset-y-0 right-2.5 flex items-center gap-2 bg-surface pl-3 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
                     {(it.tags ?? []).slice(0, 3).map((t) => <span key={t} className="font-mono text-[10px] text-muted">#{t}</span>)}
-                    {it.url && <a href={it.url} target="_blank" rel="noreferrer" className="font-mono text-[10px] text-muted hover:text-foreground">link</a>}
+                    {it.url && <a href={it.url} target="_blank" rel="noreferrer" className="font-mono text-[10px] text-muted hover:text-foreground">resource</a>}
                     {it.kind === 'reminder' && it.due_at && (
                       <button className="cursor-pointer font-mono text-[10px] text-muted hover:text-foreground" onClick={() => void reminderSnooze(it.id).then(load)}>snooze</button>
                     )}

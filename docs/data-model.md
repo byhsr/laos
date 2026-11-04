@@ -276,7 +276,7 @@ stamped on write). Ordered by `id`.
 ### `items`
 
 Lumin's store ([lumin.md](./lumin.md)): `id` (PK), `kind` (`note` | `todo` | `reminder` |
-`goal` | `link` | `habit`), `title`, `body`, `url`, `tags` (JSON), `collection`,
+`goal` | `resource` | `habit`), `title`, `body`, `url`, `tags` (JSON), `collection`,
 `status` (`active` | `done`), `due_at` (RFC3339 — with or without an offset; the scheduler fires on
 it), `cadence`
 (`''` | `daily` | `weekly` | `monthly`; recurring items roll forward), `streak` (habits),

@@ -165,17 +165,22 @@ pub(crate) fn list_adapters_inner(conn: &Sql) -> Vec<Adapter> {
 /// `integration_configs`) plus LLM endpoints (built-ins + custom `providers`).
 pub(crate) fn list_connections_inner(conn: &Sql) -> Vec<Connection> {
   let mut out = Vec::new();
-  // Integrations.
-  if let Ok(mut stmt) = conn.prepare("SELECT id, name, enabled, connected FROM integration_configs") {
-    if let Ok(rows) = stmt.query_map([], |r| Ok(Connection {
-      id: r.get::<_, String>(0)?,
-      adapter_id: r.get::<_, String>(0)?,
-      name: r.get::<_, String>(1)?,
-      category: "integration".into(),
-      enabled: r.get::<_, i64>(2)? != 0,
-      connected: r.get::<_, i64>(3)? != 0,
-      builtin: true,
-    })) {
+  // Integrations. A stored credential counts as connected, matching the
+  // Integrations view (the `connected` column is only the OAuth handshake).
+  if let Ok(mut stmt) = conn.prepare("SELECT id, name, enabled, connected, config_json FROM integration_configs") {
+    if let Ok(rows) = stmt.query_map([], |r| {
+      let cfg: String = r.get(4)?;
+      let parsed: serde_json::Value = serde_json::from_str(&cfg).unwrap_or_else(|_| serde_json::json!({}));
+      Ok(Connection {
+        id: r.get::<_, String>(0)?,
+        adapter_id: r.get::<_, String>(0)?,
+        name: r.get::<_, String>(1)?,
+        category: "integration".into(),
+        enabled: r.get::<_, i64>(2)? != 0,
+        connected: r.get::<_, i64>(3)? != 0 || crate::integrations::config_has_credential(&parsed),
+        builtin: true,
+      })
+    }) {
       for r in rows { if let Ok(c) = r { out.push(c); } }
     }
   }

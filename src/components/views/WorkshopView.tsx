@@ -16,7 +16,7 @@ const TABS: { key: WorkshopTab; label: string }[] = [
   { key: 'projects', label: 'projects' },
   { key: 'tools', label: 'tools' },
   { key: 'connections', label: 'connections' },
-  { key: 'knowledge', label: 'knowledge' },
+  { key: 'knowledge', label: 'gallery' },
 ];
 
 export function WorkshopView({

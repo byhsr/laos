@@ -70,11 +70,31 @@ fn ensure_browser_tool(conn: &Connection) -> Result<(), String> {
   Ok(())
 }
 
+// Agents that stored a model *label* instead of an id (the Manager used to copy
+// the `list_models` output straight into `create_agent`) can't resolve, so fix
+// them in place rather than leave a task failing on an unknown provider.
+fn repair_agent_models(conn: &Connection) -> Result<(), String> {
+  let mut agents: Vec<(String, String)> = Vec::new();
+  {
+    let mut stmt = conn.prepare("SELECT id, model FROM agents").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+    for r in rows { if let Ok(pair) = r { agents.push(pair); } }
+  }
+  for (id, model) in agents {
+    let fixed = crate::provider::normalize_model_id(conn, &model);
+    if fixed != model {
+      conn.execute("UPDATE agents SET model=?1 WHERE id=?2", params![fixed, id]).map_err(|e| e.to_string())?;
+    }
+  }
+  Ok(())
+}
+
 #[tauri::command]
 pub async fn initialize_storage(app: AppHandle) -> Result<(), String> {
   {
     let conn = db(&app)?;
     ensure_manager(&conn)?;
+    let _ = repair_agent_models(&conn);
     retire_memory_mcp(&conn);
     retire_playwright_browser(&conn);
     ensure_browser_tool(&conn)?;
@@ -235,11 +255,21 @@ pub fn save_provider(app: AppHandle, provider: ProviderInput) -> Result<(), Stri
   let id = provider.id.trim().to_string();
   if id.is_empty() { return Err("Provider needs an id.".into()); }
   if id.contains(':') { return Err("Provider id cannot contain ':'.".into()); }
-  if crate::provider::builtins().iter().any(|d| d.id == id) {
-    return Err("That id belongs to a built-in provider.".into());
-  }
   let account = format!("provider/{id}");
   let submitted = provider.api_key.as_deref().map(str::trim).filter(|k| !k.is_empty());
+  // A built-in adapter is fixed — its label/base/auth come from code and there is
+  // no row to edit — so the only thing to change is its shared key: the
+  // `provider/<id>` vault entry that a model without its own key falls back to.
+  // Without this, a built-in like OpenRouter could never be given a key, even
+  // though the "requires an API key" error points the user at Settings → Providers.
+  if crate::provider::builtins().iter().any(|d| d.id == id) {
+    if provider.clear_key {
+      crate::vault::delete(&account)?;
+    } else if let Some(key) = submitted {
+      crate::vault::put(&account, key)?;
+    }
+    return Ok(());
+  }
   let api_key = if provider.clear_key {
     crate::vault::delete(&account)?;
     None

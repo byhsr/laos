@@ -338,7 +338,8 @@ async fn distill_session(app: &AppHandle, agent_id: &str, scope: &str, model: &s
   if transcript.trim().is_empty() { return true; }
   let transcript: String = transcript.chars().take(MAX_SUMMARY_INPUT_CHARS).collect();
   let prompt = format!(
-    "You are updating an AI agent's long-term memory after a chat. Capture durable, reusable knowledge that will help in future conversations: facts and preferences about the user, decisions and their reasons, details of their projects and people, and the agent's own procedures and policies. Do not write a recap of the conversation; skip small talk and one-off requests. Prefer a few high-signal items over many.\n\n\
+    "You are the long-term memory of an AI assistant. Read the chat and record only what helps you understand the user and your own work over time: durable facts and preferences about the user, how they like things done, decisions and the reasons behind them, the people, projects and tools that matter, and your own durable procedures and policies.\n\n\
+     Do NOT record tasks, chores, todos, reminders, errands, one-off requests, or anything with a when or a do — those belong in the item list, not memory. Never write a recap of the conversation and skip small talk. If nothing durable was said, return empty arrays; a few high-signal items beat many.\n\n\
      Return STRICT JSON only, with no prose and no code fences:\n\
      {{\"self\":[{{\"key\":\"identity|values|goals|current_focus|capabilities\",\"value\":\"...\"}}],\"memories\":[{{\"kind\":\"semantic|procedural|policy|preference|reflection\",\"title\":\"...\",\"content\":\"...\",\"tags\":[\"...\"],\"importance\":0.0,\"confidence\":0.0}}]}}\n\
      Only include items clearly supported by the chat. Empty arrays are fine.\n\nConversation:\n{transcript}"
@@ -368,12 +369,14 @@ pub(crate) fn extract_json(text: &str) -> Option<serde_json::Value> {
   serde_json::from_str(&text[start..=end]).ok()
 }
 
-// Phrases that mean the user is explicitly asking to remember something. Kept
-// deliberately literal — a false positive costs one extra memory row, a missed one
-// loses what the user asked to keep.
+// Phrases that mean the user is explicitly asking to keep a durable fact or rule.
+// Kept literal — a false positive costs one extra memory row, a missed one loses
+// what the user asked to keep. Task-shaped phrases ("remember to …", "keep track
+// of …") are deliberately absent: those are chores/todos, not memory, and the
+// normal triage files them into items instead.
 const REMEMBER_CUES: &[&str] = &[
   "remember this", "remember that", "remember my", "remember i ", "please remember",
-  "always remember", "remember to ", "keep track of", "don't forget", "dont forget",
+  "always remember", "don't forget", "dont forget",
   "make a note", "take a note", "note this", "save this", "learn this", "jot this",
   "memorize this", "commit this to memory",
 ];

@@ -14,7 +14,7 @@ use tauri::AppHandle;
 
 /// The contract, injected into every agent and Manager prompt.
 pub(crate) const ROUTING_RULES: &str = "\nWhere things go (do not mix these up):\n\
-- items — anything with a when or a do: notes, todos, reminders, goals, links and habits. \
+- items — anything with a when or a do: notes, todos, reminders, goals, resources and habits. \
 Use the items tool ('add' to record, 'list' to show, 'update' to change, 'complete' to tick off, 'delete' to remove). Reminders are scheduled and pushed to Telegram.\n\
 - remember — durable facts and standing RULES about the user (\"never use emoji or em dashes\", \
 \"prefers IST\", \"my name is Ranas\"). kind='policy' for a never/always rule, 'preference' for a taste, \

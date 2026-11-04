@@ -15,8 +15,9 @@ impl AgentTool for KnowledgeBaseTool {
   fn description(&self) -> String {
     "The shared knowledge base — durable REFERENCE material any agent may need later (company wiki, ICP, \
 specs, policies, runbooks, product facts). Call 'search' or 'get' before answering a question about the \
-user's world; call 'save' to store reference material worth keeping. NOT for tasks, reminders or personal \
-rules about the user — those go to the 'items' tool and the 'remember' tool. Params: action ('list' | 'get' | \
+user's world; call 'save' to store reference material worth keeping. NOT for anything to do — tasks, chores, \
+errands, reminders or one-off to-dos belong in the 'items' tool — and NOT for personal rules about the user \
+(the 'remember' tool). Only durable reference material belongs here. Params: action ('list' | 'get' | \
 'search' | 'save'), title (string; for save/search), content (string; for save), id (string; for get/save).".into()
   }
   fn params_schema(&self) -> serde_json::Value {

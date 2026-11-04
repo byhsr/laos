@@ -228,6 +228,7 @@ fn main() {
       tasks::get_task,
       tasks::run_task,
       tasks::cancel_task,
+      tasks::update_task_result,
       tasks::list_runs,
       // Manager + chat
       manager::manager_message,

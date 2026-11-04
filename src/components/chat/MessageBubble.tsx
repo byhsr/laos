@@ -11,6 +11,10 @@ import type { Attachment, ChatStep } from '../../types';
 // good/bad signal that feeds the agent's memory.
 const fmtMs = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
 
+// A turn that produced no text must never read as a blank bubble. Shared with the
+// send paths so the stored entry isn't empty either.
+export const EMPTY_REPLY = '(empty reply)';
+
 export function MessageBubble({ role, content, attachments, streaming, steps, meta, time, durationMs, ttftMs, onRate }: {
   role: 'user' | 'assistant';
   content: string;
@@ -57,7 +61,11 @@ export function MessageBubble({ role, content, attachments, streaming, steps, me
               )))}
             </div>
           )}
-          {mine ? content : <Markdown>{content}</Markdown>}
+          {mine
+            ? content
+            : content.trim() || streaming
+              ? <Markdown>{content}</Markdown>
+              : <span className="text-muted">{EMPTY_REPLY}</span>}
           {streaming && (content
             ? <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-foreground/50 align-middle" />
             : <StreamIndicator streaming steps={steps} />)}

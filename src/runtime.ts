@@ -28,6 +28,7 @@ export async function streamChat(
   onStep?: (s: StreamStep) => void,
   streamId?: string,
   attachments?: Attachment[],
+  system?: boolean,
 ): Promise<void> {
   const channel = new Channel<string>();
   channel.onmessage = (raw) => {
@@ -54,7 +55,7 @@ export async function streamChat(
     }
     onDelta(raw);
   };
-  await invoke('stream_chat', { agent, input, isManager, onEvent: channel, sessionId: sessionId ?? null, streamId: streamId ?? null, attachments: attachments?.length ? attachments : null });
+  await invoke('stream_chat', { agent, input, isManager, onEvent: channel, sessionId: sessionId ?? null, streamId: streamId ?? null, attachments: attachments?.length ? attachments : null, system: system === true });
 }
 
 // Chat session management (bifurcated history).
@@ -625,6 +626,10 @@ export async function cancelTask(id: string): Promise<void> {
   await invoke('cancel_task', { id });
 }
 
+export async function updateTaskResult(id: string, result: string): Promise<void> {
+  await invoke('update_task_result', { id, result });
+}
+
 // In-app updater. The check/install live in Rust; the UI renders its own prompt.
 export type UpdateInfo = { version: string; currentVersion: string; notes?: string | null; date?: string | null };
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
@@ -701,7 +706,7 @@ export type Item = {
   last_done_at: string | null; project_id: string; fired_at: string | null;
   source: string; owner: string; created_at: string; updated_at: string;
 };
-export const ITEM_KINDS = ['note', 'todo', 'reminder', 'goal', 'link', 'habit'] as const;
+export const ITEM_KINDS = ['note', 'todo', 'reminder', 'goal', 'resource', 'habit'] as const;
 // `owner` filters by who filed the item: undefined = any, '' = you, else an agent id.
 export async function itemList(kind?: string, owner?: string): Promise<Item[]> {
   return await invoke<Item[]>('item_list', { kind: kind ?? null, owner: owner ?? null });
@@ -752,6 +757,28 @@ export async function clearNotifications(): Promise<void> { await invoke('clear_
 export function onNotification(cb: (n: { id: number; kind: string; title: string; body: string; refKind: string; refId: string }) => void): () => void {
   let unlisten: (() => void) | null = null;
   listen<{ id: number; kind: string; title: string; body: string; refKind: string; refId: string }>('lumin-notification', (e) => cb(e.payload))
+    .then((un) => { unlisten = un; })
+    .catch(() => {});
+  return () => { unlisten?.(); };
+}
+
+// Fires when the backend finishes a background task. The chat that asked for it
+// uses this to run the agent's follow-up summary.
+export type TaskFinished = { taskId: string; chatAgentId: string; sessionId: string; status: string; result: string };
+export function onTaskFinished(cb: (t: TaskFinished) => void): () => void {
+  let unlisten: (() => void) | null = null;
+  listen<TaskFinished>('lumin-task-finished', (e) => cb(e.payload))
+    .then((un) => { unlisten = un; })
+    .catch(() => {});
+  return () => { unlisten?.(); };
+}
+
+// Fires when the backend starts a background task, so the activity panel can show
+// it while the chat carries on.
+export type TaskStarted = { taskId: string; chatAgentId: string; sessionId: string; kind: string; tool: string; label: string };
+export function onTaskStarted(cb: (t: TaskStarted) => void): () => void {
+  let unlisten: (() => void) | null = null;
+  listen<TaskStarted>('lumin-task-started', (e) => cb(e.payload))
     .then((un) => { unlisten = un; })
     .catch(() => {});
   return () => { unlisten?.(); };

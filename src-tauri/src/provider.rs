@@ -318,16 +318,45 @@ impl Resolved {
   pub(crate) fn speech_url(&self) -> String { format!("{}/audio/speech", self.base) }
 }
 
+/// The stored `model` on an agent or role is normally a `"<provider>:<model>"` id,
+/// but a label can slip in — e.g. the Manager copying the `list_models` output
+/// ("Qwen3 8B (ollama)") straight into `create_agent`. Match it back to a
+/// configured model (by exact id, by label, or by the `"<label> (<provider>)"`
+/// shape that list prints) so a wrong-but-recognisable value still resolves
+/// instead of failing the whole run.
+pub(crate) fn normalize_model_id(conn: &Connection, model: &str) -> String {
+  let model = model.trim();
+  if model.is_empty() { return String::new(); }
+  let mut rows: Vec<(String, String, String)> = Vec::new();
+  if let Ok(mut stmt) = conn.prepare("SELECT id, label, provider FROM model_configs") {
+    if let Ok(iter) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))) {
+      for r in iter.flatten() { rows.push(r); }
+    }
+  }
+  if rows.iter().any(|(id, _, _)| id.as_str() == model) { return model.to_string(); }
+  if let Some((id, _, _)) = rows.iter().find(|(_, label, _)| label.as_str() == model) { return id.clone(); }
+  if let Some((id, _, _)) = rows.iter().find(|(_, label, provider)| format!("{label} ({provider})") == model) { return id.clone(); }
+  model.to_string()
+}
+
+/// Whether a model id's provider is one the app knows — used to reject a bogus
+/// model at agent-creation time instead of failing the run later.
+pub(crate) fn model_provider_known(conn: &Connection, model: &str) -> bool {
+  find_provider(conn, provider_id_of(model)).is_some()
+}
+
 /// Resolves a stored `"<provider>:<model>"` id into everything a request needs.
 ///
 /// `override_key` is a caller-supplied API key (the browser preview passes one);
 /// it wins over the stored key. Keys, in order: override → the model's own key →
 /// the provider's shared key.
 pub(crate) fn resolve(conn: &Connection, model_id: &str, override_key: Option<&str>) -> Result<Resolved, String> {
-  let id = provider_id_of(model_id);
+  // A label in place of an id is tolerated rather than fatal.
+  let model_id = normalize_model_id(conn, model_id);
+  let id = provider_id_of(&model_id);
   let def = find_provider(conn, id)
     .ok_or_else(|| format!("Unknown model provider \"{id}\". Add it in Settings → Providers."))?;
-  let (host, stored_key, reasoning) = model_settings(conn, model_id)?;
+  let (host, stored_key, reasoning) = model_settings(conn, &model_id)?;
   let key = override_key.filter(|k| !k.trim().is_empty()).map(|k| k.to_string())
     .or(stored_key)
     .or_else(|| crate::vault::get(&format!("provider/{}", def.id)));
@@ -340,7 +369,7 @@ pub(crate) fn resolve(conn: &Connection, model_id: &str, override_key: Option<&s
   } else {
     def.base.clone()
   };
-  Ok(Resolved { def, base, model: model_of(model_id), key, reasoning })
+  Ok(Resolved { def, base, model: model_of(&model_id), key, reasoning })
 }
 
 /// Applies an agent's own reasoning setting over the model's default. An empty

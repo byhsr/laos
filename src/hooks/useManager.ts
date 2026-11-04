@@ -1,5 +1,7 @@
 import { create } from 'zustand';
-import { cancelChatStream, clearAgentMemory, closeSession, createChatSession, getChatSession, listChatSessions, newChatStreamId, renameChatSession, streamChat } from '../runtime';
+import { cancelChatStream, clearAgentMemory, closeSession, createChatSession, newChatStreamId, renameChatSession, streamChat } from '../runtime';
+import { EMPTY_REPLY } from '../components/chat/MessageBubble';
+import { useActivity } from './useActivity';
 import { useConfirmStore } from './useConfirm';
 import { useProjectsStore } from './useProjects';
 import { useRunsStore } from './useRuns';
@@ -18,25 +20,10 @@ export type ChatEntry = {
   ttftMs?: number;
 };
 
-// A reload (dev HMR, or the webview being recreated) resets this in-memory
-// store; the DB restore below covers that, but this mirror makes the visible
-// chat come back instantly and keeps even an in-flight turn, so a reload never
-// looks like the conversation "vanished".
-const CHAT_LS_KEY = 'laos.chat.v1';
-const MAX_PERSIST = 300; // entries per agent, newest kept
-
-type ChatPersist = { conversations: Record<string, ChatEntry[]>; sessionIds: Record<string, string | null> };
-
-function readPersistedChat(): ChatPersist {
-  try {
-    const raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(CHAT_LS_KEY);
-    if (!raw) return { conversations: {}, sessionIds: {} };
-    const p = JSON.parse(raw) as Partial<ChatPersist>;
-    return { conversations: p.conversations ?? {}, sessionIds: p.sessionIds ?? {} };
-  } catch { return { conversations: {}, sessionIds: {} }; }
-}
-
-const persistedChat = readPersistedChat();
+// Chats live in this in-memory store only. The chat panels stay mounted while
+// you navigate, so a live conversation survives tab switches — but nothing is
+// mirrored to localStorage and a fresh launch always starts empty. Past chats
+// are resumed on demand from History (resumeSession), not restored automatically.
 
 // Derives a short, readable title from the first user message.
 const titleFrom = (msg: string) => {
@@ -49,6 +36,18 @@ const titleFrom = (msg: string) => {
 // guards a turn's late callbacks from touching a newer turn's state.
 let cancelledTurn = false;
 let turnSeq = 0;
+
+// Results that arrived while a turn was still running. A fast background task can
+// finish before the turn that started it has stopped streaming, so instead of
+// dropping the result we hold it and deliver it the moment the chat goes idle.
+const pendingResults: { agent: Agent; sessionId: string; result: string }[] = [];
+
+const flushResults = async () => {
+  const store = useManagerStore.getState();
+  if (store.busy || pendingResults.length === 0) return;
+  const next = pendingResults.shift()!;
+  await store.takeTaskResult(next.agent, next.sessionId, next.result);
+};
 
 type ManagerState = {
   currentAgentId: string | null;
@@ -67,14 +66,17 @@ type ManagerState = {
   // `isManagerOverride` lets a global caller (live voice) run against a regular
   // agent; the Manager view leaves it unset and keeps the manager path.
   send: (message: string, managerAgent: Agent, attachments?: Attachment[], isManagerOverride?: boolean) => Promise<void>;
+  // A finished background task: hand its result back to the agent and let it write
+  // the follow-up itself, streaming into the conversation the task came from.
+  takeTaskResult: (agent: Agent, sessionId: string, result: string) => Promise<void>;
   cancel: (action: 'pause' | 'delete') => void;
 };
 
 export const useManagerStore = create<ManagerState>((set, get) => ({
   currentAgentId: null,
-  conversations: persistedChat.conversations,
+  conversations: {},
   messages: [],
-  sessionIds: persistedChat.sessionIds,
+  sessionIds: {},
   busy: false,
   steps: [],
   activeStreamId: null,
@@ -85,39 +87,13 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     set({ currentAgentId: agentId, conversations: conv, messages: agentId ? (conv[agentId] ?? []) : [] });
   },
 
+  // Keep the live conversation when we already hold it (switching back to an
+  // agent mid-session). A fresh launch starts empty: past sessions are not
+  // restored automatically — History → continue chat resumes one on demand.
   loadHistory: async (agentId) => {
-    // We already hold this agent's live conversation (switching back to it
-    // mid-session): keep it rather than wiping what's on screen.
-    if ((get().conversations[agentId] ?? []).length > 0) {
-      set((s) => ({
-        messages: (s.currentAgentId === agentId || agentId === 'manager') ? (s.conversations[agentId] ?? []) : s.messages,
-      }));
-      return;
-    }
-    // Nothing in memory — a reload or a first visit after restart. The messages
-    // are persisted (`chat_messages`, one session per chat), so restore the most
-    // recent session instead of showing a blank chat. Continuing appends to it.
-    let entries: ChatEntry[] = [];
-    let sessionId: string | null = null;
-    try {
-      const sessions = await listChatSessions(agentId);
-      if (sessions.length > 0) {
-        sessionId = sessions[0].id;
-        const msgs = await getChatSession(sessionId);
-        entries = msgs
-          .filter((m) => m.role === 'user' || m.role === 'assistant')
-          .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: m.time ?? '' }));
-      }
-    } catch { /* no history to restore */ }
-    set((s) => {
-      // Someone typed while the fetch was in flight — don't clobber the live turn.
-      if ((s.conversations[agentId] ?? []).length > 0) return {};
-      return {
-        conversations: { ...s.conversations, [agentId]: entries },
-        sessionIds: { ...s.sessionIds, [agentId]: sessionId ?? s.sessionIds[agentId] ?? null },
-        messages: (s.currentAgentId === agentId || agentId === 'manager') ? entries : s.messages,
-      };
-    });
+    set((s) => ({
+      messages: (s.currentAgentId === agentId || agentId === 'manager') ? (s.conversations[agentId] ?? []) : s.messages,
+    }));
   },
 
   // Continue a past chat on demand: make it the active session and load its
@@ -174,6 +150,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
     const t0 = performance.now();
     let ttftMs: number | undefined;
     set({ busy: true, steps: [], activeStreamId: streamId, activeAgentId: agentId });
+    const turnItem = useActivity.getState().startTurn(agentId, get().sessionIds[managerAgent.id] ?? '', titleFrom(message));
     const userEntry: ChatEntry = { role: 'user', content: message, time: new Date().toLocaleTimeString(), attachments };
     // Seed an empty assistant bubble that grows as tokens stream in.
     const assistantEntry: ChatEntry = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
@@ -197,7 +174,7 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       await streamChat(managerAgent, message, isManagerOverride ?? true, (delta) => batcher.push(delta), (confirmReq) => {
         // Pop the confirmation dialog; the backend waits for the decision.
         useConfirmStore.getState().request(confirmReq);
-      }, get().sessionIds[managerAgent.id] ?? undefined, (ev) => set((s) => ({ steps: mergeStep(s.steps, ev) })), streamId, attachments);
+      }, get().sessionIds[managerAgent.id] ?? undefined, (ev) => { set((s) => ({ steps: mergeStep(s.steps, ev) })); useActivity.getState().stepTurn(turnItem, ev); }, streamId, attachments);
       useRunsStore.getState().loadRuns();
     } catch (e) {
       failed = true;
@@ -213,14 +190,90 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       // Only flush the tail on success: after a failure the bubble already shows
       // the error, and a late flush would overwrite it with partial text.
       if (!failed) batcher.end();
-      // Stamp how long the reply took onto the assistant bubble.
+      // Stamp how long the reply took onto the assistant bubble. A turn that
+      // produced no text must never render (or persist) blank.
       const durationMs = performance.now() - t0;
       set((s) => {
         const list = s.conversations[agentId] ?? [];
-        const updated = list.map((e, i) => (i === list.length - 1 && e.role === 'assistant' ? { ...e, durationMs, ttftMs } : e));
+        const updated = list.map((e, i) => {
+          if (i !== list.length - 1 || e.role !== 'assistant') return e;
+          return { ...e, content: e.content.trim() ? e.content : EMPTY_REPLY, durationMs, ttftMs };
+        });
         return { conversations: { ...s.conversations, [agentId]: updated }, messages: updated };
       });
       set({ busy: false, steps: [], activeStreamId: null, activeAgentId: null });
+      useActivity.getState().endTurn(turnItem, failed);
+      void flushResults();
+    }
+  },
+
+  takeTaskResult: async (agent, sessionId, result) => {
+    // If a turn is already streaming, hold the result and deliver it when the chat
+    // frees up — a fast task must still be reported, not silently dropped.
+    if (get().busy) { pendingResults.push({ agent, sessionId, result }); return; }
+    const agentId = agent.id;
+    if (sessionId && get().sessionIds[agentId] !== sessionId) {
+      set((s) => ({ sessionIds: { ...s.sessionIds, [agentId]: sessionId } }));
+    }
+    const myTurn = ++turnSeq;
+    cancelledTurn = false;
+    const streamId = newChatStreamId();
+    const t0 = performance.now();
+    let ttftMs: number | undefined;
+    set({ busy: true, steps: [], activeStreamId: streamId, activeAgentId: agentId });
+    const turnItem = useActivity.getState().startTurn(agentId, sessionId, 'Replying to a finished task');
+    // Only the reply is shown — the injected instruction never becomes a user turn
+    // (the backend records it as a system turn).
+    const assistantEntry: ChatEntry = { role: 'assistant', content: '', time: new Date().toLocaleTimeString() };
+    set((s) => {
+      const conv = { ...s.conversations, [agentId]: [...(s.conversations[agentId] ?? []), assistantEntry] };
+      return { conversations: conv, messages: s.currentAgentId === agentId ? conv[agentId] : s.messages };
+    });
+    const batcher = createDeltaBuffer((text) => {
+      if (cancelledTurn || myTurn !== turnSeq) return;
+      if (ttftMs === undefined) ttftMs = performance.now() - t0;
+      set((s) => {
+        const list = s.conversations[agentId] ?? [];
+        const updated = list.map((e, i) => (i === list.length - 1 ? { ...e, content: text } : e));
+        return { conversations: { ...s.conversations, [agentId]: updated }, messages: s.currentAgentId === agentId ? updated : s.messages };
+      });
+    });
+    const note = `A background task you started has finished.\n\n${result}\n\nReply to the user now, in plain text: say briefly what came back and take any obvious next step. Do not call tools in this turn.`;
+    let failed = false;
+    try {
+      await streamChat(agent, note, !!agent.isManager, (d) => batcher.push(d), (req) => {
+        useConfirmStore.getState().request(req);
+      }, sessionId || undefined, (ev) => { set((s) => ({ steps: mergeStep(s.steps, ev) })); useActivity.getState().stepTurn(turnItem, ev); }, streamId, undefined, true);
+      useRunsStore.getState().loadRuns();
+    } catch (e) {
+      failed = true;
+      const msg = typeof e === 'string' ? e : (e instanceof Error ? e.message : 'the follow-up failed.');
+      set((s) => {
+        const list = s.conversations[agentId] ?? [];
+        const updated = list.map((e, i) => (i === list.length - 1 ? { ...e, content: `⚠️ ${msg}` } : e));
+        return { conversations: { ...s.conversations, [agentId]: updated }, messages: s.currentAgentId === agentId ? updated : s.messages };
+      });
+    } finally {
+      if (myTurn !== turnSeq) return;
+      if (!failed) batcher.end();
+      const durationMs = performance.now() - t0;
+      // The model can come back with nothing. Rather than an "(empty reply)" the
+      // user still gets the actual data — which is the point of the follow-up.
+      const body = result.trim();
+      const fallback = body
+        ? `Background task finished. Here's what came back:\n\n${body.slice(0, 1200)}${body.length > 1200 ? '\n\n…the full text is in the activity panel.' : ''}`
+        : 'Background task finished, but it came back empty.';
+      set((s) => {
+        const list = s.conversations[agentId] ?? [];
+        const updated = list.map((e, i) => {
+          if (i !== list.length - 1 || e.role !== 'assistant') return e;
+          return { ...e, content: e.content.trim() ? e.content : fallback, durationMs, ttftMs };
+        });
+        return { conversations: { ...s.conversations, [agentId]: updated }, messages: s.currentAgentId === agentId ? updated : s.messages };
+      });
+      set({ busy: false, steps: [], activeStreamId: null, activeAgentId: null });
+      useActivity.getState().endTurn(turnItem, failed);
+      void flushResults();
     }
   },
 
@@ -243,21 +296,6 @@ export const useManagerStore = create<ManagerState>((set, get) => ({
       return { conversations: { ...s.conversations, [activeAgentId]: updated }, messages: updated };
     });
     set({ busy: false, steps: [], activeStreamId: null, activeAgentId: null });
+    void flushResults();
   },
 }));
-
-// Mirror the live conversations to localStorage (debounced — the stream writes
-// per batch). Rounds are restored from here on load, before any DB round-trip.
-let persistTimer: ReturnType<typeof setTimeout> | undefined;
-useManagerStore.subscribe((s) => {
-  clearTimeout(persistTimer);
-  persistTimer = setTimeout(() => {
-    try {
-      const conversations: Record<string, ChatEntry[]> = {};
-      for (const [id, entries] of Object.entries(s.conversations)) {
-        conversations[id] = entries.length > MAX_PERSIST ? entries.slice(-MAX_PERSIST) : entries;
-      }
-      localStorage.setItem(CHAT_LS_KEY, JSON.stringify({ conversations, sessionIds: s.sessionIds }));
-    } catch { /* quota or unavailable — the DB restore is the fallback */ }
-  }, 400);
-});

@@ -74,6 +74,15 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   if !bot_cols.iter().any(|c| c == "destination_id") { conn.execute("ALTER TABLE telegram_bots ADD COLUMN destination_id TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   // The long-poll offset, persisted so a restart can't replay (and re-reply to) old updates.
   if !bot_cols.iter().any(|c| c == "poll_offset") { conn.execute("ALTER TABLE telegram_bots ADD COLUMN poll_offset INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
+  // Tasks grew a link back to the chat that asked for them (so a finished task's
+  // result can be pushed into the right conversation) and a kind, so a single slow
+  // tool call can be backgrounded as well as a delegated agent run.
+  let task_cols = cols("tasks")?;
+  if !task_cols.iter().any(|c| c == "session_id") { conn.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  if !task_cols.iter().any(|c| c == "chat_agent_id") { conn.execute("ALTER TABLE tasks ADD COLUMN chat_agent_id TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  if !task_cols.iter().any(|c| c == "kind") { conn.execute("ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'agent'", []).map_err(|e| e.to_string())?; }
+  if !task_cols.iter().any(|c| c == "tool") { conn.execute("ALTER TABLE tasks ADD COLUMN tool TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  if !task_cols.iter().any(|c| c == "tool_args") { conn.execute("ALTER TABLE tasks ADD COLUMN tool_args TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
   // Items grew a schedule (habits, reminders) and a project.
   let item_cols = cols("items")?;
   if !item_cols.iter().any(|c| c == "cadence") { conn.execute("ALTER TABLE items ADD COLUMN cadence TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
@@ -84,6 +93,8 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   // Who owns an item: '' = the user, otherwise the filing agent's id. Lets the
   // Items view keep an agent's todos apart from the user's own.
   if !item_cols.iter().any(|c| c == "owner") { conn.execute("ALTER TABLE items ADD COLUMN owner TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  // The `link` kind was renamed to `resource`; move any existing rows across.
+  conn.execute("UPDATE items SET kind = 'resource' WHERE kind = 'link'", []).map_err(|e| e.to_string())?;
   // The learning layer's proposals (goals, preferences, patterns, habit nudges).
   conn.execute("CREATE TABLE IF NOT EXISTS insights (id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'new', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
   // Named MCP destinations: where captured items are pushed (e.g. a Notion account).

@@ -32,7 +32,10 @@ pub(crate) use ytdlp::YtDlpTool;
 use async_trait::async_trait;
 
 const MAX_TOOL_CHARS: usize = 8000;
-pub(crate) const MAX_TOOL_ROUNDS: usize = 5;
+// Rounds a single turn may spend calling tools. Research-and-act turns routinely
+// need more than a handful; slow calls are backgrounded now, so this is a backstop
+// rather than the thing that stops a turn.
+pub(crate) const MAX_TOOL_ROUNDS: usize = 12;
 
 pub(crate) fn clip(s: &str) -> String {
   let chars: Vec<char> = s.chars().collect();

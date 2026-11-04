@@ -30,7 +30,7 @@ import { RunsConsole } from './components/views/RunsConsole';
 import { Onboarding, type OnboardingPatch } from './components/Onboarding';
 import { WorkshopView } from './components/views/WorkshopView';
 import { MemoryView } from './components/views/MemoryView';
-import { KnowledgeBaseView } from './components/views/KnowledgeBaseView';
+import { ConnectionsView } from './components/views/ConnectionsView';
 import { TerminalView } from './components/views/TerminalView';
 import { ItemsView } from './components/views/ItemsView';
 import { NotificationsView } from './components/views/NotificationsView';
@@ -47,9 +47,11 @@ import { toast } from './hooks/useToast';
 import { syncBrowserTheme } from './theme';
 import { VoiceOverlay } from './components/voice/VoiceOverlay';
 import { useActiveChat } from './hooks/useActiveChat';
+import { useManagerStore } from './hooks/useManager';
+import { useActivity } from './hooks/useActivity';
 import { useVoice } from './hooks/useVoice';
 import { useNotifications } from './hooks/useNotifications';
-import { checkForUpdate, getAppSettings, onBrainNotice, onBrowserEvent, onNotification, onVoiceToggle, type UpdateInfo } from './runtime';
+import { checkForUpdate, getAppSettings, onBrainNotice, onBrowserEvent, onNotification, onTaskFinished, onTaskStarted, onVoiceToggle, type UpdateInfo } from './runtime';
 
 // Every view lives in a pane that scrolls internally — the shell itself never
 // scrolls, so there is never a double scrollbar or a page that jumps.
@@ -152,6 +154,21 @@ export default function App() {
   // The learning layer announces a pattern it noticed, so it reaches the user
   // where they are rather than waiting for the Memory view to be opened.
   useEffect(() => onBrainNotice((n) => toast(`${n.title} (${n.count})`, 'info')), []);
+
+  // A background job shows in the chat's activity panel the moment it starts.
+  useEffect(() => onTaskStarted((t) => {
+    useActivity.getState().startTask(t);
+    useActivity.getState().openPanel();
+  }), []);
+
+  // A background task finishing marks its card (and fires the burst); the agent
+  // then writes the follow-up summary itself, streaming into the chat.
+  useEffect(() => onTaskFinished((t) => {
+    useActivity.getState().finishTask(t);
+    if (t.status === 'cancelled') return;
+    const agent = agents.find((a) => a.id === t.chatAgentId) ?? agents.find((a) => a.isManager);
+    if (agent) void useManagerStore.getState().takeTaskResult(agent, t.sessionId, t.result);
+  }), [agents]);
 
   // The global hotkey toggles live voice mode; the system voices are the default
   // until Settings says otherwise.
@@ -351,7 +368,7 @@ export default function App() {
           </Pane>
           <Pane active={view === 'manager'} label="manager"><ManagerView agents={agents} integrations={integrations} models={models} tools={tools} openConfigRequest={configRequest.id === leadAgent?.id ? configRequest.n : 0} /></Pane>
           <Pane active={view === 'memory'} label="memory"><MemoryView /></Pane>
-          <Pane active={view === 'knowledge'} label="knowledge"><KnowledgeBaseView /></Pane>
+          <Pane active={view === 'connections'} label="connections"><ConnectionsView integrations={integrations} /></Pane>
           <Pane active={view === 'tasks'} label="tasks"><TasksView agents={agents} /></Pane>
           <Pane active={view === 'telegram'} label="telegram"><TelegramView /></Pane>
           <Pane active={view === 'terminal'} label="terminal"><TerminalView /></Pane>

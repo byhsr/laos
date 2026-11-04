@@ -72,7 +72,7 @@ SCHEMA:\n\
   \"salience_signals\": [\"novelty|urgency|social|intensity|repetition\"],\n\
   \"should_act\": false,\n\
   \"confidence\": 0.0,\n\
-  \"feature\": \"note|todo|reminder|goal|link|habit|null\",\n\
+  \"feature\": \"note|todo|reminder|goal|resource|habit|null\",\n\
   \"action\": \"create|read|update|delete|complete|null\",\n\
   \"params\": {\n\
     \"title\": \"short title, 3-7 words\",\n\
@@ -89,7 +89,7 @@ RULES\n\
 an explicit 'I will not' or a firm call is a decision; a captured person is a person; a durable way of \
 working is a preference; a bare conversation is conversation.\n\
 - feature (Lumin): reminder = has a time; todo = intends to do it, no time; goal = an explicit \
-commitment (\"I will\", \"I'll\"); habit = something repeated (\"every day\", \"daily\"); link = the message \
+commitment (\"I will\", \"I'll\"); habit = something repeated (\"every day\", \"daily\"); resource = the message \
 shares a URL; note = an idea/fact worth keeping; chat = just conversation (feature and action null).\n\
 - action: create for new things; complete for \"I did X\"; read for \"show me / what are my X\"; update for \
 \"change X to Y\"; delete for \"remove X\".\n\

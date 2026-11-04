@@ -275,7 +275,7 @@ fn item_kind_to_node(kind: &str) -> &'static str {
     "todo" | "reminder" => "task",
     "goal" => "goal",
     "habit" => "habit",
-    "link" => "note",
+    "resource" => "note",
     _ => "note",
   }
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
-import type { ProviderCaps } from '../../types';
+import type { ProviderCaps, ProviderRecord } from '../../types';
 import type { ProviderDraft as DraftFromRuntime } from '../../runtime';
 import { useProvidersStore } from '../../hooks/useProviders';
 import { toast } from '../../hooks/useToast';
@@ -39,6 +39,7 @@ export function ProvidersView() {
   const deleteProvider = useProvidersStore((s) => s.deleteProvider);
   const [editing, setEditing] = useState<Draft | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [keyFor, setKeyFor] = useState<ProviderRecord | null>(null);
 
   return (
     <>
@@ -67,7 +68,9 @@ export function ProvidersView() {
                 <span className="block truncate font-mono text-[10px] text-muted/70">{capsSummary(p.caps)}</span>
               </div>
             </div>
-            {!p.builtin && (
+            {p.builtin ? (
+              <Button className="shrink-0" onClick={() => setKeyFor(p)}>{p.hasKey ? 'update key' : 'set key'}</Button>
+            ) : (
               <div className="flex shrink-0 items-center gap-2">
                 <Button onClick={() => setEditing({ ...p, apiKey: '', clearKey: false })}>edit</Button>
                 <Button onClick={() => setConfirming(p.id)}>delete</Button>
@@ -85,6 +88,18 @@ export function ProvidersView() {
           editing={editing}
           onClose={() => setEditing(null)}
           onSave={async (p) => { await useProvidersStore.getState().saveProvider(p); setEditing(null); toast('provider saved', 'success'); }}
+        />
+      )}
+
+      {keyFor && (
+        <ProviderKeyForm
+          provider={keyFor}
+          onClose={() => setKeyFor(null)}
+          onSave={async (apiKey, clearKey) => {
+            await useProvidersStore.getState().saveProvider({ ...keyFor, apiKey, clearKey });
+            setKeyFor(null);
+            toast('provider key saved', 'success');
+          }}
         />
       )}
 
@@ -227,6 +242,51 @@ function ProviderForm({ editing, onClose, onSave }: {
       </div>
 
       {error && <p className="mt-2.5 mb-0 font-mono text-[10px] text-danger">{error}</p>}
+    </Modal>
+  );
+}
+
+// A built-in adapter has no editable config — only its shared key. This is the
+// `provider/<id>` key a model without its own key falls back to, so without it a
+// built-in like OpenRouter could never satisfy `requires_key`.
+function ProviderKeyForm({ provider, onClose, onSave }: {
+  provider: ProviderRecord; onClose: () => void; onSave: (apiKey?: string, clearKey?: boolean) => Promise<void>;
+}) {
+  const [key, setKey] = useState('');
+  const [clear, setClear] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setSaving(true);
+    try { await onSave(key.trim() || undefined, clear || undefined); }
+    finally { setSaving(false); }
+  };
+  return (
+    <Modal
+      title={`${provider.label} — api key`}
+      onClose={onClose}
+      headerAction={<Button variant="primary" disabled={saving} onClick={submit}>{saving ? 'saving…' : 'save'}</Button>}
+    >
+      <p className="mt-0 mb-3.5 font-mono text-[10px] leading-relaxed text-muted">
+        The shared key for {provider.label}. A model on this provider without its own key uses it.
+        Stored in the system credential store and never sent to the window.
+      </p>
+      <label className={FIELD_LABEL_CLS}>api key</label>
+      <input
+        type="password"
+        value={key}
+        onChange={(e) => { setKey(e.target.value); setClear(false); }}
+        placeholder={provider.hasKey && !clear ? '•••••••• saved — type to replace' : 'paste the api key'}
+        className={INPUT_CLS}
+      />
+      <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+        {clear ? (
+          <>Key will be removed on save. <button type="button" className="cursor-pointer underline" onClick={() => setClear(false)}>undo</button></>
+        ) : provider.hasKey ? (
+          <>A key is stored. <button type="button" className="cursor-pointer underline" onClick={() => setClear(true)}>remove key</button></>
+        ) : (
+          'No key set — models on this provider fail until you add one.'
+        )}
+      </p>
     </Modal>
   );
 }

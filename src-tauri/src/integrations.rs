@@ -80,6 +80,33 @@ pub(crate) fn integration_secret(conn: &Connection, id: &str) -> Result<serde_js
   Ok(out)
 }
 
+/// Whether a stored integration config carries a usable credential. The
+/// `connected` column only tracks OAuth handshakes, so a saved API key or token
+/// must count too — otherwise a configured integration reads as "not connected"
+/// everywhere and is never exposed to an agent.
+pub(crate) fn config_has_credential(cfg: &serde_json::Value) -> bool {
+  ["token", "apiKey", "accessToken", "refreshToken"].iter().any(|k| {
+    cfg.get(*k).and_then(|v| v.as_str()).map(|s| !s.trim().is_empty()).unwrap_or(false)
+  })
+}
+
+/// Whether the integration with `id` is connected: the OAuth flag is set, or a
+/// credential is stored. The single source of truth for the UI, the connections
+/// list, the workspace context and the agent tool builder.
+pub(crate) fn integration_connected(conn: &Connection, id: &str) -> bool {
+  conn
+    .query_row(
+      "SELECT connected, config_json FROM integration_configs WHERE id=?1",
+      params![id],
+      |r| Ok((r.get::<_, i64>(0)? != 0, r.get::<_, String>(1)?)),
+    )
+    .ok()
+    .map(|(connected, cfg)| {
+      connected || config_has_credential(&serde_json::from_str::<serde_json::Value>(&cfg).unwrap_or_else(|_| serde_json::json!({})))
+    })
+    .unwrap_or(false)
+}
+
 fn mask_config(cfg: &serde_json::Value) -> serde_json::Value {
   let mut out = serde_json::Map::new();
   if let Some(obj) = cfg.as_object() {
@@ -108,11 +135,9 @@ pub fn list_integrations(app: AppHandle) -> Result<Vec<IntegrationRecord>, Strin
       let parsed = serde_json::from_str::<serde_json::Value>(&cfg).unwrap_or_else(|_| serde_json::json!({}));
       d.config = mask_config(&parsed);
       d.enabled = enabled;
-      // Token-based integrations count as connected when a token/key is stored
-      // (the `connected` flag is really about OAuth handshakes).
-      let has_token = parsed.get("token").and_then(|t| t.as_str()).map(|s| !s.is_empty()).unwrap_or(false)
-        || parsed.get("apiKey").and_then(|t| t.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
-      d.connected = connected || (has_token && d.provider != "google");
+      // Connected when the OAuth handshake ran or a token/key is stored — a saved
+      // API key counts, for every provider (Google included).
+      d.connected = connected || config_has_credential(&parsed);
     }
     out.push(d);
   }
@@ -163,7 +188,11 @@ fn merge_config(existing: &serde_json::Value, incoming: &serde_json::Value) -> R
 pub async fn test_integration(app: AppHandle, id: String) -> Result<bool, String> {
   let conn = db(&app)?;
   let cfg = integration_secret(&conn, &id)?;
-  let token = cfg.get("token").and_then(|t| t.as_str()).or_else(|| cfg.get("apiKey").and_then(|t| t.as_str())).unwrap_or("");
+  let token = cfg.get("token").and_then(|t| t.as_str())
+    .or_else(|| cfg.get("apiKey").and_then(|t| t.as_str()))
+    // Google integrations store an OAuth access token here, not a `token`.
+    .or_else(|| cfg.get("accessToken").and_then(|t| t.as_str()))
+    .unwrap_or("");
   if token.is_empty() { return Ok(false); }
   // Exa and Parallel take the key in an x-api-key header, so they're probed with
   // a tiny search instead of the Bearer GET below.

@@ -56,7 +56,7 @@ export type Task = { id: string; requester: string; assignedAgent: string; statu
 
 // 'builder' is the workflow canvas, kept distinct from the 'workflows' list so
 // opening a workflow is a real navigation step the chrome can go back from.
-export type View = 'home' | 'graph' | 'agents' | 'workflows' | 'builder' | 'manager' | 'tasks' | 'runs' | 'telegram' | 'terminal' | 'items' | 'notifications' | 'agent' | 'workshop' | 'settings' | 'memory' | 'knowledge';
+export type View = 'home' | 'graph' | 'agents' | 'workflows' | 'builder' | 'manager' | 'tasks' | 'runs' | 'telegram' | 'terminal' | 'items' | 'notifications' | 'agent' | 'workshop' | 'settings' | 'memory' | 'connections';
 
 // What the topbar "+" creates. Left-click runs the default; right-click offers
 // the whole list and lets you pick which one is the default.
@@ -99,7 +99,7 @@ export type ModelRoles = Record<string, ModelRoleInfo>;
 // reports what the agent is doing rather than a fixed "thinking" label.
 // `streaming` marks text still arriving token by token (the model's reasoning),
 // so later chunks grow that step instead of adding a line per token.
-export type ChatStep = { kind: 'think' | 'tool' | 'write' | 'wait'; text: string; time: string; streaming?: boolean };
+export type ChatStep = { kind: 'think' | 'tool' | 'write' | 'wait'; text: string; time: string; at: number; streaming?: boolean };
 
 export type ExecutionResult = { output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number };
 

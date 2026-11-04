@@ -14,7 +14,7 @@ use crate::memory::build_context_bundle;
 use crate::models::*;
 use crate::provider;
 use crate::storage::{manager_default_model, parse_json_vec, save_agent, save_workflow};
-use crate::tasks::{create_task, delegate_task, list_tasks, task_from_row};
+use crate::tasks::{list_tasks, spawn_task, task_from_row, NewTask};
 use crate::tools::{AgentTool, ReadAnyFileTool, RunCommandTool, SearchFilesTool, MAX_TOOL_ROUNDS};
 use crate::tooltext::parse_text_tool_calls;
 use crate::workflows::execute_workflow;
@@ -36,7 +36,7 @@ impl AgentTool for ManagerListAgents {
 #[async_trait]
 impl AgentTool for ManagerDelegate {
   fn name(&self) -> String { "delegate_task".into() }
-  fn description(&self) -> String { "Delegate a task to an agent. Params: agentId (string), task (string), context (string, optional). Creates a task and runs the agent.".into() }
+  fn description(&self) -> String { "Delegate a task to an agent. Params: agentId (string), task (string), context (string, optional). Runs the agent in the BACKGROUND and returns at once — you are told the result when it finishes, so never wait for it.".into() }
   fn params_schema(&self) -> serde_json::Value {
     serde_json::json!({ "type": "object", "properties": { "agentId": { "type": "string" }, "task": { "type": "string" }, "context": { "type": "string" } }, "required": ["agentId", "task"] })
   }
@@ -100,13 +100,13 @@ manager_tool!(ManagerRunWorkflow, "run_workflow", "Run a workflow with input. Pa
 manager_tool!(ManagerConfigureIntegration, "configure_integration", "Configure an integration with credentials. Params: id (string, e.g. notion/airtable/sheets/docs/telegram), config (object of keys e.g. token/clientId/clientSecret). Confirm with the user before storing secrets.", serde_json::json!({ "id": { "type": "string" }, "config": { "type": "object" } }), serde_json::json!(["id", "config"]));
 manager_tool!(ManagerListIntegrations, "list_integrations", "List integrations and their connected status.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerTestIntegration, "test_integration", "Test an integration connection. Params: id (string).", serde_json::json!({ "id": { "type": "string" } }), serde_json::json!(["id"]));
-manager_tool!(ManagerCreateTask, "create_task", "Create and run a task on an agent. Params: agentId (string), input (string), context (string, optional).", serde_json::json!({ "agentId": { "type": "string" }, "input": { "type": "string" }, "context": { "type": "string" } }), serde_json::json!(["agentId", "input"]));
+manager_tool!(ManagerCreateTask, "create_task", "Create and run a task on an agent in the BACKGROUND. Params: agentId (string), input (string), context (string, optional). Returns at once; the result comes back to you later.", serde_json::json!({ "agentId": { "type": "string" }, "input": { "type": "string" }, "context": { "type": "string" } }), serde_json::json!(["agentId", "input"]));
 manager_tool!(ManagerCancelTask, "cancel_task", "Cancel a task. Params: taskId (string).", serde_json::json!({ "taskId": { "type": "string" } }), serde_json::json!(["taskId"]));
 manager_tool!(ManagerListModels, "list_models", "List configured models.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerListTools, "list_tools", "List configured tools.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerWorkspaceStatus, "get_workspace_status", "Get a condensed workspace status: agents, integrations, active tasks, recent runs.", serde_json::json!({}), serde_json::json!([]));
 manager_tool!(ManagerRecallMemory, "recall_memory", "Recall what was discussed or done recently: long-term facts, the last chat summary, and today's/yesterday's condensed context. Call this when the user asks 'what have we done/talked about', to continue prior work, or to reference past decisions. Does NOT inject history into the conversation — it returns it as tool output.", serde_json::json!({}), serde_json::json!([]));
-manager_tool!(ManagerKnowledgeBase, "knowledge_base", "The shared knowledge base — durable REFERENCE material any agent may need later (company wiki, ICP, specs, policies, runbooks, product facts). Params: action ('list' | 'get' | 'search' | 'save'), title (string, for save/search), content (string, for save), id (string, for get/save). NOT for tasks, reminders or personal rules about the user — those go to 'items' and 'remember'.", serde_json::json!({ "action": { "type": "string" }, "title": { "type": "string" }, "content": { "type": "string" }, "id": { "type": "string" } }), serde_json::json!(["action"]));
+manager_tool!(ManagerKnowledgeBase, "knowledge_base", "The shared knowledge base — durable REFERENCE material any agent may need later (company wiki, ICP, specs, policies, runbooks, product facts). Params: action ('list' | 'get' | 'search' | 'save'), title (string, for save/search), content (string, for save), id (string, for get/save). NOT for anything to do — tasks, chores, errands, reminders or one-off to-dos go to 'items' — and NOT for personal rules about the user (the 'remember' tool).", serde_json::json!({ "action": { "type": "string" }, "title": { "type": "string" }, "content": { "type": "string" }, "id": { "type": "string" } }), serde_json::json!(["action"]));
 
 manager_tool!(ManagerTidyKnowledge, "tidy_knowledge", "Find knowledge-base docs that are really memories or todos and propose where each should move. Read-only: returns the proposals; the user approves them in the Knowledge tab (or here, if they say yes).", serde_json::json!({}), serde_json::json!([]));
 
@@ -154,13 +154,13 @@ pub(crate) fn is_manager_builtin(name: &str) -> bool {
 
 // Executes one Manager tool call. Its own tools dispatch by name; anything else
 // in `tools` — the imported MCP tools it also holds — runs as a normal AgentTool.
-pub(crate) async fn run_manager_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], name: &str, args: &serde_json::Value) -> Result<String, String> {
+pub(crate) async fn run_manager_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], name: &str, args: &serde_json::Value, session_id: Option<&str>, chat_agent_id: &str) -> Result<String, String> {
   if !is_manager_builtin(name) {
     if let Some(t) = tools.iter().find(|t| t.name() == name) {
       return t.run(args).await;
     }
   }
-  dispatch_manager_tool(app, name, args).await
+  dispatch_manager_tool(app, name, args, session_id, chat_agent_id).await
 }
 
 // Builds the Manager's system prompt by enumerating its actual tools, so its
@@ -176,7 +176,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
   // The remember and items tools are provided at runtime (not dispatch-by-name
   // builtins), so list them explicitly here.
   tool_list.push_str("- remember: Save a durable fact or standing rule about the user (\"never use emoji\", \"I prefer IST\") — kind 'policy' for a never/always rule, 'preference' for a taste, 'semantic' for a plain fact.\n");
-  tool_list.push_str("- items: The user's notes, todos, reminders, goals, links and habits — anything with a when or a do. Full CRUD (add, list, update, complete, delete). Reminders are scheduled and pushed to Telegram.\n");
+  tool_list.push_str("- items: The user's notes, todos, reminders, goals, resources and habits — anything with a when or a do. Full CRUD (add, list, update, complete, delete). Reminders are scheduled and pushed to Telegram.\n");
   tool_list.push_str("- current_datetime: The current date and time in the user's configured timezone (plus tomorrow/yesterday). Use it before scheduling or reasoning about 'now'.\n");
   tool_list.push_str("- monid: Reach hundreds of external data tools (search/scraping/enrichment/media) through Monid. discover → inspect → run. Needs the Monid CLI installed and keyed.\n");
   tool_list.push_str("- yt_dlp: Download a video, or extract its audio (mp3), from a URL with the yt-dlp CLI. Needs yt-dlp on PATH.\n");
@@ -249,7 +249,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
      - When you need to change state (creating/deleting agents or workflows, configuring integrations, running tasks), CALL THE TOOL IN THIS TURN. You must emit the tool call now â€” never ask the user to type 'yes', never ask them to 'provide permissions', never request credentials in your reply, and never describe the tool you would use. The application intercepts your tool call and shows the user a confirmation popup automatically; they approve or reject there. After the tool executes, report its result. If you are not sure you are allowed to do something, call the tool anyway â€” the popup is the permission gate.\n\
      - Creating an agent requires NO credentials. Do not ask the user for API keys or 'file access credentials' when creating an agent â€” file access is just a permission value in the create_agent call.\n\
      - Never store secrets (API keys/tokens) without the user's explicit approval in the confirmation popup.\n\
-     - Delegate domain work to agents rather than doing it inline.\n\n\
+     - Delegate domain work to agents rather than doing it inline. Anything time-consuming (research, running commands, multi-step work) goes to a task: 'delegate_task' returns immediately and its result is delivered back to you when it finishes — never wait for it, never say you'll 'check' later, and never claim the work is done before you have the result.\n\n\
      Workspace context:\n{context}\n\n{skills}{memory_note}{pc_note}{browser_note}{identity}{routing}\
      Return a concise, helpful reply to the user."
   , identity = crate::app_settings::identity_prompt(conn)))
@@ -335,6 +335,9 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     if pc_control { t.extend(crate::tools::desktop_tools()); }
     t.extend(crate::tools::script_tools(&conn));
     t.extend(mcp_tools_for(&conn, &manager.tool_ids));
+    // The integrations the Manager holds are callable, matching the streaming
+    // chat path.
+    t.extend(crate::agents::integration_tools(app, &conn, &manager.integrations));
     // An explicit "remember this" from any surface becomes durable memory, and a
     // todo/reminder becomes an item rather than a knowledge-base doc.
     t.push(crate::tools::remember_tool(app, &manager.id));
@@ -398,7 +401,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
           // This path has no way to ask, so refuse rather than run it silently.
           Err("run_command needs your approval, which this channel can't ask for. Run it from the Manager chat in the app.".to_string())
         } else {
-          run_manager_tool(app, &tools, &name, &args).await
+          run_manager_tool(app, &tools, &name, &args, None, &manager.id).await
         };
         let call_id = c["id"].as_str().unwrap_or("").to_string();
         messages.push(ChatMessage { role: "assistant".into(), content: None, tool_calls: Some(vec![ToolCall { id: call_id.clone(), kind: "function".into(), function: ToolCallFunction { name: name.clone(), arguments: args.clone() } }]), tool_call_id: None });
@@ -426,7 +429,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
         let result = if call.name == "run_command" && !crate::app_settings::autonomy(app) {
           Err("run_command needs your approval, which this channel can't ask for. Run it from the Manager chat in the app.".to_string())
         } else {
-          run_manager_tool(app, &tools, &call.name, &call.args).await
+          run_manager_tool(app, &tools, &call.name, &call.args, None, &manager.id).await
         };
         messages.push(ChatMessage { role: "user".into(), content: Some(format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, result.map_err(|e| e.to_string())?)), tool_calls: None, tool_call_id: None });
       }
@@ -443,7 +446,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
 
 // Shared dispatch for manager tools; used by both the non-streaming manager_turn
 // and the streaming stream_chat manager path.
-pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &serde_json::Value) -> Result<String, String> {
+pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &serde_json::Value, session_id: Option<&str>, chat_agent_id: &str) -> Result<String, String> {
   let conn = db(app)?;
   match name {
     "list_agents" => {
@@ -474,11 +477,10 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       let task = args.get("task").and_then(|v| v.as_str()).or_else(|| args.get("input").and_then(|v| v.as_str())).unwrap_or("").to_string();
       let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string();
       if agent_id.is_empty() || task.is_empty() { return Err("delegate_task/create_task requires agentId and input.".into()); }
-      let task_id = create_task(&conn, "manager", &agent_id, &task, &context)?;
-      match delegate_task(app, &task_id, &agent_id, &task, &context).await {
-        Ok(out) => Ok(format!("Task {task_id} completed. Result:\n{out}")),
-        Err(e) => Ok(format!("Task {task_id} failed: {e}")),
-      }
+      // Fire-and-forget: the task runs in the background and its result is pushed
+      // back into this chat when it finishes (see tasks::finish).
+      let task_id = spawn_task(app, NewTask::agent("manager", &agent_id, &task, &context, session_id, chat_agent_id))?;
+      Ok(format!("Task {task_id} started in the background on {agent_id}. Do not wait for it — tell the user it's running and that you'll report when it finishes."))
     }
     "switch_agent" => {
       let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -488,7 +490,11 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
       let objective = args.get("objective").and_then(|v| v.as_str()).unwrap_or("").to_string();
       let model = args.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let model = crate::provider::normalize_model_id(&conn, &model);
       if name.is_empty() || objective.is_empty() || model.is_empty() { return Err("create_agent requires name, objective and model.".into()); }
+      if !crate::provider::model_provider_known(&conn, &model) {
+        return Err(format!("Unknown model '{model}'. Pass a configured model id from list_models."));
+      }
       let arr = |k: &str| args.get(k).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect::<Vec<_>>()).unwrap_or_default();
       let id = format!("agent-{}", chrono::Utc::now().timestamp_millis());
       // New agents seed their reasoning from the chosen model.
@@ -534,7 +540,13 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       let Some(mut a) = existing else { return Err(format!("Agent {agent_id} not found.")); };
       if let Some(v) = args.get("name").and_then(|v| v.as_str()) { a.name = v.to_string(); }
       if let Some(v) = args.get("objective").and_then(|v| v.as_str()) { a.objective = v.to_string(); }
-      if let Some(v) = args.get("model").and_then(|v| v.as_str()) { a.model = v.to_string(); }
+      if let Some(v) = args.get("model").and_then(|v| v.as_str()) {
+        let v = crate::provider::normalize_model_id(&conn, v);
+        if !crate::provider::model_provider_known(&conn, &v) {
+          return Err(format!("Unknown model '{v}'. Pass a configured model id from list_models."));
+        }
+        a.model = v;
+      }
       if let Some(v) = args.get("toolIds").and_then(|v| v.as_array()) { a.tool_ids = v.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(); }
       if let Some(v) = args.get("integrations").and_then(|v| v.as_array()) { a.integrations = v.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(); }
       if let Some(v) = args.get("permissions").and_then(|v| v.as_array()) { a.permissions = v.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(); }
@@ -614,9 +626,8 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       let defs = integration_definitions();
       let mut out = Vec::new();
       for d in defs {
-        let mut stmt = conn.prepare("SELECT enabled, connected FROM integration_configs WHERE id=?1").map_err(|e| e.to_string())?;
-        let mut rows = stmt.query_map(params![d.id], |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0))).map_err(|e| e.to_string())?;
-        let (enabled, connected) = rows.next().transpose().map_err(|e| e.to_string())?.unwrap_or((false, false));
+        let enabled = conn.query_row("SELECT enabled FROM integration_configs WHERE id=?1", params![d.id], |r| r.get::<_, i64>(0)).map(|v| v != 0).unwrap_or(false);
+        let connected = crate::integrations::integration_connected(&conn, &d.id);
         out.push(format!("- {} (id: {}): enabled={} connected={}", d.name, d.id, enabled, connected));
       }
       Ok(out.join("\n"))
@@ -632,7 +643,9 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
     }
     "list_models" => {
       let mut stmt = conn.prepare("SELECT id, provider, label FROM model_configs ORDER BY id").map_err(|e| e.to_string())?;
-      let rows = stmt.query_map([], |row| Ok(format!("- {} ({})", row.get::<_, String>(2)?, row.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+      // Lead with the id — the model copies the first token back into create_agent,
+      // so the display label must not be the first thing it sees.
+      let rows = stmt.query_map([], |row| Ok(format!("- {} — {} ({})", row.get::<_, String>(0)?, row.get::<_, String>(2)?, row.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
       let mut out = Vec::new();
       for r in rows { out.push(r.map_err(|e| e.to_string())?); }
       Ok(if out.is_empty() { "No models configured.".into() } else { out.join("\n") })
@@ -648,7 +661,7 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
       let agents_n: i64 = conn.query_row("SELECT COUNT(*) FROM agents WHERE is_manager=0", [], |r| r.get(0)).unwrap_or(0);
       let tasks_n: i64 = conn.query_row("SELECT COUNT(*) FROM tasks WHERE status IN ('pending','running')", [], |r| r.get(0)).unwrap_or(0);
       let runs_n: i64 = conn.query_row("SELECT COUNT(*) FROM runs", [], |r| r.get(0)).unwrap_or(0);
-      let conn_n: i64 = conn.query_row("SELECT COUNT(*) FROM integration_configs WHERE connected=1", [], |r| r.get(0)).unwrap_or(0);
+      let conn_n = integration_definitions().iter().filter(|d| crate::integrations::integration_connected(&conn, &d.id)).count();
       Ok(format!("Agents: {agents_n}. Connected integrations: {conn_n}. Active tasks: {tasks_n}. Total runs: {runs_n}."))
     }
     "recall_memory" => {

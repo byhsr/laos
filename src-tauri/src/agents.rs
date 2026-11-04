@@ -18,6 +18,30 @@ use crate::tools::{
 };
 use crate::tooltext::parse_text_tool_calls;
 
+/// Action tools for the integrations an agent explicitly holds. Attaching the
+/// integration is the opt-in, so no separate `network` permission is required
+/// (the same reasoning the MCP arm uses). A saved credential counts as connected
+/// — the `connected` column only tracks OAuth handshakes — and the secrets are
+/// resolved from the vault so the tool sends the real key, not the `__vault__`
+/// sentinel.
+pub(crate) fn integration_tools(app: &AppHandle, conn: &Connection, ids: &[String]) -> Vec<Box<dyn AgentTool>> {
+  let mut tools: Vec<Box<dyn AgentTool>> = Vec::new();
+  for integration_id in ids {
+    let Ok(mut stmt) = conn.prepare("SELECT enabled, connected, config_json FROM integration_configs WHERE id=?1") else { continue };
+    let Ok(mut rows) = stmt.query_map(params![integration_id], |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0, row.get::<_, String>(2)?))) else { continue };
+    let Some(Ok((enabled, connected, cfg_json))) = rows.next() else { continue };
+    if !enabled { continue; }
+    let stored: serde_json::Value = serde_json::from_str(&cfg_json).unwrap_or_else(|_| serde_json::json!({}));
+    if !connected && !crate::integrations::config_has_credential(&stored) { continue; }
+    let Some(def) = integration_definitions().into_iter().find(|d| d.id == *integration_id) else { continue };
+    let credentials = crate::integrations::integration_secret(conn, integration_id).unwrap_or(stored);
+    for action in def.actions {
+      tools.push(Box::new(IntegrationTool { action: action.name, credentials: credentials.clone(), id: def.id.clone(), app: Some(app.clone()) }));
+    }
+  }
+  tools
+}
+
 pub(crate) fn build_tools(app: &AppHandle, conn: &Connection, agent: &AgentRequest, home: &std::path::Path) -> Result<Vec<Box<dyn AgentTool>>, String> {
   let mut tools: Vec<Box<dyn AgentTool>> = Vec::new();
   let has_network = agent.permissions.iter().any(|p| p == "network");
@@ -85,24 +109,9 @@ pub(crate) fn build_tools(app: &AppHandle, conn: &Connection, agent: &AgentReque
     }
     if let Some(last) = tools.last() { used.insert(last.name()); }
   }
-  // Grant integration actions to agents that explicitly have the integration AND
-  // the integration is enabled+connected. Explicit per-agent grants only.
-  for integration_id in &agent.integrations {
-    let mut stmt = conn.prepare("SELECT enabled, connected, config_json FROM integration_configs WHERE id=?1").map_err(|e| e.to_string())?;
-    let mut rows = stmt.query_map(params![integration_id], |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
-    if let Some(Ok((enabled, connected, cfg_json))) = rows.next() {
-      if !enabled || !connected { continue; }
-      let credentials: serde_json::Value = serde_json::from_str(&cfg_json).unwrap_or_else(|_| serde_json::json!({}));
-      let def = integration_definitions().into_iter().find(|d| d.id == *integration_id);
-      if let Some(def) = def {
-        for action in def.actions {
-          if has_network {
-            tools.push(Box::new(IntegrationTool { action: action.name, credentials: credentials.clone(), id: def.id.clone(), app: Some(app.clone()) }));
-          }
-        }
-      }
-    }
-  }
+  // Integration actions: granted to an agent that explicitly holds the
+  // integration (that grant is the opt-in, so no separate `network` gate).
+  tools.extend(integration_tools(app, conn, &agent.integrations));
   // Host-filesystem tools: granted only to agents with the explicit host_fs permission.
   if has_host_fs {
     tools.push(Box::new(SearchFilesTool));
@@ -447,9 +456,15 @@ pub(crate) fn build_workspace_context(conn: &Connection) -> Result<String, Strin
   {
     let defs = integration_definitions();
     for d in defs {
-      let mut stmt = conn.prepare("SELECT enabled, connected FROM integration_configs WHERE id=?1").map_err(|e| e.to_string())?;
-      let mut rows = stmt.query_map(params![d.id], |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0))).map_err(|e| e.to_string())?;
-      let (enabled, connected) = rows.next().transpose().map_err(|e| e.to_string())?.unwrap_or((false, false));
+      let mut stmt = conn.prepare("SELECT enabled, connected, config_json FROM integration_configs WHERE id=?1").map_err(|e| e.to_string())?;
+      let mut rows = stmt.query_map(params![d.id], |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
+      let (enabled, connected) = match rows.next().transpose().map_err(|e| e.to_string())? {
+        Some((enabled, connected, cfg)) => {
+          let parsed: serde_json::Value = serde_json::from_str(&cfg).unwrap_or_else(|_| serde_json::json!({}));
+          (enabled, connected || crate::integrations::config_has_credential(&parsed))
+        }
+        None => (false, false),
+      };
       let actions = d.actions.iter().map(|a| a.name.clone()).collect::<Vec<_>>().join(", ");
       ints.push_str(&format!("- {} (id: {}): enabled={} connected={}. Actions: {}\n", d.name, d.id, enabled, connected, actions));
     }

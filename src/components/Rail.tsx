@@ -1,4 +1,4 @@
-import { Bell, Blocks, BookOpen, Bot, Brain, Home, Lightbulb, ListChecks, MoreHorizontal, Send, Settings, SquareTerminal, Terminal, Workflow } from 'lucide-react';
+import { Bell, Blocks, Bot, Brain, Cable, Home, Lightbulb, ListChecks, MoreHorizontal, Send, Settings, SquareTerminal, Terminal, Workflow } from 'lucide-react';
 import type { View } from '../types';
 import { navLabel, useNavLabels, type NavKey } from '../hooks/useNavLabels';
 import { useSidebarTabs } from '../hooks/useSidebarTabs';
@@ -13,7 +13,7 @@ const NAV: { key: NavKey; view: View; icon: React.ReactNode }[] = [
   { key: 'home', view: 'home', icon: <Home size={12} /> },
   { key: 'agents', view: 'agents', icon: <Bot size={12} /> },
   { key: 'memory', view: 'memory', icon: <Brain size={12} /> },
-  { key: 'knowledge', view: 'knowledge', icon: <BookOpen size={12} /> },
+  { key: 'connections', view: 'connections', icon: <Cable size={12} /> },
   { key: 'workflows', view: 'workflows', icon: <Workflow size={12} /> },
   { key: 'tasks', view: 'tasks', icon: <ListChecks size={12} /> },
   { key: 'workshop', view: 'workshop', icon: <Blocks size={12} /> },

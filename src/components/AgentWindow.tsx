@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, AlertTriangle, ArrowLeft, Check, ChevronRight, History, Info, Lock, MessageSquare, MessageSquarePlus, RotateCcw, Settings, Trash2 } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowLeft, Check, ChevronRight, History, Info, Lock, MessageSquare, MessageSquarePlus, PanelRight, RotateCcw, Settings, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from './ui/ContextMenu';
 import type { Agent, Attachment, ChatMessage, ChatStep, ExecutionResult, Integration, ModelConfig, Reasoning, Run, Skill, Tool } from '../types';
 import { Select } from './ui/Select';
@@ -14,7 +14,9 @@ import { StatusGlyph, StatusTag, statusClass } from './ui/Status';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, PROSE_CLS } from './ui/Input';
 import { ChatComposer } from './chat/ChatComposer';
 import { ScribbleLayer } from './chat/ScribbleLayer';
-import { MessageBubble } from './chat/MessageBubble';
+import { MessageBubble, EMPTY_REPLY } from './chat/MessageBubble';
+import { ActivityPanel } from './chat/ActivityPanel';
+import { useActivity } from '../hooks/useActivity';
 import { toast } from '../hooks/useToast';
 import { listChatSessions, getChatSession, createChatSession, deleteChatSession, closeSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, type StreamStep } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
@@ -87,13 +89,19 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   // Live trace of what this turn is doing — real backend steps, plus the model's
   // reasoning as it streams in.
   const [steps, setSteps] = useState<ChatStep[]>([]);
+  const turnItemRef = useRef<string | null>(null);
+  const activityOpen = useActivity((s) => s.open);
+  const toggleActivity = useActivity((s) => s.toggle);
 
   // A voice turn targeting this agent runs through the store, so the store's
   // in-flight state (not this component's local `running`) drives the live caret.
   const storeBusy = useManagerStore((s) => s.busy && s.activeAgentId === agent.id);
   const chatBusy = running || storeBusy;
 
-  const pushStep = (ev: StreamStep) => setSteps((prev) => mergeStep(prev, ev));
+  const pushStep = (ev: StreamStep) => {
+    setSteps((prev) => mergeStep(prev, ev));
+    if (turnItemRef.current) useActivity.getState().stepTurn(turnItemRef.current, ev);
+  };
   const [error, setError] = useState<string | undefined>(undefined);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
@@ -193,6 +201,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       sid = sess.id;
       useManagerStore.setState((s) => ({ sessionIds: { ...s.sessionIds, [agent.id]: sid } }));
     }
+    turnItemRef.current = useActivity.getState().startTurn(agent.id, sid, 'Replying');
     // Batch the streamed deltas — see src/streamBuffer.ts for why.
     const batcher = createDeltaBuffer((text) => {
       if (cancelledRef.current || turnSeq.current !== myTurn) return;
@@ -217,11 +226,17 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       streamIdRef.current = null;
       // Only flush the tail on success, so a late flush can't overwrite the error.
       if (!failed) batcher.end();
-      // Stamp how long the reply took onto the assistant bubble.
+      // Stamp how long the reply took onto the assistant bubble. A turn that
+      // produced no text must never render (or persist) blank.
       const durationMs = performance.now() - t0;
-      setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 && m.role === 'assistant' ? { ...m, durationMs, ttftMs } : m)));
+      setMessages((prev) => prev.map((m, i) => {
+        if (i !== prev.length - 1 || m.role !== 'assistant') return m;
+        return { ...m, content: m.content.trim() ? m.content : EMPTY_REPLY, durationMs, ttftMs };
+      }));
       setRunning(false);
       setSteps([]);
+      if (turnItemRef.current) useActivity.getState().endTurn(turnItemRef.current, failed);
+      turnItemRef.current = null;
     }
   };
 
@@ -275,6 +290,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
   const menuItems: MenuItem[] = [
     { key: 'chat', label: 'chat', icon: <MessageSquare size={13} />, active: panel === null, onSelect: () => setPanel(null) },
+    { key: 'activity', label: 'activity panel', icon: <PanelRight size={13} />, active: activityOpen, onSelect: toggleActivity },
     { key: 'runs', label: 'runs', icon: <Activity size={13} />, active: panel === 'runs', onSelect: () => setPanel('runs') },
     { key: 'info', label: 'info', icon: <Info size={13} />, active: panel === 'info', onSelect: () => setPanel('info') },
     { key: 'settings', label: 'settings', icon: <Settings size={13} />, active: panel === 'config', onSelect: () => setPanel('config') },
@@ -300,52 +316,55 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
           <Button variant="primary" icon={<Check size={13} />} onClick={() => setPanel('config')}>go to config</Button>
         </div>
       ) : (
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          {/* Per-agent chat backdrop. It sits behind the scroller and is veiled
-              with the content-plane colour so messages stay legible on any image. */}
-          {chatBackdrop && (
-            <>
-              <div aria-hidden className="pointer-events-none absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url("${chatBackdrop}")` }} />
-              <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[0.72]" style={{ background: 'var(--color-background)' }} />
-            </>
-          )}
-          <ScribbleLayer storeKey={agent.id} scrollRef={scrollRef} />
-          {/* Chat history — full height, no box; the composer overlays on top of it */}
-          <div ref={scrollRef} className="relative z-10 min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
-            <div className="mx-auto w-full max-w-[720px]">
-              {messages.map((m, i) => (
-                <MessageBubble
-                  key={i}
-                  role={m.role}
-                  content={m.content}
-                  attachments={m.attachments}
-                  steps={steps}
-                  time={m.time}
-                  durationMs={m.durationMs}
-                  ttftMs={m.ttftMs}
-                  streaming={chatBusy && i === messages.length - 1 && m.role === 'assistant'}
-                  onRate={m.role === 'assistant' && i === messages.length - 1 && !chatBusy
-                    ? (signal) => void rateTurn(agent.id, signal, m.content)
-                    : undefined}
-                />
-              ))}
+        <div className="flex min-h-0 flex-1 flex-row">
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            {/* Per-agent chat backdrop. It sits behind the scroller and is veiled
+                with the content-plane colour so messages stay legible on any image. */}
+            {chatBackdrop && (
+              <>
+                <div aria-hidden className="pointer-events-none absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url("${chatBackdrop}")` }} />
+                <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[0.72]" style={{ background: 'var(--color-background)' }} />
+              </>
+            )}
+            <ScribbleLayer storeKey={agent.id} scrollRef={scrollRef} />
+            {/* Chat history — full height, no box; the composer overlays on top of it */}
+            <div ref={scrollRef} className="relative z-10 min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
+              <div className="mx-auto w-full max-w-[720px]">
+                {messages.map((m, i) => (
+                  <MessageBubble
+                    key={i}
+                    role={m.role}
+                    content={m.content}
+                    attachments={m.attachments}
+                    steps={steps}
+                    time={m.time}
+                    durationMs={m.durationMs}
+                    ttftMs={m.ttftMs}
+                    streaming={chatBusy && i === messages.length - 1 && m.role === 'assistant'}
+                    onRate={m.role === 'assistant' && i === messages.length - 1 && !chatBusy
+                      ? (signal) => void rateTurn(agent.id, signal, m.content)
+                      : undefined}
+                  />
+                ))}
+              </div>
             </div>
+            {error && (
+              <p className="absolute bottom-[76px] left-4 z-30 m-0 flex items-center gap-1.5 font-mono text-[11px] text-danger">
+                <AlertTriangle size={11} className="shrink-0" />{error}
+              </p>
+            )}
+            <ChatComposer
+              busy={chatBusy}
+              modelId={agent.model}
+              reasoning={agent.reasoning}
+              placeholder={`message ${agent.name}…`}
+              onSend={send}
+              onCancel={cancel}
+              onModelChange={(id) => void onSave({ ...agent, model: id })}
+              onReasoningChange={(r) => void onSave({ ...agent, reasoning: r })}
+            />
           </div>
-          {error && (
-            <p className="absolute bottom-[76px] left-4 z-30 m-0 flex items-center gap-1.5 font-mono text-[11px] text-danger">
-              <AlertTriangle size={11} className="shrink-0" />{error}
-            </p>
-          )}
-          <ChatComposer
-            busy={chatBusy}
-            modelId={agent.model}
-            reasoning={agent.reasoning}
-            placeholder={`message ${agent.name}…`}
-            onSend={send}
-            onCancel={cancel}
-            onModelChange={(id) => void onSave({ ...agent, model: id })}
-            onReasoningChange={(r) => void onSave({ ...agent, reasoning: r })}
-          />
+          {activityOpen && <ActivityPanel agentId={agent.id} />}
         </div>
       )}
 

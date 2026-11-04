@@ -50,7 +50,7 @@ One `items` table for all six kinds:
 | `todo` | Something to do (no time). |
 | `reminder` | A task **with** a time — the scheduler fires it. |
 | `goal` | An explicit commitment to future behaviour. |
-| `link` | A URL / resource. |
+| `resource` | A URL / resource. |
 | `habit` | A recurring behaviour with a `cadence` and a `streak`. |
 
 `#tags` become `tags` + the `collection`; a URL becomes `url`; `project_id` scopes an item to
@@ -62,7 +62,7 @@ Commands work on **any** bot. A bot ticked **second brain** also files free text
 
 | Command | Effect |
 | --- | --- |
-| `/n <text>` | note · `/tdl` todo · `/p` goal · `/lib` link |
+| `/n <text>` | note · `/tdl` todo · `/p` goal · `/lib` resource (alias `/resource`) |
 | `/r <text>` | reminder · `/r 18:30 call mom` sets an explicit time |
 | `/habit <text>` | habit (cadence from "daily"/"weekly"/"monthly", default daily) |
 | `/items [kind]` | newest 20, numbered · `/due` what's due now |

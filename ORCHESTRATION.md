@@ -121,7 +121,7 @@ Three stores, not interchangeable. `routing.rs` owns the contract *and* the read
 
 | Store | Holds | Scope | In the prompt? |
 | --- | --- | --- | --- |
-| `items` | anything with a when or a do — notes, todos, reminders, goals, links, habits | global + `project_id` | no (the scheduler reads it) |
+| `items` | anything with a when or a do — notes, todos, reminders, goals, resources, habits | global + `project_id` | no (the scheduler reads it) |
 | `remember` | facts and **standing rules about the user** | rules: `global`; facts: `agent:<id>` | **yes**, every turn |
 | `knowledge_base` | shared *reference* — wiki, ICP, specs, runbooks | global, shared | no, pull-only |
 
@@ -135,7 +135,7 @@ Rules are stored at `global` scope because `agent_memory::scopes_for` inherits o
 relative times resolve in the user's configured zone (`tz.rs`, default `Asia/Kolkata`).
 
 `refile.rs` migrates a knowledge base that already accumulated memories/todos (the **tidy**
-button in the Knowledge tab). Full detail: `docs/routing.md`.
+button in the gallery tab). Full detail: `docs/routing.md`.
 
 Items carry an `owner` (`''` = the user, else the filing agent's id). The `items` tool is built with
 the calling agent (`items_tool(app, agent_id)`, like `remember_tool`), so an agent's todos are kept

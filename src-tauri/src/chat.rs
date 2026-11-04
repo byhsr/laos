@@ -10,7 +10,7 @@ use futures_util::StreamExt;
 use rusqlite::params;
 use tauri::{AppHandle, Manager};
 
-use crate::agents::{build_tools, mcp_tools_for, skills_prompt, tool_schemas};
+use crate::agents::{build_tools, integration_tools, mcp_tools_for, skills_prompt, tool_schemas};
 use crate::db::db;
 use crate::http;
 use crate::manager::{
@@ -62,8 +62,8 @@ async fn wait_for_cancel(stream_id: Option<String>) {
 // Ollama uses NDJSON; Groq/OpenRouter use SSE `data:` lines. Context is a rolling
 // window of the last ROLLING_WINDOW persisted messages.
 #[tauri::command]
-pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>, attachments: Option<Vec<crate::media::Attachment>>) -> Result<(), String> {
-  let result = stream_chat_inner(app, agent, input, is_manager, on_event, session_id, stream_id.clone(), attachments.unwrap_or_default()).await;
+pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>, attachments: Option<Vec<crate::media::Attachment>>, system: Option<bool>) -> Result<(), String> {
+  let result = stream_chat_inner(app, agent, input, is_manager, on_event, session_id, stream_id.clone(), attachments.unwrap_or_default(), system.unwrap_or(false)).await;
   // Clear the cancel flag for this turn so the registry can't grow unbounded.
   if let Some(id) = &stream_id {
     if let Ok(mut set) = cancelled_streams().lock() { set.remove(id); }
@@ -71,7 +71,7 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
   result
 }
 
-async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>, attachments: Vec<crate::media::Attachment>) -> Result<(), String> {
+async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>, attachments: Vec<crate::media::Attachment>, system_turn: bool) -> Result<(), String> {
   let conn = db(&app)?;
 
   // Anything dropped into the composer (screenshots, photos, pasted images, voice
@@ -142,6 +142,9 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     if has_browser { manager.extend(crate::tools::browser_tools()); }
     manager.extend(crate::tools::script_tools(&conn));
     manager.extend(mcp_tools_for(&conn, &agent.tool_ids));
+    // The Manager is an agent too: the integrations it holds are callable, not
+    // just listed in its context.
+    manager.extend(integration_tools(&app, &conn, &agent.integrations));
     // The knowledge base is already a Manager builtin; the remember and items
     // tools are added here as real runtime tools (like the other non-dispatch
     // tools it holds).
@@ -245,7 +248,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     let client = http::client();
     for _ in 0..MAX_TOOL_ROUNDS {
       if is_cancelled(stream_id.as_deref()) { return Ok(()); }
-      emit_status(&on_event, "think", "Thinking…");
+      emit_status(&on_event, "think", "Working out the next step");
       // Keep only the latest screenshot in the request; older ones are dropped so
       // a vision loop doesn't re-send every image on every round.
       strip_old_images(&mut messages);
@@ -301,8 +304,12 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
         // own call back, then each result as a user turn.
         messages.push(serde_json::json!({ "role": "assistant", "content": content }));
         for call in text_calls {
-          emit_status(&on_event, "tool", &format!("Calling {}…", call.name));
-          let output = run_tool(&app, &tools, is_manager, &call.name, &call.args, &on_event, stream_id.as_deref()).await?;
+          if should_background(&app, &call.name) {
+            messages.push(serde_json::json!({ "role": "user", "content": format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, background_tool_result(&app, &agent.id, session_id.as_deref(), &call.name, &call.args, &on_event)?) }));
+            continue;
+          }
+          emit_status(&on_event, "tool", &tool_activity(&call.name));
+          let output = run_tool(&app, &tools, is_manager, &call.name, &call.args, &on_event, stream_id.as_deref(), session_id.as_deref(), &agent.id).await?;
           messages.push(serde_json::json!({ "role": "user", "content": format!("<tool_result name=\"{}\">\n{}\n</tool_result>", call.name, output.text) }));
           push_images(&mut messages, is_ollama, &output.images);
         }
@@ -316,8 +323,16 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
       let assistant_msg = if assistant_msg.is_null() { parsed["choices"][0]["message"].clone() } else { assistant_msg };
       messages.push(assistant_msg);
       for (call_id, name, args) in tool_calls {
-        emit_status(&on_event, "tool", &format!("Calling {name}…"));
-        let output = run_tool(&app, &tools, is_manager, &name, &args, &on_event, stream_id.as_deref()).await?;
+        // A slow tool runs as a background task instead of blocking the turn; the
+        // model is told it started and its result is pushed back into the chat.
+        if should_background(&app, &name) {
+          let mut tool_msg = serde_json::json!({ "role": "tool", "content": background_tool_result(&app, &agent.id, session_id.as_deref(), &name, &args, &on_event)? });
+          if !call_id.is_empty() { tool_msg["tool_call_id"] = serde_json::json!(call_id); }
+          messages.push(tool_msg);
+          continue;
+        }
+        emit_status(&on_event, "tool", &tool_activity(&name));
+        let output = run_tool(&app, &tools, is_manager, &name, &args, &on_event, stream_id.as_deref(), session_id.as_deref(), &agent.id).await?;
         let mut tool_msg = serde_json::json!({ "role": "tool", "content": output.text });
         if !call_id.is_empty() { tool_msg["tool_call_id"] = serde_json::json!(call_id); }
         messages.push(tool_msg);
@@ -330,97 +345,109 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   // final reply.
   if is_cancelled(stream_id.as_deref()) { return Ok(()); }
 
-  emit_status(&on_event, "write", "Writing the reply…");
   strip_old_images(&mut messages);
   let client = http::stream_client();
-  let mut body = build_stream_body(&resolved, &messages);
-  let response = match http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await {
-    Ok(r) => r,
-    Err(e) => match crate::fallback::fallback_resolved(fallback_candidates.clone()).await {
-      Some((fb, cand)) => {
-        emit_status(&on_event, "think", &format!("Model error ({e}); retrying with local {cand}."));
-        resolved = fb; is_ollama = resolved.is_ollama(); is_anthropic = resolved.is_anthropic();
-        body = build_stream_body(&resolved, &messages);
-        http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?
-      }
-      None => return Err(e),
-    },
-  };
-  let mut stream = response.bytes_stream();
-  let mut buffer = String::new();
   let mut delta = String::new();
-  // Even the final (tool-less) stream can carry text-protocol markup; never let
-  // it reach the chat bubble.
-  let mut leak = ToolCallLeakFilter::new();
-  loop {
-    // A stalled upstream (OpenRouter switching providers, a dropped connection)
-    // must surface as an error rather than an indefinite wait. The cancel arm
-    // races it so a user cancel takes effect at once, not on the next token.
-    let ready = tokio::select! {
-      r = tokio::time::timeout(http::STREAM_IDLE_TIMEOUT, stream.next()) => Some(r),
-      _ = wait_for_cancel(stream_id.clone()) => None,
-    };
-    let chunk = match ready {
-      None => return Ok(()),
-      Some(Err(_)) => return Err(format!("The model provider stopped responding (no data for {}s).", http::STREAM_IDLE_TIMEOUT.as_secs())),
-      Some(Ok(None)) => break,
-      Some(Ok(Some(chunk))) => chunk.map_err(|e| e.to_string())?,
-    };
-    buffer.push_str(&String::from_utf8_lossy(&chunk));
-    // Ollama NDJSON: one JSON object per line. OpenAI-compatible: SSE `data:` lines.
-    while let Some(pos) = buffer.find('\n') {
-      let line: String = buffer.drain(..=pos).collect();
-      let line = line.trim();
-      if line.is_empty() { continue; }
-      if is_ollama {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-          // Ollama reports the model's reasoning on its own channel.
-          if let Some(t) = v["message"]["thinking"].as_str() { if !t.is_empty() { emit_reasoning(&on_event, t); } }
-          if let Some(d) = v["message"]["content"].as_str() {
-            let safe = leak.feed(d);
-            if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
-          }
-          prompt_tokens = v["prompt_eval_count"].as_u64().unwrap_or(prompt_tokens);
-          completion_tokens = v["eval_count"].as_u64().unwrap_or(completion_tokens);
+  // A reply must never come back empty. A model that answers with only reasoning,
+  // or with a text-protocol tool call the leak filter swallows, leaves nothing to
+  // show — so ask once more, plainly, before giving up on the turn.
+  for attempt in 0..2 {
+    if is_cancelled(stream_id.as_deref()) { return Ok(()); }
+    if attempt == 0 {
+      emit_status(&on_event, "write", "Writing the reply");
+    } else {
+      emit_status(&on_event, "think", "That reply came back empty; asking again");
+      messages.push(serde_json::json!({ "role": "user", "content": "Your previous response was empty. Answer the user now, in plain text — the actual reply, with no tool calls and no markup." }));
+    }
+    let mut body = build_stream_body(&resolved, &messages);
+    let response = match http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await {
+      Ok(r) => r,
+      Err(e) => match crate::fallback::fallback_resolved(fallback_candidates.clone()).await {
+        Some((fb, cand)) => {
+          emit_status(&on_event, "think", &format!("Model error ({e}); retrying with local {cand}."));
+          resolved = fb; is_ollama = resolved.is_ollama(); is_anthropic = resolved.is_anthropic();
+          body = build_stream_body(&resolved, &messages);
+          http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?
         }
-      } else {
-        // OpenRouter sends `: OPENROUTER PROCESSING` keep-alive comments; ignore
-        // anything that isn't a data line or the [DONE] sentinel.
-        let Some(data) = line.strip_prefix("data:").map(|s| s.trim()) else { continue };
-        if data == "[DONE]" { continue; }
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
-          if is_anthropic {
-            // Anthropic SSE: named events carry text deltas, thinking, and usage.
-            match v["type"].as_str() {
-              Some("content_block_delta") => {
-                if let Some(t) = v["delta"]["text"].as_str() {
-                  let safe = leak.feed(t);
-                  if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
-                } else if let Some(t) = v["delta"]["thinking"].as_str() {
-                  if !t.is_empty() { emit_reasoning(&on_event, t); }
-                }
-              }
-              Some("message_start") => { prompt_tokens = v["message"]["usage"]["input_tokens"].as_u64().unwrap_or(prompt_tokens); }
-              Some("message_delta") => { completion_tokens = v["usage"]["output_tokens"].as_u64().unwrap_or(completion_tokens); }
-              _ => {}
-            }
-          } else {
-            // OpenAI-compatible providers stream reasoning separately from content.
-            if let Some(t) = v["choices"][0]["delta"]["reasoning_content"].as_str() { if !t.is_empty() { emit_reasoning(&on_event, t); } }
-            if let Some(d) = v["choices"][0]["delta"]["content"].as_str() {
+        None => return Err(e),
+      },
+    };
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    // Even the final (tool-less) stream can carry text-protocol markup; never let
+    // it reach the chat bubble.
+    let mut leak = ToolCallLeakFilter::new();
+    loop {
+      // A stalled upstream (OpenRouter switching providers, a dropped connection)
+      // must surface as an error rather than an indefinite wait. The cancel arm
+      // races it so a user cancel takes effect at once, not on the next token.
+      let ready = tokio::select! {
+        r = tokio::time::timeout(http::STREAM_IDLE_TIMEOUT, stream.next()) => Some(r),
+        _ = wait_for_cancel(stream_id.clone()) => None,
+      };
+      let chunk = match ready {
+        None => return Ok(()),
+        Some(Err(_)) => return Err(format!("The model provider stopped responding (no data for {}s).", http::STREAM_IDLE_TIMEOUT.as_secs())),
+        Some(Ok(None)) => break,
+        Some(Ok(Some(chunk))) => chunk.map_err(|e| e.to_string())?,
+      };
+      buffer.push_str(&String::from_utf8_lossy(&chunk));
+      // Ollama NDJSON: one JSON object per line. OpenAI-compatible: SSE `data:` lines.
+      while let Some(pos) = buffer.find('\n') {
+        let line: String = buffer.drain(..=pos).collect();
+        let line = line.trim();
+        if line.is_empty() { continue; }
+        if is_ollama {
+          if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            // Ollama reports the model's reasoning on its own channel.
+            if let Some(t) = v["message"]["thinking"].as_str() { if !t.is_empty() { emit_reasoning(&on_event, t); } }
+            if let Some(d) = v["message"]["content"].as_str() {
               let safe = leak.feed(d);
               if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
             }
-            prompt_tokens = v["usage"]["prompt_tokens"].as_u64().unwrap_or(prompt_tokens);
-            completion_tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or(completion_tokens);
+            prompt_tokens = v["prompt_eval_count"].as_u64().unwrap_or(prompt_tokens);
+            completion_tokens = v["eval_count"].as_u64().unwrap_or(completion_tokens);
+          }
+        } else {
+          // OpenRouter sends `: OPENROUTER PROCESSING` keep-alive comments; ignore
+          // anything that isn't a data line or the [DONE] sentinel.
+          let Some(data) = line.strip_prefix("data:").map(|s| s.trim()) else { continue };
+          if data == "[DONE]" { continue; }
+          if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+            if is_anthropic {
+              // Anthropic SSE: named events carry text deltas, thinking, and usage.
+              match v["type"].as_str() {
+                Some("content_block_delta") => {
+                  if let Some(t) = v["delta"]["text"].as_str() {
+                    let safe = leak.feed(t);
+                    if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
+                  } else if let Some(t) = v["delta"]["thinking"].as_str() {
+                    if !t.is_empty() { emit_reasoning(&on_event, t); }
+                  }
+                }
+                Some("message_start") => { prompt_tokens = v["message"]["usage"]["input_tokens"].as_u64().unwrap_or(prompt_tokens); }
+                Some("message_delta") => { completion_tokens = v["usage"]["output_tokens"].as_u64().unwrap_or(completion_tokens); }
+                _ => {}
+              }
+            } else {
+              // OpenAI-compatible providers stream reasoning separately from content.
+              if let Some(t) = v["choices"][0]["delta"]["reasoning_content"].as_str() { if !t.is_empty() { emit_reasoning(&on_event, t); } }
+              if let Some(d) = v["choices"][0]["delta"]["content"].as_str() {
+                let safe = leak.feed(d);
+                if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
+              }
+              prompt_tokens = v["usage"]["prompt_tokens"].as_u64().unwrap_or(prompt_tokens);
+              completion_tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or(completion_tokens);
+            }
           }
         }
       }
     }
+    // Flush whatever the leak filter was still holding back.
+    let tail = leak.finish();
+    if !tail.is_empty() { delta.push_str(&tail); on_event.send(tail).map_err(|e| e.to_string())?; }
+    if !delta.trim().is_empty() { break; }
   }
-  // Flush whatever the leak filter was still holding back.
-  let tail = leak.finish();
-  if !tail.is_empty() { delta.push_str(&tail); on_event.send(tail).map_err(|e| e.to_string())?; }
 
   // Explicit "remember this": store it the moment it's said, in the agent's own
   // scope — a deterministic fast path alongside the model-driven remember tool, so
@@ -458,7 +485,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
       // The session IS the conversation, so record the turns there and leave the
       // agent-level copy alone — it belongs to the session-less path.
       if let Some(sess) = &session_id {
-        let _ = append_session_message(&conn, sess, &agent.id, "user", &turn_text);
+        let _ = append_session_message(&conn, sess, &agent.id, if system_turn { "system" } else { "user" }, &turn_text);
         let _ = append_session_message(&conn, sess, &agent.id, "assistant", &delta);
       }
     } else {
@@ -472,6 +499,54 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
 // run before any token streams, so without this the UI can only show a generic
 // "typing" placeholder. The kind lets the UI group the trace (think / tool /
 // write / wait) instead of printing one flat status line.
+
+// Tools that can take a while. In the interactive chat these run as a background
+// task so the turn returns at once; the result is pushed back when it lands.
+// Curated on purpose — only what is network- or process-bound.
+fn is_slow_tool(name: &str) -> bool {
+  matches!(name, "run_command" | "monid" | "yt_dlp" | "search_files" | "http_get")
+    || name.starts_with("browser_")
+    || name.starts_with("api_")
+    || name.ends_with("_search")
+}
+
+// Only background a slow tool when it wouldn't otherwise need the approval popup:
+// the background runner has no way to ask, so an approval-gated tool must stay
+// inline where the popup can appear.
+fn should_background(app: &AppHandle, name: &str) -> bool {
+  is_slow_tool(name) && (crate::app_settings::autonomy(app) || !requires_confirmation(name))
+}
+
+// Starts a slow tool as a background task and returns the tool result to hand the
+// model — which must carry on rather than wait for it.
+fn background_tool_result(app: &AppHandle, agent_id: &str, session_id: Option<&str>, name: &str, args: &serde_json::Value, on_event: &tauri::ipc::Channel<String>) -> Result<String, String> {
+  let task_id = crate::tasks::spawn_task(app, crate::tasks::NewTask::tool(agent_id, name, args, session_id))?;
+  emit_status(on_event, "tool", &format!("Started {} in the background", tool_activity(name)));
+  Ok(format!("Started in the background as {task_id}. Its result will be delivered to you when it finishes — do not wait for it; tell the user it is running."))
+}
+
+/// A plain-language label for a tool call, for the live step trace — a person
+/// reading the chat shouldn't see "Calling run_command…". Known tools get a
+/// hand-written phrase; anything else (MCP servers, custom api tools, integration
+/// actions) has its id turned into words.
+fn tool_activity(name: &str) -> String {
+  match name {
+    "run_command" => "Running a command".into(),
+    "delegate_task" | "create_task" => "Delegating to an agent".into(),
+    "monid" => "Searching with Monid".into(),
+    "yt_dlp" => "Downloading media".into(),
+    "read_file" | "read_any_file" => "Reading a file".into(),
+    "write_file" => "Writing a file".into(),
+    "search_files" => "Searching files".into(),
+    "knowledge_base" => "Checking the knowledge base".into(),
+    "remember" => "Saving to memory".into(),
+    "items" => "Updating your items".into(),
+    "current_datetime" => "Checking the time".into(),
+    "ask_user" => "Asking you a question".into(),
+    other => format!("Using {}", other.replace(['_', '-'], " ")),
+  }
+}
+
 fn emit_status(on_event: &tauri::ipc::Channel<String>, kind: &str, text: &str) {
   let _ = on_event.send(serde_json::json!({ "type": "status", "kind": kind, "text": text }).to_string());
 }
@@ -513,14 +588,14 @@ fn build_stream_body(resolved: &provider::Resolved, messages: &[serde_json::Valu
 
 // Runs a single tool call. State-changing tools go through the confirmation popup
 // first; everything else executes immediately.
-async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value, on_event: &tauri::ipc::Channel<String>, stream_id: Option<&str>) -> Result<ToolOutput, String> {
+async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value, on_event: &tauri::ipc::Channel<String>, stream_id: Option<&str>, session_id: Option<&str>, agent_id: &str) -> Result<ToolOutput, String> {
   // Autonomy (the default) runs state-changing tools straight away; otherwise the
   // state-changing ones go through the approval popup first.
   if crate::app_settings::autonomy(app) || !requires_confirmation(name) {
-    return Ok(execute_tool(app, tools, is_manager, name, args).await);
+    return Ok(execute_tool(app, tools, is_manager, name, args, session_id, agent_id).await);
   }
   let request_id = format!("req-{}", chrono::Utc::now().timestamp_millis());
-  emit_status(on_event, "wait", "Waiting for your approval…");
+  emit_status(on_event, "wait", "Waiting for your approval");
   let event = serde_json::json!({ "type": "confirm", "requestId": request_id, "tool": name, "args": args });
   on_event.send(event.to_string()).map_err(|e| e.to_string())?;
   let deadline = Instant::now() + Duration::from_secs(120);
@@ -536,10 +611,10 @@ async fn run_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: boo
     tokio::time::sleep(Duration::from_millis(200)).await;
   };
   if !decision.approved { return Ok(ToolOutput::text("The user declined this action.")); }
-  Ok(execute_tool(app, tools, is_manager, name, &decision.edited_args).await)
+  Ok(execute_tool(app, tools, is_manager, name, &decision.edited_args, session_id, agent_id).await)
 }
 
-async fn execute_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value) -> ToolOutput {
+pub(crate) async fn execute_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager: bool, name: &str, args: &serde_json::Value, session_id: Option<&str>, agent_id: &str) -> ToolOutput {
   if is_manager {
     // The Manager's own tools dispatch by name; anything else it holds — MCP tools
     // and the PC control tools — runs like any agent tool (and may return images).
@@ -548,7 +623,7 @@ async fn execute_tool(app: &AppHandle, tools: &[Box<dyn AgentTool>], is_manager:
         return t.run_with_images(args).await.unwrap_or_else(|e| ToolOutput::text(format!("Error: {e}")));
       }
     }
-    ToolOutput::text(run_manager_tool(app, tools, name, args).await.unwrap_or_else(|e| e))
+    ToolOutput::text(run_manager_tool(app, tools, name, args, session_id, agent_id).await.unwrap_or_else(|e| e))
   } else {
     match tools.iter().find(|t| t.name() == name) {
       Some(t) => t.run_with_images(args).await.unwrap_or_else(|e| ToolOutput::text(format!("Error: {e}"))),

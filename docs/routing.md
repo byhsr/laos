@@ -18,7 +18,7 @@ Related: [memory.md](./memory.md) (the memory tiers), [lumin.md](./lumin.md) (it
 
 | Store | Holds | Scope | In the prompt? |
 | --- | --- | --- | --- |
-| `items` | anything with a **when or a do** — notes, todos, reminders, goals, links, habits | global + `project_id` | no (the scheduler reads it) |
+| `items` | anything with a **when or a do** — notes, todos, reminders, goals, resources, habits | global + `project_id` | no (the scheduler reads it) |
 | `remember` | durable **facts and standing rules about the user** ("never use emoji", "prefers IST", "my name is Ranas") | rules: `global`; facts: `agent:<id>` | **yes** — injected every turn |
 | `knowledge_base` | shared **reference material** any agent may need later — wiki, ICP, specs, policies, runbooks, product facts | global, shared | no — pull-only |
 
@@ -67,7 +67,7 @@ Every due date, reminder and relative time resolves in the user's configured zon
 `refile.rs` migrates a knowledge base that already accumulated memories and todos. `preview`
 reads every doc, routes it (`routing::classify_text` — cues, then the classifier), and returns a
 proposal; nothing moves until the user approves. `apply` writes the memory or item and deletes the
-doc. Surfaced as the **tidy** button in the Knowledge tab, and as the Manager's `tidy_knowledge`
+doc. Surfaced as the **tidy** button in the gallery tab, and as the Manager's `tidy_knowledge`
 tool (read-only — it returns the proposals).
 
 ## If you change…

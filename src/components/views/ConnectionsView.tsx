@@ -11,12 +11,10 @@ import type { Integration } from '../../types';
 
 const RESOURCE_KINDS = ['sheet', 'doc', 'calendar', 'channel', 'repo', 'file', 'url', 'other'];
 
-// The resource / connection / adapter layer, in one place: the adapters a
-// connection can be made from, the connections the app holds (integrations and
-// LLM endpoints), and the resources those connections expose. The integration
-// config/OAuth flow is unchanged below, so existing setup keeps working.
+// The resource layer plus the connections the app holds (integrations and LLM
+// endpoints). The integration config/OAuth flow is unchanged below, so existing
+// setup keeps working.
 export function ConnectionsView({ integrations }: { integrations: Integration[] }) {
-  const adapters = useConnectionsStore((s) => s.adapters);
   const connections = useConnectionsStore((s) => s.connections);
   const resources = useConnectionsStore((s) => s.resources);
   const load = useConnectionsStore((s) => s.load);
@@ -45,38 +43,6 @@ export function ConnectionsView({ integrations }: { integrations: Integration[] 
 
   return (
     <div className="flex h-full flex-col">
-      {/* The catalog: descriptors a connection can be created from. */}
-      <Card className="mb-3 shrink-0">
-        <div className="mb-2 font-mono text-[10px] tracking-wider text-muted uppercase">adapters</div>
-        <div className="flex flex-wrap gap-1">
-          {adapters.map((a) => (
-            <span
-              key={a.id}
-              className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted"
-              title={`${a.category} · ${a.provider} · ${a.auth}${a.actions.length ? ` · ${a.actions.length} actions` : ''}`}
-            >
-              {a.name}
-            </span>
-          ))}
-          {adapters.length === 0 && <span className="font-mono text-[10px] text-muted">none yet.</span>}
-        </div>
-      </Card>
-
-      {/* The configured instances. */}
-      <Card className="mb-3 shrink-0">
-        <div className="mb-2 font-mono text-[10px] tracking-wider text-muted uppercase">connections</div>
-        <div className="grid gap-1.5">
-          {connections.map((c) => (
-            <div key={`${c.category}:${c.id}`} className="flex items-center gap-2.5">
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.connected ? 'bg-foreground' : 'bg-border'}`} title={c.connected ? 'connected' : 'not connected'} />
-              <span className="font-mono text-[11px] text-foreground">{c.name}</span>
-              <span className="font-mono text-[10px] text-muted">{c.category} · {c.id}</span>
-            </div>
-          ))}
-          {connections.length === 0 && <span className="font-mono text-[10px] text-muted">nothing connected yet.</span>}
-        </div>
-      </Card>
-
       {/* The concrete objects a connection exposes. */}
       <Card className="mb-3 shrink-0">
         <div className="mb-2 font-mono text-[10px] tracking-wider text-muted uppercase">resources</div>

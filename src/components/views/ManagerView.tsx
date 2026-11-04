@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RotateCcw, Settings, Trash2 } from 'lucide-react';
+import { Activity, ArrowLeft, CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RotateCcw, Settings, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from '../ui/ContextMenu';
 import type { Agent, Attachment, Integration, ModelConfig, Reasoning, Task, Tool } from '../../types';
 import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
@@ -20,6 +20,8 @@ import { ChatComposer } from '../chat/ChatComposer';
 import { ScribbleLayer } from '../chat/ScribbleLayer';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { MessageBubble } from '../chat/MessageBubble';
+import { ActivityPanel } from '../chat/ActivityPanel';
+import { useActivity } from '../../hooks/useActivity';
 import { toast } from '../../hooks/useToast';
 import { deleteChatSession, getChatSession, listChatSessions, rateTurn } from '../../runtime';
 
@@ -38,6 +40,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
   const busy = useManagerStore((s) => s.busy);
   const steps = useManagerStore((s) => s.steps);
   const currentAgentId = useManagerStore((s) => s.currentAgentId);
+  const activeAgentId = useManagerStore((s) => s.activeAgentId);
   const setCurrentAgent = useManagerStore((s) => s.setCurrentAgent);
   const send = useManagerStore((s) => s.send);
   const cancel = useManagerStore((s) => s.cancel);
@@ -47,6 +50,8 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
   const tasks = useTasksStore((s) => s.tasks);
   const loadTasks = useTasksStore((s) => s.loadTasks);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const activityOpen = useActivity((s) => s.open);
+  const toggleActivity = useActivity((s) => s.toggle);
   const [panel, setPanel] = useState<'info' | 'config' | null>(null);
   const [mgrDraft, setMgrDraft] = useState<Agent | null>(null);
   const avatarRef = useRef<HTMLInputElement>(null);
@@ -160,6 +165,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
 
   const menuItems: MenuItem[] = [
     { key: 'chat', label: 'chat', icon: <MessageSquare size={13} />, active: panel === null, onSelect: () => setPanel(null) },
+    { key: 'activity', label: 'activity panel', icon: <Activity size={13} />, active: activityOpen, onSelect: toggleActivity },
     { key: 'info', label: 'info', icon: <Info size={13} />, active: panel === 'info', onSelect: () => setPanel('info') },
     { key: 'config', label: 'config', icon: <Settings size={13} />, active: panel === 'config', onSelect: openConfig },
     { key: 'new', label: 'new chat', icon: <MessageSquarePlus size={13} />, dividerBefore: true, onSelect: () => {
@@ -175,38 +181,41 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
         <ContextMenu items={menuItems} />
       </header>
 
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <ScribbleLayer storeKey={managerId} scrollRef={scrollRef} />
-        <div ref={scrollRef} className="relative z-10 min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
-          <div className="mx-auto w-full max-w-[720px]">
-            {messages.map((m, i) => (
-              <MessageBubble
-                key={i}
-                role={m.role}
-                content={m.content}
-                attachments={m.attachments}
-                steps={steps}
-                time={m.time}
-                durationMs={m.durationMs}
-                ttftMs={m.ttftMs}
-                streaming={busy && i === messages.length - 1 && m.role === 'assistant'}
-                onRate={m.role === 'assistant' && i === messages.length - 1 && !busy
-                  ? (signal) => void rateTurn(managerId, signal, m.content)
-                  : undefined}
-              />
-            ))}
+      <div className="flex min-h-0 flex-1 flex-row">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          <ScribbleLayer storeKey={managerId} scrollRef={scrollRef} />
+          <div ref={scrollRef} className="relative z-10 min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-32">
+            <div className="mx-auto w-full max-w-[720px]">
+              {messages.map((m, i) => (
+                <MessageBubble
+                  key={i}
+                  role={m.role}
+                  content={m.content}
+                  attachments={m.attachments}
+                  steps={steps}
+                  time={m.time}
+                  durationMs={m.durationMs}
+                  ttftMs={m.ttftMs}
+                  streaming={busy && activeAgentId === managerId && i === messages.length - 1 && m.role === 'assistant'}
+                  onRate={m.role === 'assistant' && i === messages.length - 1 && !busy
+                    ? (signal) => void rateTurn(managerId, signal, m.content)
+                    : undefined}
+                />
+              ))}
+            </div>
           </div>
+          <ChatComposer
+            busy={busy}
+            modelId={managerAgent.model}
+            reasoning={managerAgent.reasoning}
+            placeholder={`message ${leadName}…  (/agents, /tasks, /switch, /help)`}
+            onSend={submit}
+            onCancel={cancel}
+            onModelChange={(id) => void persistAgent({ ...managerAgent, model: id })}
+            onReasoningChange={(r) => void persistAgent({ ...managerAgent, reasoning: r })}
+          />
         </div>
-        <ChatComposer
-          busy={busy}
-          modelId={managerAgent.model}
-          reasoning={managerAgent.reasoning}
-          placeholder={`message ${leadName}…  (/agents, /tasks, /switch, /help)`}
-          onSend={submit}
-          onCancel={cancel}
-          onModelChange={(id) => void persistAgent({ ...managerAgent, model: id })}
-          onReasoningChange={(r) => void persistAgent({ ...managerAgent, reasoning: r })}
-        />
+        {activityOpen && <ActivityPanel agentId={managerId} />}
       </div>
 
       {panel === 'info' && (

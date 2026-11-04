@@ -9,7 +9,7 @@ use tauri::AppHandle;
 
 use crate::db::db;
 
-pub(crate) const KINDS: [&str; 6] = ["note", "todo", "reminder", "goal", "link", "habit"];
+pub(crate) const KINDS: [&str; 6] = ["note", "todo", "reminder", "goal", "resource", "habit"];
 const CADENCES: [&str; 3] = ["daily", "weekly", "monthly"];
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -224,7 +224,7 @@ fn kind_for_command(cmd: &str) -> Option<&'static str> {
     "/tdl" | "/todo" => Some("todo"),
     "/r" | "/remind" | "/reminder" => Some("reminder"),
     "/p" | "/promise" | "/goal" => Some("goal"),
-    "/lib" | "/link" => Some("link"),
+    "/lib" | "/link" | "/resource" => Some("resource"),
     "/habit" => Some("habit"),
     _ => None,
   }
