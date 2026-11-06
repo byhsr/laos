@@ -7,8 +7,8 @@ import { ContextMenuAt } from '../ui/ContextMenu';
 import { agentMenuItems } from '../ui/agentMenu';
 import { Button, IconButton } from '../ui/Button';
 
-export function AgentsView({ agents, onOpen, onCreate, onDelete, onSettings, onTogglePin }: {
-  agents: Agent[]; onOpen: (id: string) => void; onCreate: () => void; onDelete: (id: string) => void;
+export function AgentsView({ agents, onOpen, onOpenSplit, onCreate, onDelete, onSettings, onTogglePin }: {
+  agents: Agent[]; onOpen: (id: string) => void; onOpenSplit: (id: string) => void; onCreate: () => void; onDelete: (id: string) => void;
   onSettings: (id: string) => void; onTogglePin: (id: string, pinned: boolean) => void;
 }) {
   const visible = agents.filter((a) => !a.isManager);
@@ -64,7 +64,7 @@ export function AgentsView({ agents, onOpen, onCreate, onDelete, onSettings, onT
 
       {menu && (
         <ContextMenuAt
-          items={agentMenuItems(menu.agent, { onOpen, onSettings, onTogglePin, onDelete: openConfirm })}
+          items={agentMenuItems(menu.agent, { onOpen, onOpenSplit, onSettings, onTogglePin, onDelete: openConfirm })}
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(null)}

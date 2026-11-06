@@ -46,12 +46,13 @@ import { AgentAvatar } from './components/ui/AgentAvatar';
 import { ConfirmDialog } from './components/ui/ConfirmDialog';
 import { UpdatePrompt } from './components/ui/UpdatePrompt';
 import { BrowserPanel } from './components/BrowserPanel';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { useBrowserStore } from './hooks/useBrowser';
 import { toast } from './hooks/useToast';
 import { syncBrowserTheme } from './theme';
 import { VoiceOverlay } from './components/voice/VoiceOverlay';
 import { useActiveChat } from './hooks/useActiveChat';
-import { useManagerStore } from './hooks/useManager';
+import { useManagerStore, type ChatEntry } from './hooks/useManager';
 import { useActivity } from './hooks/useActivity';
 import { useVoice } from './hooks/useVoice';
 import { useNotifications } from './hooks/useNotifications';
@@ -137,10 +138,26 @@ export default function App() {
   // The agent windows open side by side, in order.
   const [paneIds, setPaneIds] = useState<string[]>([]);
 
-  // Show an agent: focus it if its window is already open, otherwise add one. A
-  // fourth agent takes over the focused window rather than widening the row, which
-  // is what split views do everywhere and keeps the cap of three discoverable.
+  // A plain open navigates within the current column: focus the agent if its
+  // window is already open, otherwise take over the focused slot rather than
+  // widening the row. A split is therefore always something you asked for — the
+  // context menu's "open in split view", or work that opened its own window.
   function showAgent(id: string) {
+    setPaneIds((prev) => {
+      if (prev.includes(id)) return prev;
+      if (prev.length === 0) return [id];
+      const at = selectedAgentId ? prev.indexOf(selectedAgentId) : 0;
+      const next = [...prev];
+      next[at < 0 ? 0 : at] = id;
+      return next;
+    });
+    setSelectedAgentId(id);
+  }
+
+  // The explicit split: add this agent's window beside the current one. A fourth
+  // agent takes over the focused window rather than widening the row, which is
+  // what split views do everywhere and keeps the cap of three discoverable.
+  function splitAgent(id: string) {
     setPaneIds((prev) => {
       if (prev.includes(id)) return prev;
       if (prev.length < MAX_PANES) return [...prev, id];
@@ -170,6 +187,14 @@ export default function App() {
     if (id === selectedAgentId) setSelectedAgentId(next[Math.min(at, next.length - 1)] ?? null);
   }
 
+  // Append a message to an agent's own chat without touching the focused view —
+  // used to surface work delegated to that agent while it runs.
+  const appendChat = (agentId: string, entry: ChatEntry) => {
+    useManagerStore.setState((s) => ({
+      conversations: { ...s.conversations, [agentId]: [...(s.conversations[agentId] ?? []), entry] },
+    }));
+  };
+
   useEffect(() => {
     loadAgents(); loadModels(); loadTools(); loadSkills(); loadScripts(); loadProjects(); loadWorkflows(); loadIntegrations(); loadRuns(); loadProviders();
     // Reload tools after the storage bootstrap so MCP tools imported on first run
@@ -190,6 +215,36 @@ export default function App() {
     window.addEventListener('dragover', swallow);
     window.addEventListener('drop', swallow);
     return () => { window.removeEventListener('dragover', swallow); window.removeEventListener('drop', swallow); };
+  }, []);
+
+  // This window is a native app, not a browser. Any link the app renders (a URL in
+  // a chat reply, a resource link) is opened in the system browser rather than
+  // navigating this webview — which used to replace the whole app with the page.
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const anchor = (e.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+      const href = anchor?.getAttribute('href') ?? '';
+      if (!/^https?:\/\//i.test(href) && !/^mailto:/i.test(href)) return;
+      e.preventDefault();
+      void openUrl(href).catch(() => {});
+    };
+    document.addEventListener('click', onClick);
+    document.addEventListener('auxclick', onClick);
+    return () => { document.removeEventListener('click', onClick); document.removeEventListener('auxclick', onClick); };
+  }, []);
+
+  // In production, suppress the webview's native (browser) context menu so the app
+  // reads as native — but leave editable fields alone so right-click paste still
+  // works there.
+  useEffect(() => {
+    if (!import.meta.env.PROD) return;
+    const onContextMenu = (e: MouseEvent) => {
+      const el = e.target as HTMLElement | null;
+      const editable = !!el && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+      if (!editable) e.preventDefault();
+    };
+    document.addEventListener('contextmenu', onContextMenu);
+    return () => document.removeEventListener('contextmenu', onContextMenu);
   }, []);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -217,10 +272,10 @@ export default function App() {
   useEffect(() => onBrainNotice((n) => toast(`${n.title} (${n.count})`, 'info')), []);
 
   // A background job shows in the chat's activity panel the moment it starts, and a
-  // job the Manager handed to another agent also opens that agent's window — work
-  // farmed out is watchable while it runs instead of only reported when it lands.
-  // The view is deliberately left alone: being pulled out of the Manager's chat
-  // mid-turn would be worse than having to glance at the row.
+  // job the Manager handed to another agent is surfaced where it runs: the assigned
+  // agent's own chat gets the task, and its window is brought forward (focused)
+  // instead of left in the background, so the delegated work is actually visible in
+  // that agent's chat and activity while it runs.
   useEffect(() => onTaskStarted((t) => {
     useActivity.getState().startTask(t);
     useActivity.getState().openPanel();
@@ -228,7 +283,11 @@ export default function App() {
     // The agent may have been created earlier in this same turn, so it can still be
     // missing from the roster.
     if (!agents.some((a) => a.id === t.assignedAgent)) void loadAgents();
-    showWork(t.assignedAgent);
+    appendChat(t.assignedAgent, { role: 'user', content: t.label, time: new Date().toLocaleTimeString() });
+    // Give it a window and focus it (taking over the focused slot if the row is
+    // already full), then show the agent view so the work is actually on screen.
+    splitAgent(t.assignedAgent);
+    setView('agent');
   }), [agents]);
 
   // The Manager creates and deletes agents from a chat turn, and the roster is only
@@ -248,6 +307,12 @@ export default function App() {
     if (t.status === 'cancelled') return;
     if (handledTasks.current.has(t.taskId)) return;
     handledTasks.current.add(t.taskId);
+    // The result lands in the assigned agent's chat too, so the window opened to
+    // watch the delegated work shows how it ended.
+    if (t.assignedAgent && t.assignedAgent !== t.chatAgentId) {
+      const body = t.result.trim() || (t.status === 'failed' ? 'The task failed.' : 'The task finished with no output.');
+      appendChat(t.assignedAgent, { role: 'assistant', content: body, time: new Date().toLocaleTimeString() });
+    }
     const agent = agents.find((a) => a.id === t.chatAgentId) ?? agents.find((a) => a.isManager);
     if (agent) void useManagerStore.getState().takeTaskResult(agent, t.sessionId, t.result);
   }), [agents]);
@@ -356,6 +421,18 @@ export default function App() {
     setConfigRequest((r) => ({ id, n: r.n + 1, tab: 'chat' }));
   };
 
+  // "open in split view" from an agent's context menu: place it beside the current
+  // window instead of replacing it.
+  const openAgentSplit = (id: string) => {
+    if (agents.find((a) => a.id === id)?.isManager) {
+      setView('manager');
+      return;
+    }
+    splitAgent(id);
+    setView('agent');
+    setConfigRequest((r) => ({ id, n: r.n + 1, tab: 'chat' }));
+  };
+
   const addAgent = async () => {
     const agent = await createAgent({});
     showAgent(agent.id);
@@ -414,6 +491,7 @@ export default function App() {
             view={view}
             selectedAgentId={selectedAgentId}
             onOpen={openAgent}
+            onOpenSplit={openAgentSplit}
             onSettings={openAgentSettings}
             onTogglePin={(id, pinned) => {
               const a = agents.find((x) => x.id === id);
@@ -441,7 +519,7 @@ export default function App() {
               onSaveWorkflow={saveWorkflow}
             />
           </Pane>
-          <Pane active={view === 'agents'} label="agents"><AgentsView agents={agents} onOpen={openAgent} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('agent deleted', 'success'); }} /></Pane>
+          <Pane active={view === 'agents'} label="agents"><AgentsView agents={agents} onOpen={openAgent} onOpenSplit={openAgentSplit} onCreate={addAgent} onSettings={openAgentSettings} onTogglePin={(id, pinned) => { const a = agents.find((x) => x.id === id); if (a) void persistAgent({ ...a, pinned }); }} onDelete={async (id) => { await deleteAgent(id); if (selectedAgentId === id) setSelectedAgentId(null); toast('agent deleted', 'success'); }} /></Pane>
           <Pane active={view === 'workflows' || view === 'builder'} label="workflows">
             <CanvasView
               agents={agents} tools={tools} workflows={workflows} integrations={integrations} models={models} scripts={scripts}

@@ -16,6 +16,9 @@ use tauri::AppHandle;
 pub(crate) const ROUTING_RULES: &str = "\nWhere things go (do not mix these up):\n\
 - items — THE USER'S anything with a when or a do: their notes, todos, reminders, goals, resources and habits. \
 Use the items tool ('add' to record, 'list' to show, 'update' to change, 'complete' to tick off, 'delete' to remove). Reminders are scheduled and pushed to Telegram.\n\
+- Never file work you (or another agent) have been asked to DO. A task or instruction the user gives you — \
+\"research X\", \"build Y\", \"run Z\" — is work to perform, not a note. Only file things the user is capturing \
+for themselves.\n\
 - scratchpad — YOUR OWN private working area for this chat: thinking, drafts, intermediate findings, anything \
 you need to keep track of while you work. Keep your own working notes here — never file them as items, which \
 belong to the user.\n\
@@ -50,14 +53,16 @@ const POSITIVE_RULE: &[&str] = &[
   "from now on", "going forward", "every time you ", "make sure you always",
 ];
 const REMINDER_CUE: &[&str] = &["remind me", "set a reminder", "reminder to", "remind ", "ping me", "nudge me"];
+// Explicit "add this to my list" phrasing only. A first-person task ("I need to
+// X") reads as the user telling the assistant what to do — work to perform, not a
+// captured note — so it is left alone rather than filed into their notes.
 const TODO_CUE: &[&str] = &[
-  "i need to", "i have to", "i must ", "add a task", "add a todo", "todo:", "to-do:",
-  "add to my list", "put on my list",
+  "add a task", "add a todo", "todo:", "to-do:", "add to my list", "put on my list",
 ];
 /// The only thing that justifies a classifier round-trip: a message that looks
 /// like content wanting to be filed, whose destination isn't clear from the cues.
 const FILING_HINTS: &[&str] = &[
-  "remind", "remember", "don't forget", "dont forget", "keep track", "task", "todo", "to-do",
+  "remind", "remember", "don't forget", "dont forget", "keep track", "todo", "to-do",
   "deadline", "due ", "never ", "always ", "from now on", "note that",
   // The other item kinds, so a goal / link / habit / note reaches the classifier too.
   "my goal", "goal is", "i promise", "i commit", "save this link", "save the link",
@@ -200,9 +205,10 @@ pub(crate) async fn classify_text(app: &AppHandle, text: &str) -> Option<(Destin
 async fn classifier_route(app: &AppHandle, text: &str) -> Option<(Destination, String, Option<String>)> {
   let class = crate::classify::classify(app, text, "").await;
   let destination = match class.content_type.as_str() {
-    // Every item kind lands in items — not just a task: a captured note, idea,
-    // goal or dated event belongs there too, so it isn't lost to chat.
-    "task" | "reminder" | "habit" | "goal" | "note" | "idea" | "event" => Destination::Items,
+    // Genuine capture only — a note, idea, goal, dated event, reminder or habit.
+    // A "task" is work the user is asking the assistant (or another agent) to do,
+    // which must NOT be filed into their notes.
+    "reminder" | "habit" | "goal" | "note" | "idea" | "event" => Destination::Items,
     "preference" => Destination::Memory,
     _ => return None,
   };
@@ -253,10 +259,17 @@ mod tests {
     assert_eq!(dest("what does the retrieval pipeline do?"), None);
   }
 
-  /// A todo without a time still belongs in items.
+  /// A first-person task ("I need to X") is an instruction to the assistant, not a
+  /// captured note — it must not be filed into the user's notes.
   #[test]
-  fn a_todo_routes_to_items() {
-    assert_eq!(dest("i need to renew the domain"), Some(Destination::Items));
+  fn a_task_statement_is_not_routed() {
+    assert_eq!(dest("i need to renew the domain"), None);
+  }
+
+  /// An explicit "add a todo" is still filed — the user asked for it.
+  #[test]
+  fn an_explicit_todo_still_routes_to_items() {
+    assert_eq!(dest("add a todo: renew the domain"), Some(Destination::Items));
   }
 
   /// A habit stated about the user is a fact, not an instruction to the assistant.

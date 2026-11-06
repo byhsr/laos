@@ -1,4 +1,4 @@
-import { MessageSquare, Pin, PinOff, Settings, Trash2 } from 'lucide-react';
+import { Columns2, MessageSquare, Pin, PinOff, Settings, Trash2 } from 'lucide-react';
 import type { Agent } from '../../types';
 import type { MenuItem } from './ContextMenu';
 
@@ -7,12 +7,18 @@ import type { MenuItem } from './ContextMenu';
 // Action labels are lowercase, like all chrome.
 export function agentMenuItems(a: Agent, handlers: {
   onOpen: (id: string) => void;
+  onOpenSplit: (id: string) => void;
   onSettings: (id: string) => void;
   onTogglePin: (id: string, pinned: boolean) => void;
   onDelete: (a: Agent) => void;
 }): MenuItem[] {
   return [
     { key: 'open', label: 'open chat', icon: <MessageSquare size={13} />, onSelect: () => handlers.onOpen(a.id) },
+    // A split places this agent's window beside the current one. The lead agent is
+    // a root-level view, so it has no window to split.
+    ...(a.isManager ? [] : [
+      { key: 'split', label: 'open in split view', icon: <Columns2 size={13} />, onSelect: () => handlers.onOpenSplit(a.id) },
+    ]),
     { key: 'settings', label: 'settings', icon: <Settings size={13} />, onSelect: () => handlers.onSettings(a.id) },
     ...(a.isManager ? [] : [
       {

@@ -10,9 +10,10 @@ import { DeleteConfirm } from './ui/DeleteConfirm';
 // The sidebar is purely the agent chat list: the lead agent always holds the
 // first slot, pinned agents follow. Right-click a row for its actions. Every
 // workspace section lives in the rail beside it.
-export function Sidebar({ agents, view, selectedAgentId, onOpen, onTogglePin, onSettings, onDelete, collapsed }: {
+export function Sidebar({ agents, view, selectedAgentId, onOpen, onOpenSplit, onTogglePin, onSettings, onDelete, collapsed }: {
   agents: Agent[]; view: View; selectedAgentId: string | null;
   onOpen: (id: string) => void;
+  onOpenSplit: (id: string) => void;
   onTogglePin: (id: string, pinned: boolean) => void; onSettings: (id: string) => void; onDelete: (id: string) => Promise<void>;
   collapsed: boolean;
 }) {
@@ -61,7 +62,7 @@ export function Sidebar({ agents, view, selectedAgentId, onOpen, onTogglePin, on
 
       {menu && (
         <ContextMenuAt
-          items={agentMenuItems(menu.agent, { onOpen, onSettings, onTogglePin, onDelete: (a) => setDeleteTarget(a) })}
+          items={agentMenuItems(menu.agent, { onOpen, onOpenSplit, onSettings, onTogglePin, onDelete: (a) => setDeleteTarget(a) })}
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(null)}

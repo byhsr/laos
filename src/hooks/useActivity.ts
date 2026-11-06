@@ -9,6 +9,9 @@ import { mergeStep } from '../chatSteps';
 export type ActivityItem = {
   id: string;              // "turn-<agent>-<n>" or the task id
   agentId: string;         // the chat it belongs to
+  // For a delegated task, the agent actually doing the work — so the job also
+  // shows in that agent's panel, not only the chat that requested it.
+  assignedAgent?: string;
   sessionId: string;
   kind: 'turn' | 'task';
   title: string;
@@ -42,7 +45,7 @@ const write = (key: string, value: string) => { try { localStorage.setItem(key, 
 let userClosed = false;
 let turnSeq = 0;
 
-type TaskStart = { taskId: string; chatAgentId: string; sessionId: string; kind: string; tool: string; label: string };
+type TaskStart = { taskId: string; chatAgentId: string; assignedAgent?: string; sessionId: string; kind: string; tool: string; label: string };
 type TaskEnd = { taskId: string; status: string; result: string };
 
 type ActivityState = {
@@ -114,7 +117,7 @@ export const useActivity = create<ActivityState>((set, get) => ({
   startTask: (t) => set((s) => {
     if (s.items.some((i) => i.id === t.taskId)) return {};
     const item: ActivityItem = {
-      id: t.taskId, agentId: t.chatAgentId, sessionId: t.sessionId, kind: 'task',
+      id: t.taskId, agentId: t.chatAgentId, assignedAgent: t.assignedAgent, sessionId: t.sessionId, kind: 'task',
       title: t.label || t.tool || 'background task',
       detail: t.tool ? t.tool : undefined,
       status: 'running', steps: [], startedAt: Date.now(),

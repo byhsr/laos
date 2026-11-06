@@ -46,6 +46,31 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-05 — native-app polish: links, notes, split view, delegation
+
+- **Links open in the system browser.** Clicking a link the app renders (a URL in a chat reply, an
+  item's resource link) navigated the main webview, replacing the whole app with the page. `App.tsx`
+  now intercepts `click`/`auxclick` on `http(s)`/`mailto` anchors and hands them to `openUrl`. In
+  production the webview's native right-click menu is also suppressed (editable fields exempt, so
+  paste still works) so the window reads as a native app, not a browser.
+- **Tasks no longer land in notes.** `routing::classifier_route` no longer maps `task` to Items, and
+  the first-person `i need to / i have to / i must` cues are gone from `TODO_CUE` — a task or
+  instruction is work to perform, not a captured note. Explicit "add a todo" / "remind me…" / notes /
+  ideas / goals / habits still file. `ROUTING_RULES` says so in as many words, for the model path too.
+- **"open in split view" in every agent's context menu.** A plain open now navigates within the
+  current column (`showAgent`); the new menu item adds a window beside it (`splitAgent`). Shared by
+  the sidebar and the agents browser through `agentMenuItems`.
+- **Delegated work is visible where it runs.** A job the Manager hands to another agent now carries
+  its `assignedAgent` on the activity item (so it shows in that agent's panel *and* the requester's),
+  the assigned agent's chat gets the task and its result, and its window is brought forward instead of
+  opening hidden behind the Manager view.
+
+**Verified:** `npm run build` — `tsc -b` + `vite build` clean (only the pre-existing lottie-eval and
+chunk-size warnings); `cargo test` — **96 pass** (was 95; `a_task_statement_is_not_routed` +
+`an_explicit_todo_still_routes_to_items` replace the old `a_todo_routes_to_items`).
+
+---
+
 ## 2026-11-04 — release 0.2.4
 
 Ships the custom API tool suites, the agent scratchpad and the split view (all below). Version
