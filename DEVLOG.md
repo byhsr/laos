@@ -9,6 +9,15 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-05 — release 0.2.5
+
+Ships the chat documents, the stoppable jobs, the live step text, the usage view and the
+native-app polish (all below). Version `0.2.4` → `0.2.5` across `package.json`,
+`src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and `src-tauri/tauri.conf.json`; tag `v0.2.5`
+drives the release workflow.
+
+---
+
 ## 2026-11-05 — live step text, downloadable documents, stoppable jobs
 
 - **The chat bar leads with the abstracted step, not the placeholder.** `StreamIndicator` now
