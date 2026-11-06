@@ -30,6 +30,22 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-05 — usage analytics: million-scale tokens + a full usage view
+
+- **Readouts step up past a thousand.** New `src/format.ts` (`fmtCompact` / `fmtFull`): 1 237 000 now
+  reads as `1.24M` (then `B`) instead of the old `1237.0k`. The Home token cell and its in/out split
+  use it.
+- **A full usage view.** The Home token cell gained a `usage` button opening a new `UsageView`
+  (`usage` view, so it lives in the nav history). One filter set — range (7d / 30d / 90d / all),
+  metric (total / in / out), agent, model — drives three charts: a daily stacked in/out bar chart
+  (auto-bucketed past 92 bars, with a hover readout), a summary strip (total · in · out · runs ·
+  avg/run), and ranked by-agent / by-model breakdowns. Neutral palette only — bars are
+  `foreground/30` + `foreground/70`, exact values behind Tooltips, no accent, no native `title`.
+
+**Verified:** `npm run build` — `tsc -b` + `vite build` clean.
+
+---
+
 ## 2026-11-04 — release 0.2.4
 
 Ships the custom API tool suites, the agent scratchpad and the split view (all below). Version

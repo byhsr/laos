@@ -70,7 +70,7 @@ export type Task = { id: string; requester: string; assignedAgent: string; statu
 
 // 'builder' is the workflow canvas, kept distinct from the 'workflows' list so
 // opening a workflow is a real navigation step the chrome can go back from.
-export type View = 'home' | 'graph' | 'agents' | 'workflows' | 'builder' | 'manager' | 'tasks' | 'runs' | 'telegram' | 'terminal' | 'items' | 'notifications' | 'agent' | 'workshop' | 'settings' | 'memory' | 'connections';
+export type View = 'home' | 'graph' | 'agents' | 'workflows' | 'builder' | 'manager' | 'tasks' | 'runs' | 'usage' | 'telegram' | 'terminal' | 'items' | 'notifications' | 'agent' | 'workshop' | 'settings' | 'memory' | 'connections';
 
 // What the topbar "+" creates. Left-click runs the default; right-click offers
 // the whole list and lets you pick which one is the default.

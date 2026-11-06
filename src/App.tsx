@@ -28,6 +28,7 @@ import { ManagerView } from './components/views/ManagerView';
 import { TasksView } from './components/views/TasksView';
 import { TelegramView } from './components/views/TelegramView';
 import { RunsConsole } from './components/views/RunsConsole';
+import { UsageView } from './components/views/UsageView';
 import { Onboarding, type OnboardingPatch } from './components/Onboarding';
 import { WorkshopView } from './components/views/WorkshopView';
 import { MemoryView } from './components/views/MemoryView';
@@ -430,7 +431,7 @@ export default function App() {
         {/* Right section: free canvas — content is full-bleed */}
         <main className="app-no-drag min-h-0 min-w-0 flex-1 overflow-hidden">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
-          <Pane active={view === 'home'} label="home"><HomeView agents={agents} tools={tools} workflows={workflows} runs={runs} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('builder'); setWorkflowToOpen(id); }} /></Pane>
+          <Pane active={view === 'home'} label="home"><HomeView agents={agents} tools={tools} workflows={workflows} runs={runs} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('builder'); setWorkflowToOpen(id); }} onOpenUsage={() => setView('usage')} /></Pane>
           <Pane active={view === 'graph'} label="graph">
             <GraphView
               agents={agents} skills={skills} tools={tools} integrations={integrations} workflows={workflows} projects={projects}
@@ -463,6 +464,9 @@ export default function App() {
           <Pane active={view === 'notifications'} label="notifications"><NotificationsView /></Pane>
           <Pane active={view === 'runs'} label="runs">
             <RunsConsole runs={runs} agents={agents} onOpenAgent={openAgent} onClear={clearRuns} />
+          </Pane>
+          <Pane active={view === 'usage'} label="usage">
+            <UsageView runs={runs} agents={agents} onOpenAgent={openAgent} />
           </Pane>
           <Pane active={view === 'workshop'} label="workshop">
             <WorkshopView

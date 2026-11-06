@@ -1,13 +1,12 @@
-import { Workflow as WorkflowIcon } from 'lucide-react';
+import { ChartColumn, Workflow as WorkflowIcon } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { Agent, Run, Tool, Workflow } from '../../types';
+import { fmtCompact } from '../../format';
 import { AgentAvatar } from '../ui/AgentAvatar';
 import { GROUP_LABEL_CLS } from '../ui/Input';
 import { Select, type SelectOption } from '../ui/Select';
 
 const SHOW = 4;
-
-const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
 // Safe short day label — DB timestamps can be empty or malformed.
 const dayLabel = (s: string) => {
@@ -29,9 +28,9 @@ const TOKEN_FILTERS: SelectOption[] = [
 
 // No header: the section's own name lives in the rail, and the graph is a
 // section of its own. This view opens straight into content.
-export function HomeView({ agents, tools, workflows, runs, onOpen, onCreate, onOpenWorkflow }: {
+export function HomeView({ agents, tools, workflows, runs, onOpen, onCreate, onOpenWorkflow, onOpenUsage }: {
   agents: Agent[]; tools: Tool[]; workflows: Workflow[]; runs: Run[];
-  onOpen: (id: string) => void; onCreate: () => void; onOpenWorkflow: (id: string) => void;
+  onOpen: (id: string) => void; onCreate: () => void; onOpenWorkflow: (id: string) => void; onOpenUsage: () => void;
 }) {
   const toolName = (id: string) => tools.find((t) => t.id === id)?.name ?? id;
   const visibleAgents = agents.filter((a) => !a.isManager);
@@ -63,7 +62,7 @@ export function HomeView({ agents, tools, workflows, runs, onOpen, onCreate, onO
       <div className="mb-5 grid auto-rows-[104px] grid-cols-3 gap-3">
         <div className={`${cell} col-span-2 row-span-2`}>
           <div className="flex shrink-0 items-start justify-between gap-3">
-            <span className="text-[38px] leading-none font-bold tracking-tight text-foreground">{fmt(promptTokens + completionTokens)}</span>
+            <span className="text-[38px] leading-none font-bold tracking-tight text-foreground">{fmtCompact(promptTokens + completionTokens)}</span>
             <div className="w-[104px] shrink-0">
               <Select
                 value={tokenGrouping ?? 'total'}
@@ -75,7 +74,14 @@ export function HomeView({ agents, tools, workflows, runs, onOpen, onCreate, onO
 
           <div className="mt-3 flex shrink-0 items-baseline justify-between gap-3">
             <span className={GROUP_LABEL_CLS}>tokens</span>
-            <span className="font-mono text-[10px] text-muted">{fmt(promptTokens)} in · {fmt(completionTokens)} out</span>
+            <div className="flex items-baseline gap-2">
+              <span className="font-mono text-[10px] text-muted">{fmtCompact(promptTokens)} in · {fmtCompact(completionTokens)} out</span>
+              {/* The readout is a summary; this opens the full usage analytics
+                  (by day / agent / model) behind the same numbers. */}
+              <button className={`${newLink} inline-flex items-center gap-1`} onClick={onOpenUsage}>
+                <ChartColumn size={11} />usage
+              </button>
+            </div>
           </div>
 
           {tokenGrouping && (
@@ -85,7 +91,7 @@ export function HomeView({ agents, tools, workflows, runs, onOpen, onCreate, onO
                 : tokenGroups.map(([label, n]) => (
                   <div key={label} className="flex items-center justify-between gap-2 border-b border-border py-1.5 font-mono text-[10px] last:border-0">
                     <span className="min-w-0 truncate text-muted">{label}</span>
-                    <span className="shrink-0 text-foreground">{fmt(n)}</span>
+                    <span className="shrink-0 text-foreground">{fmtCompact(n)}</span>
                   </div>
                 ))}
             </div>
