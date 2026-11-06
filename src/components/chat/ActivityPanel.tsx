@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronRight, FileText, GripVertical, TriangleAlert, X } from 'lucide-react';
+import { Check, ChevronRight, FileText, GripVertical, Square, TriangleAlert, X } from 'lucide-react';
 import { useActivity, type ActivityItem } from '../../hooks/useActivity';
+import { cancelTask } from '../../runtime';
 import { Button } from '../ui/Button';
 import { tabCls } from '../ui/tabs';
 
@@ -14,7 +15,7 @@ const LONG_RESULT = 400;
 // and every background task — so what's working is visible while the chat stays
 // put. Cards are drag-reorderable; a job that ends fires a short burst. A result
 // too long for its card becomes a chip that opens the editable `text` view.
-export function ActivityPanel({ agentId }: { agentId: string }) {
+export function ActivityPanel({ agentId, onStopTurn }: { agentId: string; onStopTurn?: () => void }) {
   const items = useActivity((s) => s.items);
   const width = useActivity((s) => s.width);
   const setWidth = useActivity((s) => s.setWidth);
@@ -45,7 +46,9 @@ export function ActivityPanel({ agentId }: { agentId: string }) {
     window.addEventListener('pointerup', up);
   };
 
-  const mine = items.filter((i) => i.agentId === agentId);
+  // A delegated task shows in its requesting chat and in the assigned agent's
+  // panel — so opening the window the work runs in shows the job, not nothing.
+  const mine = items.filter((i) => i.agentId === agentId || i.assignedAgent === agentId);
   const running = mine.filter((i) => i.status === 'running').length;
   const editingItem = tab === 'text' ? (mine.find((i) => i.id === editingId) ?? null) : null;
 
@@ -97,6 +100,7 @@ export function ActivityPanel({ agentId }: { agentId: string }) {
                   onToggle={() => toggleItem(it.id)}
                   onRemove={() => remove(it.id)}
                   onEdit={() => useActivity.getState().beginEdit(it.id)}
+                  onStop={it.kind === 'task' ? () => { void cancelTask(it.id); } : onStopTurn}
                   onDragStart={() => { dragId.current = it.id; }}
                   onDropOn={() => { if (dragId.current && dragId.current !== it.id) reorder(dragId.current, it.id); dragId.current = null; }}
                 />
@@ -140,12 +144,13 @@ function TextEditor({ item }: { item: ActivityItem }) {
   );
 }
 
-function ActivityCard({ item, expanded, onToggle, onRemove, onEdit, onDragStart, onDropOn }: {
+function ActivityCard({ item, expanded, onToggle, onRemove, onEdit, onStop, onDragStart, onDropOn }: {
   item: ActivityItem;
   expanded: boolean;
   onToggle: () => void;
   onRemove: () => void;
   onEdit: () => void;
+  onStop?: () => void;
   onDragStart: () => void;
   onDropOn: () => void;
 }) {
@@ -169,7 +174,9 @@ function ActivityCard({ item, expanded, onToggle, onRemove, onEdit, onDragStart,
     return () => clearTimeout(t);
   }, [item.burst]);
 
-  const last = item.steps[item.steps.length - 1];
+  // Lead with the latest concrete step, matching the chat bar — a `think`
+  // placeholder (planning / raw reasoning) only shows when it is all there is.
+  const last = [...item.steps].reverse().find((s) => s.kind !== 'think') ?? item.steps[item.steps.length - 1];
 
   return (
     <div
@@ -196,6 +203,18 @@ function ActivityCard({ item, expanded, onToggle, onRemove, onEdit, onDragStart,
           <span className="shrink-0 font-mono text-[10px] text-muted/60">{secs((item.endedAt ?? now) - item.startedAt)}</span>
           <ChevronRight size={11} className={`shrink-0 text-muted transition-transform ${expanded ? 'rotate-90' : ''}`} />
         </button>
+        {/* A running job can be stopped from here — a background task is
+            cancelled outright, a live turn is halted. */}
+        {running && onStop && (
+          <button
+            type="button"
+            aria-label="stop"
+            onClick={onStop}
+            className="focus-ring grid h-5 w-5 shrink-0 cursor-pointer place-items-center rounded border-0 bg-transparent p-0 text-muted transition-colors hover:text-danger"
+          >
+            <Square size={10} />
+          </button>
+        )}
         {!running && (
           <button
             type="button"

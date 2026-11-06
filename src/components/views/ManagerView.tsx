@@ -21,6 +21,7 @@ import { ScribbleLayer } from '../chat/ScribbleLayer';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { MessageBubble } from '../chat/MessageBubble';
 import { ActivityPanel } from '../chat/ActivityPanel';
+import { DocumentsSection } from '../chat/DocumentsSection';
 import { useActivity } from '../../hooks/useActivity';
 import { toast } from '../../hooks/useToast';
 import { deleteChatSession, getChatSession, getScratchpad, listChatSessions, rateTurn } from '../../runtime';
@@ -217,6 +218,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
                     : undefined}
                 />
               ))}
+              <DocumentsSection agentId={managerId} sessionId={sessionId} />
             </div>
           </div>
           <ChatComposer
@@ -230,7 +232,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
             onReasoningChange={(r) => void persistAgent({ ...managerAgent, reasoning: r })}
           />
         </div>
-        {activityOpen && <ActivityPanel agentId={managerId} />}
+        {activityOpen && <ActivityPanel agentId={managerId} onStopTurn={() => cancel('pause')} />}
       </div>
 
       {panel === 'scratchpad' && (

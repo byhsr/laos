@@ -644,6 +644,30 @@ export async function updateTaskResult(id: string, result: string): Promise<void
   await invoke('update_task_result', { id, result });
 }
 
+// Chat documents ("artifacts"): long-form files an agent writes in a chat, shown
+// as cards the user can read, copy and download. Named `ChatDocument` so it never
+// shadows the DOM `Document`.
+export type ChatDocument = {
+  id: string; agentId: string; sessionId: string; title: string; kind: string;
+  content: string; createdAt: string; updatedAt: string;
+};
+export async function listDocuments(agentId: string, sessionId: string): Promise<ChatDocument[]> {
+  try { return await invoke<ChatDocument[]>('list_documents', { agentId, sessionId }); } catch { return []; }
+}
+export async function deleteDocument(id: string): Promise<void> {
+  await invoke('delete_document', { id });
+}
+// Fires when a document is written or removed, so the open chat refreshes its cards.
+export type DocumentChanged = { id: string; agentId: string; sessionId: string; deleted?: boolean };
+export function onDocumentChanged(cb: (d: DocumentChanged) => void): () => void {
+  let unlisten: (() => void) | null = null;
+  let disposed = false;
+  listen<DocumentChanged>('lumin-document-changed', (e) => cb(e.payload))
+    .then((un) => { if (disposed) un(); else unlisten = un; })
+    .catch(() => {});
+  return () => { disposed = true; unlisten?.(); };
+}
+
 // In-app updater. The check/install live in Rust; the UI renders its own prompt.
 export type UpdateInfo = { version: string; currentVersion: string; notes?: string | null; date?: string | null };
 export async function checkForUpdate(): Promise<UpdateInfo | null> {

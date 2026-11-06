@@ -11,6 +11,7 @@ mod classify;
 mod connections;
 mod db;
 mod destinations;
+mod documents;
 mod embed;
 mod eval;
 mod fallback;
@@ -311,6 +312,10 @@ fn main() {
       capture::item_save,
       capture::item_delete,
       capture::item_toggle,
+      // Chat documents ("artifacts") — the files an agent writes for the user
+      documents::list_documents,
+      documents::get_document,
+      documents::delete_document,
       // Reminders + habits (scheduler)
       reminders::item_due,
       reminders::reminder_snooze,

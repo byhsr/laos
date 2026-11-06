@@ -9,6 +9,27 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-05 — live step text, downloadable documents, stoppable jobs
+
+- **The chat bar leads with the abstracted step, not the placeholder.** `StreamIndicator` now
+  headlines the latest concrete step (an action, the write phase, a wait) and falls back to a `think`
+  line only when that is all there is — so it reports "Running a command" / "Searching files" as they
+  happen instead of sitting on "Working out the next step". The model's raw reasoning stays in the
+  trace (the chevron) and the activity panel; nothing extra is streamed. The activity card's running
+  line uses the same preference so the two read alike.
+- **Documents ("artifacts").** New `documents.rs` (store + `list_documents` / `get_document` /
+  `delete_document`, `documents` table) and `tools/documents.rs` (the `document` tool:
+  create/update/read/list/delete, `markdown` | `text` | `html`). Every agent and the Manager hold it.
+  Documents appear inline in the chat (`DocumentsSection`, mounted in both `AgentWindow` and
+  `ManagerView`) as a card the user can expand to read, copy, or download as `.md` / `.txt` / `.html`;
+  the chat refreshes live on the new `lumin-document-changed` event.
+- **Stop a running job.** A running card in the activity panel now carries a stop button — a
+  background task through `cancel_task`, a live turn through the chat's own cancel.
+
+**Verified:** `npm run build` — `tsc -b` + `vite build` clean; `cargo test` — **96 pass**.
+
+---
+
 ## 2026-11-04 — release 0.2.4
 
 Ships the custom API tool suites, the agent scratchpad and the split view (all below). Version

@@ -20,6 +20,7 @@ import { ChatComposer } from './chat/ChatComposer';
 import { ScribbleLayer } from './chat/ScribbleLayer';
 import { MessageBubble, EMPTY_REPLY } from './chat/MessageBubble';
 import { ActivityPanel } from './chat/ActivityPanel';
+import { DocumentsSection } from './chat/DocumentsSection';
 import { useActivity } from '../hooks/useActivity';
 import { toast } from '../hooks/useToast';
 import { listChatSessions, getChatSession, getScratchpad, createChatSession, deleteChatSession, closeSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, type StreamStep } from '../runtime';
@@ -92,6 +93,8 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   // useShallow prevents an infinite re-render loop when the conversation is
   // missing (the `?? []` would create a new reference every selector call).
   const messages = useManagerStore(useShallow((s) => s.conversations[agent.id] ?? []));
+  // The active session id, watched so the artifacts section tracks the current chat.
+  const chatSessionId = useManagerStore((s) => s.sessionIds[agent.id] ?? null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [sessions, setSessions] = useState<{ id: string; title: string; createdAt: string; updatedAt: string }[]>([]);
   const [viewingSession, setViewingSession] = useState<string | null>(null);
@@ -399,6 +402,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                       : undefined}
                   />
                 ))}
+                <DocumentsSection agentId={agent.id} sessionId={chatSessionId} />
               </div>
             </div>
             {error && (
@@ -417,7 +421,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
               onReasoningChange={(r) => void onSave({ ...agent, reasoning: r })}
             />
           </div>
-          {docked && activityOpen && <ActivityPanel agentId={agent.id} />}
+          {docked && activityOpen && <ActivityPanel agentId={agent.id} onStopTurn={() => cancel('pause')} />}
         </div>
       )}
 

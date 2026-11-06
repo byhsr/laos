@@ -180,6 +180,7 @@ pub(crate) fn build_manager_system_prompt(conn: &Connection, name: &str, mcp_too
   tool_list.push_str("- remember: Save a durable fact or standing rule about the user (\"never use emoji\", \"I prefer IST\") — kind 'policy' for a never/always rule, 'preference' for a taste, 'semantic' for a plain fact.\n");
   tool_list.push_str("- items: The USER's notes, todos, reminders, goals, resources and habits — anything with a when or a do. Full CRUD (add, list, update, complete, delete). Reminders are scheduled and pushed to Telegram. This is their store, not yours.\n");
   tool_list.push_str("- scratchpad: Your own private working area for this chat — thinking, drafts, intermediate findings, anything you need to keep track of while you work. Keep your own working notes here, never in items. Actions: read, append, write, clear.\n");
+  tool_list.push_str("- document: Write a document (an artifact) the user can read and download in the chat — a report, spec, plan, README, article or snippet. Put the full content here rather than in your reply. Actions: create, update, read, list, delete.\n");
   tool_list.push_str("- current_datetime: The current date and time in the user's configured timezone (plus tomorrow/yesterday). Use it before scheduling or reasoning about 'now'.\n");
   tool_list.push_str("- monid: Reach hundreds of external data tools (search/scraping/enrichment/media) through Monid. discover → inspect → run. Needs the Monid CLI installed and keyed.\n");
   tool_list.push_str("- yt_dlp: Download a video, or extract its audio (mp3), from a URL with the yt-dlp CLI. Needs yt-dlp on PATH.\n");
@@ -354,6 +355,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     t.push(crate::tools::remember_tool(app, &manager.id));
     t.push(crate::tools::items_tool(app, &manager.id));
     t.push(crate::tools::scratchpad_tool(app));
+    t.push(crate::tools::document_tool(app));
     t.push(crate::tools::current_time_tool(app));
     t.push(Box::new(crate::tools::MonidTool));
     t.push(Box::new(crate::tools::YtDlpTool));

@@ -107,6 +107,8 @@ pub(crate) fn build_tools(app: &AppHandle, conn: &Connection, agent: &AgentReque
   tools.push(crate::tools::remember_tool(app, &agent.id));
   tools.push(crate::tools::items_tool(app, &agent.id));
   tools.push(crate::tools::scratchpad_tool(app));
+  // And the document tool: long-form writing the user can read and download.
+  tools.push(crate::tools::document_tool(app));
   // And the clock, so a turn that depends on "now" doesn't have to guess the date.
   tools.push(crate::tools::current_time_tool(app));
   Ok(tools)

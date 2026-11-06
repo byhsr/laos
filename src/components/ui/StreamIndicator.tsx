@@ -39,6 +39,16 @@ export function StreamIndicator({ streaming, steps = [] }: { streaming: boolean;
     );
   }
 
+  // The bar leads with the latest *concrete* step — an action, the write phase, a
+  // wait — not the generic "Working out the next step" planning line or the model's
+  // raw reasoning. Those are abstracted activity and stay in the trace (the
+  // chevron), so the headline describes what is actually happening instead of
+  // sitting on the placeholder while the model plans.
+  let headIdx = steps.length - 1;
+  for (let i = steps.length - 1; i >= 0; i--) { if (steps[i].kind !== 'think') { headIdx = i; break; } }
+  const head = steps[headIdx];
+  // A step that is no longer the newest stops counting when the next one begins.
+  const headEnd = headIdx < steps.length - 1 ? steps[headIdx + 1].at : now;
   const expandable = steps.length > 1 || !!last.streaming;
 
   return (
@@ -48,8 +58,8 @@ export function StreamIndicator({ streaming, steps = [] }: { streaming: boolean;
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-foreground/40 opacity-60" />
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-foreground/50" />
         </span>
-        <span className="min-w-0 truncate font-mono text-[11px] text-muted">{last.text}</span>
-        {secs(now - last.at) && <span className="shrink-0 font-mono text-[10px] text-muted/60">{secs(now - last.at)}</span>}
+        <span className="min-w-0 truncate font-mono text-[11px] text-muted">{head.text}</span>
+        {secs(headEnd - head.at) && <span className="shrink-0 font-mono text-[10px] text-muted/60">{secs(headEnd - head.at)}</span>}
         {expandable && (
           <button
             type="button"

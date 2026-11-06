@@ -112,6 +112,9 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   // Each chat's private workspace for an agent: thinking, drafts and working notes,
   // kept out of the user's own items. Keyed by scope (`session:<id>` / `agent:<id>`).
   conn.execute("CREATE TABLE IF NOT EXISTS scratchpads (scope TEXT PRIMARY KEY, content TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
+  // Chat documents ("artifacts"): long-form files an agent writes in a chat for the
+  // user to read and download, kept apart from their items and the knowledge base.
+  conn.execute("CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL DEFAULT '', session_id TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'markdown', content TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
   // Model roles: pin classifier / embedding to a specific model (see provider.rs).
   conn.execute("CREATE TABLE IF NOT EXISTS model_roles (role TEXT PRIMARY KEY, model_id TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
   // Custom provider adapters (Settings → Providers). Built-ins live in code; this
