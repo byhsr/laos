@@ -122,6 +122,12 @@ export function ManagerView({ agent, agents, integrations, models, tools, openCo
     loadHistory(managerId);
     listChatSessions(managerId).then(setSessions).catch(() => {});
   }, [managerId, loadHistory]);
+  // The list is otherwise only read once, so a chat started this session would not
+  // show until a relaunch. Reload it whenever the info panel (which holds it) opens.
+  useEffect(() => {
+    if (panel !== 'info') return;
+    listChatSessions(managerId).then(setSessions).catch(() => {});
+  }, [panel, managerId]);
   useStickToBottom(scrollRef, messages);
   // "Settings" from the sidebar's context menu reopens the config panel.
   useEffect(() => {

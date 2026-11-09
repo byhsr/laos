@@ -162,7 +162,8 @@ async fn run_agent_task(app: &AppHandle, assigned_agent: &str, input: &str, cont
   let Some(a) = agent else { return Err("Assigned agent not found.".into()) };
   let prompt = if context.is_empty() { input.to_string() } else { format!("Context:\n{context}\n\nTask:\n{input}") };
   let mut events = Vec::new();
-  run_agent_once_structured(app, &a, &prompt, None, &mut events, false, cancel_key).await.map(|(out, _, _)| out)
+  run_agent_once_structured(app, &a, &prompt, None, &mut events, false, cancel_key).await
+    .map(|(out, _, _)| if out.trim().is_empty() { "The agent returned no text.".to_string() } else { out })
 }
 
 // Runs one captured tool call for the agent that asked for it. The originating
@@ -178,7 +179,9 @@ async fn run_tool_task(app: &AppHandle, assigned_agent: &str, tool: &str, tool_a
   let args: serde_json::Value = serde_json::from_str(tool_args).unwrap_or_else(|_| serde_json::json!({}));
   let sid = if session_id.is_empty() { None } else { Some(session_id) };
   let out = crate::chat::execute_tool(app, &tools, false, tool, &args, sid, assigned_agent).await;
-  Ok(out.text)
+  // A blank result must still say something: "came back empty" with no reason is
+  // what made a finished task look broken.
+  Ok(if out.text.trim().is_empty() { format!("{tool} returned no output.") } else { out.text })
 }
 
 // Records the outcome, notifies, leaves a durable trace in the chat session, and

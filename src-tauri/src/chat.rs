@@ -253,6 +253,10 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   // recorded token counts reflect the whole turn, not just the last call.
   let mut prompt_tokens = 0u64;
   let mut completion_tokens = 0u64;
+  // A model can answer during a tool round (no tool call, just text). The final
+  // stream re-asks, but if that comes back empty this is the fallback so the user
+  // never gets "(empty reply)".
+  let mut pending_text = String::new();
   if !tools.is_empty() {
     let client = http::client();
     for _ in 0..MAX_TOOL_ROUNDS {
@@ -307,8 +311,8 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
         let content = parsed["message"]["content"].as_str()
           .or_else(|| parsed["choices"][0]["message"]["content"].as_str())
           .unwrap_or("");
-        let (_, text_calls) = parse_text_tool_calls(content);
-        if text_calls.is_empty() { break; }
+        let (cleaned, text_calls) = parse_text_tool_calls(content);
+        if text_calls.is_empty() { pending_text = cleaned; break; }
         // Text-protocol models have no `tool` role or call ids: hand the model its
         // own call back, then each result as a user turn.
         messages.push(serde_json::json!({ "role": "assistant", "content": content }));
@@ -456,6 +460,14 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     let tail = leak.finish();
     if !tail.is_empty() { delta.push_str(&tail); on_event.send(tail).map_err(|e| e.to_string())?; }
     if !delta.trim().is_empty() { break; }
+  }
+
+  // If the final stream produced nothing — a provider that streams no text, or a
+  // text-protocol reply the leak filter held back — fall back to whatever the
+  // model said during a tool round, so the turn is never left as "(empty reply)".
+  if delta.trim().is_empty() && !pending_text.trim().is_empty() {
+    delta = pending_text;
+    on_event.send(delta.clone()).map_err(|e| e.to_string())?;
   }
 
   // Explicit "remember this": store it the moment it's said, in the agent's own

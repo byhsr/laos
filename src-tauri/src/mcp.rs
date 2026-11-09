@@ -56,17 +56,16 @@ fn parse_env(s: &str) -> serde_json::Value {
 }
 
 // Environment variables are the usual place for tokens (e.g. NOTION_TOKEN).
-fn is_secret_key(k: &str) -> bool {
-  let lk = k.to_lowercase();
-  lk.contains("token") || lk.contains("key") || lk.contains("secret") || lk.contains("password")
-}
+// Masking must match the vault's protection rule exactly, or a secret it stored
+// as a sentinel (an `auth`/`bearer`-named var) would be shown as the raw
+// `__vault__` marker instead of the "set" dot.
 
 // Never hand real secret values to the frontend — only a "set" marker.
 fn mask_env(env: &serde_json::Value) -> serde_json::Value {
   let mut out = serde_json::Map::new();
   if let Some(obj) = env.as_object() {
     for (k, v) in obj {
-      if is_secret_key(k) && v.as_str().map(|s| !s.is_empty()).unwrap_or(false) {
+      if crate::vault::is_secret_name(k) && v.as_str().map(|s| !s.is_empty()).unwrap_or(false) {
         out.insert(k.clone(), serde_json::json!(MASK));
       } else {
         out.insert(k.clone(), v.clone());
