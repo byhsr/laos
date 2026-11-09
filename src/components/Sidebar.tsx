@@ -6,6 +6,7 @@ import { Tooltip } from './ui/Tooltip';
 import { ContextMenuAt } from './ui/ContextMenu';
 import { agentMenuItems } from './ui/agentMenu';
 import { DeleteConfirm } from './ui/DeleteConfirm';
+import { useAgentDrag } from '../hooks/useAgentDrag';
 
 // The sidebar is purely the agent chat list: the lead agent always holds the
 // first slot, pinned agents follow. Right-click a row for its actions. Every
@@ -40,11 +41,16 @@ export function Sidebar({ agents, view, selectedAgentId, onOpen, onOpenSplit, on
       <nav className={`grid min-h-0 gap-0.5 overflow-x-hidden overflow-y-auto ${collapsed ? 'justify-items-center' : ''}`}>
         {list.length === 0 && !collapsed && <p className="m-0 px-1 font-mono text-[10px] leading-relaxed text-muted">no agents yet — use + in the rail.</p>}
         {list.map((a) => {
-          const active = a.isManager ? view === 'manager' : (view === 'agent' && selectedAgentId === a.id);
+          const active = a.isManager
+            ? (view === 'manager' || (view === 'agent' && selectedAgentId === a.id))
+            : (view === 'agent' && selectedAgentId === a.id);
           const button = (
             <button
               className={collapsed ? rowCollapsed(active) : row(active)}
               onClick={() => onOpen(a.id)}
+              draggable
+              onDragStart={() => useAgentDrag.getState().start(a.id)}
+              onDragEnd={() => useAgentDrag.getState().end()}
               onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, agent: a }); }}
             >
               <AgentAvatar agent={a} size={collapsed ? 24 : 20} />

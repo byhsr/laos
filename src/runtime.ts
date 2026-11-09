@@ -654,6 +654,10 @@ export type ChatDocument = {
 export async function listDocuments(agentId: string, sessionId: string): Promise<ChatDocument[]> {
   try { return await invoke<ChatDocument[]>('list_documents', { agentId, sessionId }); } catch { return []; }
 }
+// Saves a chat reply as an artifact — the message's "keep" action.
+export async function createDocument(agentId: string, sessionId: string, title: string, kind: string, content: string): Promise<ChatDocument> {
+  return await invoke<ChatDocument>('create_document', { agentId, sessionId, title, kind, content });
+}
 export async function deleteDocument(id: string): Promise<void> {
   await invoke('delete_document', { id });
 }

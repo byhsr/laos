@@ -6,6 +6,7 @@ import { DeleteConfirm } from '../ui/DeleteConfirm';
 import { ContextMenuAt } from '../ui/ContextMenu';
 import { agentMenuItems } from '../ui/agentMenu';
 import { Button, IconButton } from '../ui/Button';
+import { useAgentDrag } from '../../hooks/useAgentDrag';
 
 export function AgentsView({ agents, onOpen, onOpenSplit, onCreate, onDelete, onSettings, onTogglePin }: {
   agents: Agent[]; onOpen: (id: string) => void; onOpenSplit: (id: string) => void; onCreate: () => void; onDelete: (id: string) => void;
@@ -40,6 +41,9 @@ export function AgentsView({ agents, onOpen, onOpenSplit, onCreate, onDelete, on
               key={a.id}
               className="group relative cursor-pointer overflow-hidden rounded-xl border border-border bg-surface text-left transition-colors duration-150 hover:bg-background"
               onClick={() => onOpen(a.id)}
+              draggable
+              onDragStart={() => useAgentDrag.getState().start(a.id)}
+              onDragEnd={() => useAgentDrag.getState().end()}
               onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, agent: a }); }}
               onMouseEnter={() => setHoveredId(a.id)}
               onMouseLeave={() => setHoveredId((h) => (h === a.id ? null : h))}

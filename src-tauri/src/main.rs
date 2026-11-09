@@ -315,6 +315,7 @@ fn main() {
       // Chat documents ("artifacts") — the files an agent writes for the user
       documents::list_documents,
       documents::get_document,
+      documents::create_document,
       documents::delete_document,
       // Reminders + habits (scheduler)
       reminders::item_due,

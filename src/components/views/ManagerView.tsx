@@ -21,20 +21,22 @@ import { ScribbleLayer } from '../chat/ScribbleLayer';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { MessageBubble } from '../chat/MessageBubble';
 import { ActivityPanel } from '../chat/ActivityPanel';
-import { DocumentsSection } from '../chat/DocumentsSection';
+import { ArtifactsMenu } from '../chat/ArtifactsMenu';
 import { useActivity } from '../../hooks/useActivity';
 import { toast } from '../../hooks/useToast';
-import { deleteChatSession, getChatSession, getScratchpad, listChatSessions, rateTurn } from '../../runtime';
+import { deleteChatSession, getChatSession, getScratchpad, listChatSessions, rateTurn, createDocument } from '../../runtime';
 
 const fieldLabel = `${FIELD_LABEL_CLS} mt-4`;
 
 // The lead agent (Laos). Like every agent window, chat is the surface and the
 // secondary views (info, config) open as a side window from the ⋯ menu.
-export function ManagerView({ agents, integrations, models, tools, openConfigRequest = 0 }: { agents: Agent[]; integrations: Integration[]; models: ModelConfig[]; tools: Tool[]; openConfigRequest?: number }) {
-  const managerId = agents.find((a) => a.isManager)?.id ?? 'manager';
+export function ManagerView({ agent, agents, integrations, models, tools, openConfigRequest = 0, docked = true }: { agent?: Agent; agents: Agent[]; integrations: Integration[]; models: ModelConfig[]; tools: Tool[]; openConfigRequest?: number; docked?: boolean }) {
+  // `agent` is the Manager's own record when it is opened in a split pane; as the
+  // full-root view it is found on the roster like before.
+  const managerId = agent?.id ?? agents.find((a) => a.isManager)?.id ?? 'manager';
   // The lead agent's configured name is the only name shown anywhere — nothing
   // user-facing hardcodes it.
-  const leadName = agents.find((a) => a.isManager)?.name?.trim() || 'Manager';
+  const leadName = (agent ?? agents.find((a) => a.isManager))?.name?.trim() || 'Manager';
   // Read the manager's own conversation directly (like AgentWindow), so the
   // visible chat survives tab switches regardless of the shared currentAgentId.
   const messages = useManagerStore(useShallow((s) => s.conversations[managerId] ?? []));
@@ -82,7 +84,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
   }, [panel, sessionId, managerId]);
   const persistAgent = useAgentsStore((s) => s.persistAgent);
 
-  const managerAgent = agents.find((a) => a.isManager) ?? {
+  const managerAgent = agent ?? agents.find((a) => a.isManager) ?? {
     id: 'manager', name: 'Manager', objective: '', model: models.find((m) => m.enabled)?.id ?? '',
     reasoning: models.find((m) => m.enabled)?.reasoning ?? 'auto', toolIds: [],
     integrations: [], skillIds: [], memory: true, permissions: ['network'], homePath: 'agents/manager', color: '', x: 0, y: 0, isManager: true,
@@ -105,7 +107,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
   ];
 
   const openConfig = () => {
-    const m = agents.find((a) => a.isManager) ?? managerAgent;
+    const m = agent ?? agents.find((a) => a.isManager) ?? managerAgent;
     setMgrDraft({ ...m });
     setPanel('config');
   };
@@ -175,6 +177,15 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
     await send(text, managerAgent, attachments);
   };
 
+  // Save a reply as an artifact in this chat (the message's "keep" action).
+  const keepReply = (content: string) => {
+    if (!sessionId) { toast('open a chat first', 'error'); return; }
+    const title = content.replace(/[#*`>_~\-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Kept reply';
+    void createDocument(managerId, sessionId, title, 'markdown', content)
+      .then(() => toast('kept as artifact', 'success'))
+      .catch((e) => toast(e instanceof Error ? e.message : String(e), 'error'));
+  };
+
   const activeTasks = tasks.filter((t) => t.status === 'pending' || t.status === 'running');
 
   const menuItems: MenuItem[] = [
@@ -193,7 +204,8 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
 
   return (
     <div className="relative flex h-full flex-col gap-1">
-      <header className="flex shrink-0 items-center justify-end">
+      <header className="flex shrink-0 items-center justify-end gap-1">
+        <ArtifactsMenu agentId={managerId} sessionId={sessionId} />
         <ContextMenu items={menuItems} />
       </header>
 
@@ -216,9 +228,9 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
                   onRate={m.role === 'assistant' && i === messages.length - 1 && !busy
                     ? (signal) => void rateTurn(managerId, signal, m.content)
                     : undefined}
+                  onKeep={m.role === 'assistant' ? () => keepReply(m.content) : undefined}
                 />
               ))}
-              <DocumentsSection agentId={managerId} sessionId={sessionId} />
             </div>
           </div>
           <ChatComposer
@@ -232,7 +244,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
             onReasoningChange={(r) => void persistAgent({ ...managerAgent, reasoning: r })}
           />
         </div>
-        {activityOpen && <ActivityPanel agentId={managerId} onStopTurn={() => cancel('pause')} />}
+        {docked && activityOpen && <ActivityPanel agentId={managerId} onStopTurn={() => cancel('pause')} />}
       </div>
 
       {panel === 'scratchpad' && (
@@ -331,7 +343,7 @@ export function ManagerView({ agents, integrations, models, tools, openConfigReq
                         useManagerStore.getState().resumeSession(managerId, s.id, entries);
                         setPanel(null);
                       }}><CornerDownLeft size={11} /></button>
-                      <button className="cursor-pointer border-0 bg-transparent p-1 text-muted transition-colors hover:text-danger" onClick={async () => { await deleteChatSession(s.id); listChatSessions(agents.find((a) => a.isManager)?.id ?? 'manager').then(setSessions); }}><Trash2 size={11} /></button>
+                      <button className="cursor-pointer border-0 bg-transparent p-1 text-muted transition-colors hover:text-danger" onClick={async () => { await deleteChatSession(s.id); listChatSessions(managerId).then(setSessions); }}><Trash2 size={11} /></button>
                     </div>
                   ))}
                 </div>

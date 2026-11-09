@@ -111,3 +111,15 @@ pub fn delete_document(app: AppHandle, id: String) -> Result<(), String> {
   if let Some(d) = doc { emit_changed(&app, &d, true); }
   Ok(())
 }
+
+// Saves a chat reply as an artifact, from the message's "keep" action. Same store
+// the `document` tool writes to, so it appears in the artifacts menu at once.
+#[tauri::command]
+pub fn create_document(app: AppHandle, agent_id: String, session_id: String, title: String, kind: String, content: String) -> Result<Document, String> {
+  if content.trim().is_empty() { return Err("Nothing to keep.".into()); }
+  let conn = db(&app)?;
+  let title = if title.trim().is_empty() { "Kept reply".to_string() } else { title.trim().to_string() };
+  let doc = create(&conn, &agent_id, &session_id, &title, &kind, &content)?;
+  emit_changed(&app, &doc, false);
+  Ok(doc)
+}

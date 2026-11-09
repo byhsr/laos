@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { FileText, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { BookmarkPlus, Copy, FileText, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { Markdown } from '../ui/Markdown';
 import { StreamIndicator } from '../ui/StreamIndicator';
 import { IconButton } from '../ui/Button';
+import { toast } from '../../hooks/useToast';
 import type { Attachment, ChatStep } from '../../types';
 
 // One message shape for both chat surfaces. Your own turns take the surface
@@ -15,7 +16,7 @@ const fmtMs = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000
 // send paths so the stored entry isn't empty either.
 export const EMPTY_REPLY = '(empty reply)';
 
-export function MessageBubble({ role, content, attachments, streaming, steps, meta, time, durationMs, ttftMs, onRate }: {
+export function MessageBubble({ role, content, attachments, streaming, steps, meta, time, durationMs, ttftMs, onRate, onKeep }: {
   role: 'user' | 'assistant';
   content: string;
   attachments?: Attachment[];
@@ -26,6 +27,7 @@ export function MessageBubble({ role, content, attachments, streaming, steps, me
   durationMs?: number;
   ttftMs?: number;
   onRate?: (signal: 'up' | 'down') => void;
+  onKeep?: () => void;
 }) {
   const mine = role === 'user';
   const [rated, setRated] = useState<'up' | 'down' | null>(null);
@@ -37,6 +39,11 @@ export function MessageBubble({ role, content, attachments, streaming, steps, me
     if (rated) return;
     setRated(signal);
     onRate?.(signal);
+  };
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(content); toast('copied', 'success'); }
+    catch { toast('could not copy', 'error'); }
   };
 
   return (
@@ -75,14 +82,26 @@ export function MessageBubble({ role, content, attachments, streaming, steps, me
           <span className={`mt-1 px-1 font-mono text-[9px] text-muted/70 ${mine ? 'text-right' : ''}`}>{timing}</span>
         )}
 
-        {!mine && onRate && !streaming && content && (
+        {!streaming && content && (
           <div className={`mt-1 flex items-center gap-0.5 transition-opacity ${rated ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-            <IconButton label="good reply" className="h-6 w-6" disabled={rated !== null} onClick={() => rate('up')}>
-              <ThumbsUp size={11} className={rated === 'up' ? 'text-foreground' : ''} />
+            <IconButton label="copy" className="h-6 w-6" onClick={() => void copy()}>
+              <Copy size={11} />
             </IconButton>
-            <IconButton label="bad reply" className="h-6 w-6" disabled={rated !== null} onClick={() => rate('down')}>
-              <ThumbsDown size={11} className={rated === 'down' ? 'text-foreground' : ''} />
-            </IconButton>
+            {!mine && onKeep && (
+              <IconButton label="keep as artifact" className="h-6 w-6" onClick={onKeep}>
+                <BookmarkPlus size={11} />
+              </IconButton>
+            )}
+            {!mine && onRate && (
+              <>
+                <IconButton label="good reply" className="h-6 w-6" disabled={rated !== null} onClick={() => rate('up')}>
+                  <ThumbsUp size={11} className={rated === 'up' ? 'text-foreground' : ''} />
+                </IconButton>
+                <IconButton label="bad reply" className="h-6 w-6" disabled={rated !== null} onClick={() => rate('down')}>
+                  <ThumbsDown size={11} className={rated === 'down' ? 'text-foreground' : ''} />
+                </IconButton>
+              </>
+            )}
           </div>
         )}
       </div>

@@ -40,9 +40,7 @@ const readWidth = () => {
 };
 const write = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* ignore */ } };
 
-// Set once the user closes the panel, so a background job doesn't keep re-opening
-// something they dismissed.
-let userClosed = false;
+// The panel is off until the user toggles it — a background job never opens it.
 let turnSeq = 0;
 
 type TaskStart = { taskId: string; chatAgentId: string; assignedAgent?: string; sessionId: string; kind: string; tool: string; label: string };
@@ -54,7 +52,6 @@ type ActivityState = {
   width: number;
   setOpen: (open: boolean) => void;
   toggle: () => void;
-  openPanel: () => void;
   setWidth: (w: number) => void;
   startTurn: (agentId: string, sessionId: string, title: string) => string;
   stepTurn: (id: string, ev: StreamStep) => void;
@@ -80,17 +77,10 @@ export const useActivity = create<ActivityState>((set, get) => ({
   width: readWidth(),
 
   setOpen: (open) => {
-    if (!open) userClosed = true;
     write(OPEN_KEY, open ? '1' : '0');
     set({ open });
   },
   toggle: () => get().setOpen(!get().open),
-  // Auto-open for a new job — unless the user closed the panel already.
-  openPanel: () => {
-    if (userClosed || get().open) return;
-    write(OPEN_KEY, '1');
-    set({ open: true });
-  },
   setWidth: (w) => {
     const width = Math.max(MIN_WIDTH, Math.min(Math.round(w), MAX_WIDTH));
     write(WIDTH_KEY, String(width));

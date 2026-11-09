@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import type { Agent, CreateKind, DrawerForm, View } from './types';
 import { emptyModel, emptyProject, emptyScript, emptySkill, emptyTool } from './types';
@@ -52,10 +52,11 @@ import { toast } from './hooks/useToast';
 import { syncBrowserTheme } from './theme';
 import { VoiceOverlay } from './components/voice/VoiceOverlay';
 import { useActiveChat } from './hooks/useActiveChat';
-import { useManagerStore, type ChatEntry } from './hooks/useManager';
+import { useManagerStore } from './hooks/useManager';
 import { useActivity } from './hooks/useActivity';
 import { useVoice } from './hooks/useVoice';
 import { useNotifications } from './hooks/useNotifications';
+import { useAgentDrag } from './hooks/useAgentDrag';
 import { checkForUpdate, getAppSettings, onAgentsChanged, onBrainNotice, onBrowserEvent, onNotification, onTaskFinished, onTaskStarted, onVoiceToggle, type UpdateInfo } from './runtime';
 
 // Every view lives in a pane that scrolls internally — the shell itself never
@@ -84,6 +85,20 @@ function PaneBar({ agent, focused, onFocus, onClose }: { agent: Agent; focused: 
       <span className={`min-w-0 flex-1 truncate font-mono text-[11px] ${focused ? 'text-foreground' : 'text-muted'}`}>{agent.name}</span>
       <button type="button" className={GHOST_BTN} onClick={onClose} aria-label={`close ${agent.name}`}><X size={12} /></button>
     </header>
+  );
+}
+
+// A drop slot between two agent windows, shown only while an agent is being
+// dragged. Dropping here opens the dragged agent at this position.
+function DropGap({ onDrop }: { onDrop: () => void }) {
+  const [over, setOver] = useState(false);
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => { e.preventDefault(); setOver(false); onDrop(); }}
+      className={`h-full w-2 shrink-0 transition-colors ${over ? 'bg-foreground/40' : 'bg-foreground/10'}`}
+    />
   );
 }
 
@@ -137,6 +152,9 @@ export default function App() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   // The agent windows open side by side, in order.
   const [paneIds, setPaneIds] = useState<string[]>([]);
+  // The agent being dragged into the row right now (from the sidebar or the
+  // agents grid), or null. Drives the drop slots while a drag is in flight.
+  const dragId = useAgentDrag((s) => s.id);
 
   // A plain open navigates within the current column: focus the agent if its
   // window is already open, otherwise take over the focused slot rather than
@@ -187,13 +205,28 @@ export default function App() {
     if (id === selectedAgentId) setSelectedAgentId(next[Math.min(at, next.length - 1)] ?? null);
   }
 
-  // Append a message to an agent's own chat without touching the focused view —
-  // used to surface work delegated to that agent while it runs.
-  const appendChat = (agentId: string, entry: ChatEntry) => {
-    useManagerStore.setState((s) => ({
-      conversations: { ...s.conversations, [agentId]: [...(s.conversations[agentId] ?? []), entry] },
-    }));
-  };
+  // Where a dropped agent lands: inserted at the drop position, moved if it is
+  // already open, or — when the row is full — overwriting the pane at that slot.
+  function dropAgentAt(index: number, id: string) {
+    setPaneIds((prev) => {
+      if (prev.includes(id)) {
+        const next = prev.filter((x) => x !== id);
+        next.splice(Math.max(0, Math.min(index, next.length)), 0, id);
+        return next;
+      }
+      if (prev.length >= MAX_PANES) {
+        const next = [...prev];
+        next[Math.max(0, Math.min(index, next.length - 1))] = id;
+        return next;
+      }
+      const next = [...prev];
+      next.splice(Math.max(0, Math.min(index, next.length)), 0, id);
+      return next;
+    });
+    setSelectedAgentId(id);
+    setView('agent');
+    useAgentDrag.getState().end();
+  }
 
   useEffect(() => {
     loadAgents(); loadModels(); loadTools(); loadSkills(); loadScripts(); loadProjects(); loadWorkflows(); loadIntegrations(); loadRuns(); loadProviders();
@@ -271,23 +304,19 @@ export default function App() {
   // where they are rather than waiting for the Memory view to be opened.
   useEffect(() => onBrainNotice((n) => toast(`${n.title} (${n.count})`, 'info')), []);
 
-  // A background job shows in the chat's activity panel the moment it starts, and a
-  // job the Manager handed to another agent is surfaced where it runs: the assigned
-  // agent's own chat gets the task, and its window is brought forward (focused)
-  // instead of left in the background, so the delegated work is actually visible in
-  // that agent's chat and activity while it runs.
+  // A background job shows in the chat's activity panel the moment it starts — and a
+  // job the Manager handed to another agent also shows in the assigned agent's own
+  // panel, because the activity item carries its assignedAgent. Its window is opened
+  // into a free slot so the work is watchable, without yanking the user out of the
+  // chat they are in. The task itself is the Manager's internal instruction: it is
+  // never injected into the chat as the user's own message.
   useEffect(() => onTaskStarted((t) => {
     useActivity.getState().startTask(t);
-    useActivity.getState().openPanel();
     if (!t.assignedAgent || t.assignedAgent === t.chatAgentId) return;
     // The agent may have been created earlier in this same turn, so it can still be
     // missing from the roster.
     if (!agents.some((a) => a.id === t.assignedAgent)) void loadAgents();
-    appendChat(t.assignedAgent, { role: 'user', content: t.label, time: new Date().toLocaleTimeString() });
-    // Give it a window and focus it (taking over the focused slot if the row is
-    // already full), then show the agent view so the work is actually on screen.
-    splitAgent(t.assignedAgent);
-    setView('agent');
+    showWork(t.assignedAgent);
   }), [agents]);
 
   // The Manager creates and deletes agents from a chat turn, and the roster is only
@@ -307,12 +336,6 @@ export default function App() {
     if (t.status === 'cancelled') return;
     if (handledTasks.current.has(t.taskId)) return;
     handledTasks.current.add(t.taskId);
-    // The result lands in the assigned agent's chat too, so the window opened to
-    // watch the delegated work shows how it ended.
-    if (t.assignedAgent && t.assignedAgent !== t.chatAgentId) {
-      const body = t.result.trim() || (t.status === 'failed' ? 'The task failed.' : 'The task finished with no output.');
-      appendChat(t.assignedAgent, { role: 'assistant', content: body, time: new Date().toLocaleTimeString() });
-    }
     const agent = agents.find((a) => a.id === t.chatAgentId) ?? agents.find((a) => a.isManager);
     if (agent) void useManagerStore.getState().takeTaskResult(agent, t.sessionId, t.result);
   }), [agents]);
@@ -422,12 +445,8 @@ export default function App() {
   };
 
   // "open in split view" from an agent's context menu: place it beside the current
-  // window instead of replacing it.
+  // window instead of replacing it. The Manager splits too — it becomes a pane.
   const openAgentSplit = (id: string) => {
-    if (agents.find((a) => a.id === id)?.isManager) {
-      setView('manager');
-      return;
-    }
     splitAgent(id);
     setView('agent');
     setConfigRequest((r) => ({ id, n: r.n + 1, tab: 'chat' }));
@@ -507,7 +526,7 @@ export default function App() {
         </div>
 
         {/* Right section: free canvas — content is full-bleed */}
-        <main className="app-no-drag min-h-0 min-w-0 flex-1 overflow-hidden">
+        <main className="app-no-drag relative min-h-0 min-w-0 flex-1 overflow-hidden">
           {/* Views stay mounted; hidden ones keep their live state (chats, streaming). */}
           <Pane active={view === 'home'} label="home"><HomeView agents={agents} tools={tools} workflows={workflows} runs={runs} onOpen={openAgent} onCreate={addAgent} onOpenWorkflow={(id) => { setView('builder'); setWorkflowToOpen(id); }} onOpenUsage={() => setView('usage')} /></Pane>
           <Pane active={view === 'graph'} label="graph">
@@ -581,16 +600,37 @@ export default function App() {
               strip only appears once the row is wider than one. */}
           <div className={`h-full min-h-0 pb-4 ${view === 'agent' ? 'flex flex-row' : 'hidden'}`}>
             {panes.map((a, i) => (
-              <div key={a.id} className={`flex h-full min-h-0 min-w-0 flex-1 flex-col ${i > 0 ? 'border-l border-border' : ''}`}>
-                {panes.length > 1 && <PaneBar agent={a} focused={a.id === selectedAgentId} onFocus={() => setSelectedAgentId(a.id)} onClose={() => closePane(a.id)} />}
-                <div className="min-h-0 flex-1">
-                  <ErrorBoundary label="agent">
-                    <AgentWindow key={a.id} agent={a} tools={tools} skills={skills} models={models} integrations={integrations} runs={runs} onSave={persistAgent} docked={a.id === selectedAgentId} onDelete={async (id) => { await deleteAgent(id); closePane(id); if (paneIds.filter((p) => p !== id).length === 0) setView('agents'); }} onRun={handleRun} onNavigate={setView} tabRequest={{ tab: configRequest.tab, n: configRequest.id === a.id ? configRequest.n : 0 }} />
-                  </ErrorBoundary>
+              <Fragment key={a.id}>
+                {dragId && <DropGap onDrop={() => dropAgentAt(i, dragId)} />}
+                <div
+                  className={`flex h-full min-h-0 min-w-0 flex-1 flex-col ${i > 0 ? 'border-l border-border' : ''}`}
+                  onDragOver={(e) => { if (dragId) e.preventDefault(); }}
+                  onDrop={(e) => { if (dragId) { e.preventDefault(); dropAgentAt(i, dragId); } }}
+                >
+                  {panes.length > 1 && <PaneBar agent={a} focused={a.id === selectedAgentId} onFocus={() => setSelectedAgentId(a.id)} onClose={() => closePane(a.id)} />}
+                  <div className="min-h-0 flex-1">
+                    <ErrorBoundary label="agent">
+                      {a.isManager
+                        ? <ManagerView agent={a} agents={agents} integrations={integrations} models={models} tools={tools} docked={a.id === selectedAgentId} openConfigRequest={configRequest.id === a.id ? configRequest.n : 0} />
+                        : <AgentWindow key={a.id} agent={a} tools={tools} skills={skills} models={models} integrations={integrations} runs={runs} onSave={persistAgent} docked={a.id === selectedAgentId} onDelete={async (id) => { await deleteAgent(id); closePane(id); if (paneIds.filter((p) => p !== id).length === 0) setView('agents'); }} onRun={handleRun} onNavigate={setView} tabRequest={{ tab: configRequest.tab, n: configRequest.id === a.id ? configRequest.n : 0 }} />}
+                    </ErrorBoundary>
+                  </div>
                 </div>
-              </div>
+              </Fragment>
             ))}
+            {dragId && <DropGap onDrop={() => dropAgentAt(panes.length, dragId)} />}
           </div>
+          {/* Dropped from the sidebar/grid while a non-agent view is up: open it in
+              the split row and switch to it. */}
+          {dragId && view !== 'agent' && (
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); dropAgentAt(paneIds.length, dragId); }}
+              className="absolute inset-3 z-40 grid place-items-center rounded-xl border border-dashed border-foreground/50 bg-background/70 font-mono text-[11px] text-muted"
+            >
+              drop to open in split view
+            </div>
+          )}
         </main>
       </div>
 

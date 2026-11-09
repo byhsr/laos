@@ -118,7 +118,7 @@ pub(crate) async fn run_task_inner(app: &AppHandle, task_id: &str) {
   } else {
     run_agent_task(app, &assigned_agent, &input, &context).await
   };
-  finish(app, task_id, &assigned_agent, &input, &session_id, &chat_agent_id, outcome);
+  finish(app, task_id, &assigned_agent, &input, &session_id, &chat_agent_id, &kind, outcome);
 }
 
 type TaskRow = (String, String, String, String, String, String, String, String);
@@ -160,7 +160,7 @@ async fn run_tool_task(app: &AppHandle, assigned_agent: &str, tool: &str, tool_a
 
 // Records the outcome, notifies, leaves a durable trace in the chat session, and
 // tells the UI so it can run the agent's follow-up summary.
-fn finish(app: &AppHandle, task_id: &str, assigned_agent: &str, input: &str, session_id: &str, chat_agent_id: &str, outcome: Result<String, String>) {
+fn finish(app: &AppHandle, task_id: &str, assigned_agent: &str, input: &str, session_id: &str, chat_agent_id: &str, kind: &str, outcome: Result<String, String>) {
   let (status, result) = match outcome {
     Ok(out) => ("completed", out),
     Err(e) => ("failed", format!("Error: {e}")),
@@ -173,7 +173,11 @@ fn finish(app: &AppHandle, task_id: &str, assigned_agent: &str, input: &str, ses
       let _ = crate::memory::append_session_message(&conn, session_id, chat_agent_id, "system", &format!("Background task {task_id} {status}:\n{result}"));
     }
   }
-  crate::notify::notify_and_push(app, "task", &format!("task {status}"), &format!("{assigned_agent}: {input}"), "task", task_id);
+  // Only a delegated agent task earns an OS notification. A backgrounded tool call
+  // is routine chatter — it would fire one on nearly every turn, so it doesn't.
+  if kind != "tool" {
+    crate::notify::notify_and_push(app, "task", &format!("task {status}"), &format!("{assigned_agent}: {input}"), "task", task_id);
+  }
   let _ = app.emit("lumin-task-finished", serde_json::json!({
     "taskId": task_id, "chatAgentId": chat_agent_id, "assignedAgent": assigned_agent,
     "sessionId": session_id, "status": status, "result": result,

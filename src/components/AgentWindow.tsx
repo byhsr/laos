@@ -20,10 +20,10 @@ import { ChatComposer } from './chat/ChatComposer';
 import { ScribbleLayer } from './chat/ScribbleLayer';
 import { MessageBubble, EMPTY_REPLY } from './chat/MessageBubble';
 import { ActivityPanel } from './chat/ActivityPanel';
-import { DocumentsSection } from './chat/DocumentsSection';
+import { ArtifactsMenu } from './chat/ArtifactsMenu';
 import { useActivity } from '../hooks/useActivity';
 import { toast } from '../hooks/useToast';
-import { listChatSessions, getChatSession, getScratchpad, createChatSession, deleteChatSession, closeSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, type StreamStep } from '../runtime';
+import { listChatSessions, getChatSession, getScratchpad, createChatSession, deleteChatSession, closeSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, createDocument, type StreamStep } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
 import { useAgentChatBackdrop, useAgentBackdrop } from '../hooks/useAgentBackdrop';
 import { readBackgroundImage } from '../hooks/useGlass';
@@ -316,6 +316,15 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     setSteps([]);
   };
 
+  // Save a reply as an artifact in this chat (the message's "keep" action).
+  const keepReply = (content: string) => {
+    if (!chatSessionId) { toast('open a chat first', 'error'); return; }
+    const title = content.replace(/[#*`>_~\-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Kept reply';
+    void createDocument(agent.id, chatSessionId, title, 'markdown', content)
+      .then(() => toast('kept as artifact', 'success'))
+      .catch((e) => toast(e instanceof Error ? e.message : String(e), 'error'));
+  };
+
   const save = async (startChat = false) => {
     if (!draft.name.trim()) { setError('Agent needs a name.'); return; }
     await onSave(draft);
@@ -361,7 +370,8 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      <header className="flex shrink-0 items-center justify-end">
+      <header className="flex shrink-0 items-center justify-end gap-1">
+        <ArtifactsMenu agentId={agent.id} sessionId={chatSessionId} />
         <ContextMenu items={menuItems} />
       </header>
 
@@ -400,9 +410,9 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
                     onRate={m.role === 'assistant' && i === messages.length - 1 && !chatBusy
                       ? (signal) => void rateTurn(agent.id, signal, m.content)
                       : undefined}
+                    onKeep={m.role === 'assistant' ? () => keepReply(m.content) : undefined}
                   />
                 ))}
-                <DocumentsSection agentId={agent.id} sessionId={chatSessionId} />
               </div>
             </div>
             {error && (

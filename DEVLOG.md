@@ -9,6 +9,51 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-09 — artifacts menu, drag-to-split, the Manager as a pane
+
+The chat document surface was rebuilt and the split view learned to accept a drag.
+
+- **Artifacts live behind one control, not inline in the conversation.** The inline
+  `DocumentsSection` card list is gone (`src/components/chat/DocumentsSection.tsx` deleted).
+  A new `ArtifactsMenu` sits in the chat header (both `AgentWindow` and `ManagerView`): a
+  dropdown of the chat's documents, one opening in a `SidePanel` to read, copy or download.
+  Same store and the same live `lumin-document-changed` refresh as before.
+- **Keep a reply as an artifact.** A new `create_document` command (`documents.rs`,
+  registered in `main.rs`) saves a reply's text into the same `documents` store the
+  `document` tool writes to. Every assistant message's action row gained "keep as artifact"
+  (`BookmarkPlus`); a copy button was added to every message's row as well.
+- **Drag an agent into the split row.** New `useAgentDrag` store — a zustand store, not a
+  `dataTransfer` payload, because WebView2's drag timing makes `dataTransfer` unreliable and
+  both the drag sources and the drop targets need to read it. Sidebar rows and the agents
+  grid cards are draggable; dropping on a `DropGap` between panes, on a pane itself, or on
+  the full-view overlay (when a non-agent view is up) opens the agent at that slot.
+  `dropAgentAt` inserts, moves or replaces while keeping the three-pane cap.
+- **The Manager is a pane like any other.** `agentMenuItems` no longer excludes the lead
+  agent from "open in split view", and `ManagerView` gained `agent` / `docked` props so it
+  can render as a split pane while the root `manager` view keeps its own instance. Only the
+  focused pane docks the (global) activity panel.
+- **Delegated work carries its conversation.** `manager::dispatch_manager_tool`'s
+  `delegate_task` / `create_task` now prepends the surrounding chat transcript (newest turns
+  first, system turns skipped, trimmed to 4000 chars) to the task context, so the assigned
+  agent understands the situation rather than the bare task. The transcript feeds only the
+  task's prompt (`tasks::run_agent_task`) — it is never written to `chat_messages`. Two
+  tests: `transcript_skips_system_turns_and_keeps_order`, `transcript_respects_the_char_budget`.
+- **Two behavior tweaks.** A backgrounded **tool** task no longer raises an OS notification
+  — only a delegated agent task does, since a tool call would fire one on nearly every turn;
+  `tasks::finish` takes the task `kind` to decide. And the activity panel no longer
+  auto-opens for a background job: it is off until the user toggles it (the `userClosed` /
+  `openPanel` state is gone), so nothing re-opens a panel the user closed.
+
+**Verified:** `npm run build` — `tsc -b` + `vite build` clean (only the pre-existing
+lottie-eval and chunk-size warnings); `cargo test` — **98 pass** (was 96; +2 transcript).
+
+**Open / to confirm at runtime:** the artifacts menu, "keep", drag-to-split, the
+Manager-as-pane and the delegated transcript are code + build only — no GUI run this
+session. `src-tauri/listenlabs_search.html` (a saved DuckDuckGo page) stays untracked and
+was left alone, as does the `next-iteration.md` brief.
+
+---
+
 ## 2026-11-05 — release 0.2.5
 
 Ships the chat documents, the stoppable jobs, the live step text, the usage view and the

@@ -14,11 +14,9 @@ export function agentMenuItems(a: Agent, handlers: {
 }): MenuItem[] {
   return [
     { key: 'open', label: 'open chat', icon: <MessageSquare size={13} />, onSelect: () => handlers.onOpen(a.id) },
-    // A split places this agent's window beside the current one. The lead agent is
-    // a root-level view, so it has no window to split.
-    ...(a.isManager ? [] : [
-      { key: 'split', label: 'open in split view', icon: <Columns2 size={13} />, onSelect: () => handlers.onOpenSplit(a.id) },
-    ]),
+    // A split places this agent's window beside the current one. The lead agent can
+    // be split too — it becomes a pane beside the others.
+    { key: 'split', label: 'open in split view', icon: <Columns2 size={13} />, onSelect: () => handlers.onOpenSplit(a.id) },
     { key: 'settings', label: 'settings', icon: <Settings size={13} />, onSelect: () => handlers.onSettings(a.id) },
     ...(a.isManager ? [] : [
       {

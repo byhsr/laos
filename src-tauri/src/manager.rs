@@ -479,6 +479,33 @@ fn model_tool_config(name: &str, config: &serde_json::Value) -> serde_json::Valu
   config
 }
 
+// The surrounding conversation, for a delegated task's context: the most recent
+// turns first, formatted "User: …" / "Assistant: …", skipping system turns (so a
+// prior task's own result isn't echoed back). Trimmed to the newest turns that fit
+// `max_chars`, so a long chat can't balloon the task prompt.
+fn transcript_from(messages: &[serde_json::Value], max_chars: usize) -> String {
+  let mut lines: Vec<String> = Vec::new();
+  let mut used = 0usize;
+  for m in messages.iter().rev() {
+    let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");
+    if role == "system" { continue; }
+    let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("").trim();
+    if content.is_empty() { continue; }
+    let label = if role == "user" { "User" } else { "Assistant" };
+    let line = format!("{label}: {content}");
+    if used > 0 && used + line.len() + 1 > max_chars { break; }
+    used += line.len() + 1;
+    lines.push(line);
+  }
+  lines.reverse();
+  lines.join("\n")
+}
+
+fn recent_transcript(conn: &rusqlite::Connection, session_id: &str, max_chars: usize) -> String {
+  let messages = crate::memory::load_session_messages(conn, session_id);
+  transcript_from(&messages, max_chars)
+}
+
 pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &serde_json::Value, session_id: Option<&str>, chat_agent_id: &str) -> Result<String, String> {
   let conn = db(app)?;
   match name {
@@ -508,8 +535,22 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
     "delegate_task" | "create_task" => {
       let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
       let task = args.get("task").and_then(|v| v.as_str()).or_else(|| args.get("input").and_then(|v| v.as_str())).unwrap_or("").to_string();
-      let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let mut context = args.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string();
       if agent_id.is_empty() || task.is_empty() { return Err("delegate_task/create_task requires agentId and input.".into()); }
+      // Pass the surrounding conversation along, so the assigned agent understands
+      // the situation and not just the bare task. The transcript only ever feeds the
+      // task's prompt (tasks::run_agent_task) — it is never written to chat_messages,
+      // so it can't surface as the user's own message.
+      if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
+        let transcript = recent_transcript(&conn, sid, 4000);
+        if !transcript.is_empty() {
+          context = if context.is_empty() {
+            format!("Conversation so far:\n{transcript}")
+          } else {
+            format!("{context}\n\nConversation so far:\n{transcript}")
+          };
+        }
+      }
       // Fire-and-forget: the task runs in the background and its result is pushed
       // back into this chat when it finishes (see tasks::finish).
       let task_id = spawn_task(app, NewTask::agent("manager", &agent_id, &task, &context, session_id, chat_agent_id))?;
@@ -889,5 +930,37 @@ mod model_tool_tests {
     let cleaned = model_tool_config("NoActions", &serde_json::json!({ "baseUrl": "https://x.dev", "actions": [{ "name": "  " }] }));
     let mut used = std::collections::HashSet::new();
     assert!(crate::agents::api_tools_from_config("tool-2", &cleaned, &mut used).is_empty());
+  }
+
+  fn msg(role: &str, content: &str) -> serde_json::Value { serde_json::json!({ "role": role, "content": content }) }
+
+  /// The delegated task's context skips system turns (prior task results) and keeps
+  /// the conversation in order, oldest turn first.
+  #[test]
+  fn transcript_skips_system_turns_and_keeps_order() {
+    let messages = vec![
+      msg("user", "older question"),
+      msg("assistant", "older answer"),
+      msg("system", "Background task x finished: noise"),
+      msg("user", "latest question"),
+    ];
+    let t = transcript_from(&messages, 4000);
+    assert!(t.contains("older question"));
+    assert!(t.contains("latest question"));
+    assert!(!t.contains("noise"));
+    assert!(t.find("older question").unwrap() < t.find("latest question").unwrap());
+  }
+
+  /// A long chat can't balloon the prompt: the oldest turns are dropped first.
+  #[test]
+  fn transcript_respects_the_char_budget() {
+    let messages = vec![
+      msg("user", &"a".repeat(50)),
+      msg("assistant", &"b".repeat(50)),
+      msg("user", "newest"),
+    ];
+    let t = transcript_from(&messages, 80);
+    assert!(t.contains("newest"));
+    assert!(!t.contains(&"a".repeat(50)));
   }
 }
