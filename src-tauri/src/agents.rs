@@ -15,7 +15,7 @@ use crate::tasks::list_tasks;
 use crate::tools::{
   browser_tools, desktop_tools, sanitize, script_tools, unique_name, AgentTool, ApiAuth, ApiParam, ApiTool, Approval,
   HttpTool, IntegrationTool, McpTool, ParamIn, ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool,
-  WriteFileTool, MAX_TOOL_ROUNDS,
+  WriteAnyFileTool, WriteFileTool, MAX_TOOL_ROUNDS,
 };
 use crate::tooltext::parse_text_tool_calls;
 
@@ -87,6 +87,7 @@ pub(crate) fn build_tools(app: &AppHandle, conn: &Connection, agent: &AgentReque
   if has_host_fs {
     tools.push(Box::new(SearchFilesTool));
     tools.push(Box::new(ReadAnyFileTool));
+    tools.push(Box::new(WriteAnyFileTool));
     tools.push(Box::new(RunCommandTool));
     tools.extend(script_tools(conn));
     // Monid's catalog is reached through its CLI, so it rides on host_fs.

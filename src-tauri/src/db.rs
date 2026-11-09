@@ -42,6 +42,11 @@ pub fn db(app: &AppHandle) -> Result<Connection, String> {
   // How many messages this session had at its last distillation, so a growing
   // chat is re-learned periodically instead of only when it's closed.
   if !sess_cols.iter().any(|c| c == "distilled_count") { conn.execute("ALTER TABLE chat_sessions ADD COLUMN distilled_count INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
+  // The rolling summary of a chat as it grows: turns that scrolled out of the
+  // four-message window, folded in per session and injected back into the prompt.
+  if !sess_cols.iter().any(|c| c == "rolling_summary") { conn.execute("ALTER TABLE chat_sessions ADD COLUMN rolling_summary TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
+  // How many leading messages are already folded into that running summary.
+  if !sess_cols.iter().any(|c| c == "rolling_upto") { conn.execute("ALTER TABLE chat_sessions ADD COLUMN rolling_upto INTEGER NOT NULL DEFAULT 0", []).map_err(|e| e.to_string())?; }
   // Per-model reasoning control: 'auto' | 'off' | 'low' | 'medium' | 'high'.
   // 'auto' sends nothing to the provider, which is what older rows get.
   let model_cols = cols("model_configs")?;

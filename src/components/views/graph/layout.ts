@@ -44,6 +44,11 @@ export function buildGraph({ agents, skills, tools, integrations, workflows, pro
     });
   });
 
+  // Declared before the brain block below, whose edges are appended here — a
+  // `const` after that block put `edges` in the temporal dead zone and threw
+  // "Cannot access 'edges' before initialization" on any graph that had a brain.
+  const edges: GEdge[] = [];
+
   // The brain map: the user's life as nodes + typed edges. Kept as one visual
   // family (`brain`) with the node's own kind in the sub-line, so the palette
   // stays legible. Capped so a large map can't swamp the workspace graph.
@@ -65,7 +70,6 @@ export function buildGraph({ agents, skills, tools, integrations, workflows, pro
   }
 
   const known = new Set(nodes.map((n) => n.id));
-  const edges: GEdge[] = [];
   const link = (from: string, to: string, kind: GEdge['kind']) => {
     if (from === to) return;
     if (known.has(from) && known.has(to)) edges.push({ id: `${kind}:${from}->${to}`, from, to, kind });

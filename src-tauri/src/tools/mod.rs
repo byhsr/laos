@@ -22,7 +22,7 @@ pub(crate) use browser::browser_tools;
 pub(crate) use datetime::current_time_tool;
 pub(crate) use desktop::desktop_tools;
 pub(crate) use documents::document_tool;
-pub(crate) use filesystem::{run_shell_in, ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteFileTool};
+pub(crate) use filesystem::{run_shell_in, ReadAnyFileTool, ReadFileTool, RunCommandTool, SearchFilesTool, WriteAnyFileTool, WriteFileTool};
 pub(crate) use integration::IntegrationTool;
 pub(crate) use items::items_tool;
 pub(crate) use knowledge::{knowledge_tool, remember_tool};

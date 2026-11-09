@@ -61,6 +61,7 @@ impl AgentTool for WriteFileTool {
 
 pub(crate) struct SearchFilesTool;   // recursive filename search from a root path
 pub(crate) struct ReadAnyFileTool;   // read any file by absolute path (size-capped)
+pub(crate) struct WriteAnyFileTool;  // create/overwrite a file at an absolute path
 pub(crate) struct RunCommandTool;    // execute a shell command, return stdout+stderr
 
 #[async_trait]
@@ -118,6 +119,40 @@ impl AgentTool for ReadAnyFileTool {
   }
 }
 
+// Writes a file at an absolute path anywhere on the device — the write half of
+// read_file_any. Agents produce markdown, CSV and the like, and the sandboxed
+// write_file can only reach the agent's own folder; this reaches wherever the
+// user actually wants the artifact. Parent folders are created, and `append`
+// adds to an existing file instead of replacing it.
+#[async_trait]
+impl AgentTool for WriteAnyFileTool {
+  fn name(&self) -> String { "write_file_any".into() }
+  fn description(&self) -> String { "Create or overwrite a text file at an absolute path (anywhere on the device) — markdown, CSV, notes, code. Params: path (string), content (string), append (boolean, optional, default false — adds to an existing file). Parent folders are created. Requires explicit user approval.".into() }
+  fn params_schema(&self) -> serde_json::Value {
+    serde_json::json!({ "type": "object", "properties": { "path": { "type": "string", "description": "Absolute path of the file to write" }, "content": { "type": "string", "description": "Full text content to write" }, "append": { "type": "boolean", "description": "Append instead of overwriting" } }, "required": ["path", "content"] })
+  }
+  async fn run(&self, args: &serde_json::Value) -> Result<String, String> {
+    let path = str_arg(args, "path").ok_or("write_file_any requires a 'path' argument.")?;
+    if path.trim().is_empty() { return Err("write_file_any needs a non-empty 'path'.".into()); }
+    let content = str_arg(args, "content").ok_or("write_file_any requires a 'content' argument.")?;
+    let append = args.get("append").and_then(|v| v.as_bool()).unwrap_or(false);
+    let p = std::path::Path::new(&path);
+    if let Some(parent) = p.parent() {
+      if !parent.as_os_str().is_empty() { fs::create_dir_all(parent).map_err(|e| format!("Could not create '{}': {e}", parent.display()))?; }
+    }
+    let bytes = content.as_bytes().len();
+    if append {
+      use std::io::Write;
+      let mut file = fs::OpenOptions::new().create(true).append(true).open(p).map_err(|e| e.to_string())?;
+      file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+      Ok(format!("Appended {bytes} bytes to {path}"))
+    } else {
+      fs::write(p, &content).map_err(|e| e.to_string())?;
+      Ok(format!("Wrote {bytes} bytes to {path}"))
+    }
+  }
+}
+
 #[async_trait]
 impl AgentTool for RunCommandTool {
   fn name(&self) -> String { "run_command".into() }
@@ -166,4 +201,22 @@ pub(crate) fn run_shell_in(command: &str, cwd: &str) -> Result<String, String> {
   out.push_str(&stdout);
   if !stderr.is_empty() { out.push_str(&format!("\n[stderr]\n{stderr}")); }
   Ok(clip(&out))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[tokio::test]
+  async fn write_file_any_creates_then_appends() {
+    let dir = std::env::temp_dir().join(format!("lup-wfa-{}", std::process::id()));
+    let path = dir.join("nested/out.md");
+    let p = path.to_string_lossy().to_string();
+    let tool = WriteAnyFileTool;
+    let first = tool.run(&serde_json::json!({ "path": p.clone(), "content": "# hi\n" })).await.unwrap();
+    assert!(first.contains("Wrote"), "reports the write: {first}");
+    tool.run(&serde_json::json!({ "path": p.clone(), "content": "more\n", "append": true })).await.unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "# hi\nmore\n");
+    let _ = fs::remove_dir_all(&dir);
+  }
 }

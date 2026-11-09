@@ -15,7 +15,7 @@ use crate::models::*;
 use crate::provider;
 use crate::storage::{manager_default_model, parse_json_vec, save_agent, save_workflow};
 use crate::tasks::{list_tasks, spawn_task, task_from_row, NewTask};
-use crate::tools::{AgentTool, ReadAnyFileTool, RunCommandTool, SearchFilesTool, MAX_TOOL_ROUNDS};
+use crate::tools::{AgentTool, ReadAnyFileTool, RunCommandTool, SearchFilesTool, WriteAnyFileTool, MAX_TOOL_ROUNDS};
 use crate::tooltext::parse_text_tool_calls;
 use crate::workflows::execute_workflow;
 
@@ -144,6 +144,7 @@ pub(crate) fn manager_tools() -> Vec<Box<dyn AgentTool>> {
     Box::new(ManagerAskUser),
     Box::new(SearchFilesTool),
     Box::new(ReadAnyFileTool),
+    Box::new(WriteAnyFileTool),
     Box::new(RunCommandTool),
   ]
 }
@@ -333,7 +334,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
   // chat path does — a standing rule or a timed reminder is filed, not described.
   let triage = crate::routing::triage(app, &manager.id, message, None).await;
   let scope = crate::agent_memory::scope_key("agent", &manager.id);
-  let memory = crate::memory::memory_block(app, &manager.id, &scope, message).await;
+  let memory = crate::memory::memory_block(app, &manager.id, &scope, None, message).await;
   let context = build_manager_system_prompt(&conn, &manager.name, &manager.tool_ids, pc_control, network)?;
   let prompt = format!("{context}{memory}\n\nUser message: {message}");
   // Tell the model what was already filed, so it doesn't file it a second time.
@@ -806,6 +807,7 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
     }
     "search_files" => SearchFilesTool.run(args).await,
     "read_file_any" => ReadAnyFileTool.run(args).await,
+    "write_file_any" => WriteAnyFileTool.run(args).await,
     "run_command" => RunCommandTool.run(args).await,
     "ask_user" => {
       if crate::app_settings::autonomy(app) {
@@ -850,7 +852,7 @@ pub(crate) fn requires_confirmation(tool: &str) -> bool {
     | "create_workflow" | "update_workflow" | "delete_workflow" | "run_workflow"
     | "configure_integration" | "create_task" | "cancel_task" | "delegate_task"
     | "create_tool"
-    | "run_command" | "run_script"
+    | "run_command" | "run_script" | "write_file_any"
     // PC control: the coarse/system actions confirm; low-level input and
     // read-only actions do not (a vision loop needs many of them).
     | "launch_app" | "close_window" | "lock_screen" | "write_clipboard" | "open_path"

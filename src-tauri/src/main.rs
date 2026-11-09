@@ -226,6 +226,7 @@ fn main() {
       agents::execute_agent,
       workflows::execute_workflow,
       workflows::list_workflow_runs,
+      workflows::export_workflow_runs_csv,
       // Tasks + runs
       tasks::list_all_tasks,
       tasks::get_task,

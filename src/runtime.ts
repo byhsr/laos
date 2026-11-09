@@ -536,6 +536,12 @@ export async function listWorkflowRuns(workflowId?: string): Promise<WorkflowRun
   try { return await invoke<WorkflowRunRecord[]>('list_workflow_runs', { workflowId: workflowId ?? null }); } catch { return []; }
 }
 
+// The persisted runs as a CSV string (per-node outputs ride in the `steps`
+// column). Omit the id to export every workflow's runs.
+export async function exportWorkflowRunsCsv(workflowId?: string): Promise<string> {
+  return await invoke<string>('export_workflow_runs_csv', { workflowId: workflowId ?? null });
+}
+
 // MCP connector (stdio). Servers are configured commands; their advertised tools
 // can be imported into the tool registry and attached to agents.
 export type McpServer = { id: string; name: string; command: string; args: string[]; env: Record<string, string>; enabled: boolean };

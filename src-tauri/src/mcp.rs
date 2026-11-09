@@ -132,7 +132,7 @@ impl Session {
   }
 
   fn kill_child(&mut self) {
-    if let Ok(mut c) = self.kill.lock() { let _ = c.kill(); let _ = c.wait(); }
+    if let Ok(mut c) = self.kill.lock() { kill_tree(&mut c); }
   }
 
   // Appends the timeout / stderr detail to an error so the reason is visible
@@ -201,6 +201,32 @@ fn build_command(server: &McpServer) -> Command {
 #[cfg(not(windows))]
 fn build_command(server: &McpServer) -> Command {
   Command::new(&server.command)
+}
+
+// Kills a spawned child and its whole process tree. On Windows the direct child
+// is the `cmd /C` shim, so a bare `kill()` orphans the real server (npx → node):
+// the grandchild keeps the stdout pipe open, the blocking read in `rpc` never
+// returns, and a "test connection" spins forever even after the watchdog fires.
+// `taskkill /T` walks the tree so the pipe actually closes.
+#[cfg(windows)]
+fn kill_tree(child: &mut Child) {
+  use std::os::windows::process::CommandExt;
+  const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+  let pid = child.id().to_string();
+  let _ = Command::new("taskkill")
+    .args(["/F", "/T", "/PID", &pid])
+    .creation_flags(CREATE_NO_WINDOW)
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .status();
+  let _ = child.kill();
+  let _ = child.wait();
+}
+
+#[cfg(not(windows))]
+fn kill_tree(child: &mut Child) {
+  let _ = child.kill();
+  let _ = child.wait();
 }
 
 fn spawn_session(server: &McpServer) -> Result<Session, String> {
@@ -314,7 +340,7 @@ fn rpc(session: &mut Session, method: &str, params: serde_json::Value) -> Result
       std::thread::sleep(RPC_TIMEOUT);
       if !done.load(Ordering::SeqCst) {
         flag.store(true, Ordering::SeqCst);
-        if let Ok(mut c) = kill.lock() { let _ = c.kill(); }
+        if let Ok(mut c) = kill.lock() { kill_tree(&mut c); }
       }
     });
   }

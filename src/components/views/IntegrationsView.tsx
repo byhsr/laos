@@ -70,6 +70,11 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
       if (OAUTH_PROVIDERS.includes(id) && cfg.clientId && cfg.clientSecret) {
         await onConnect(id);
       }
+    } catch (e) {
+      // A failed save (e.g. the OS credential store is unavailable) used to be
+      // swallowed, so the drawer stayed open with no sign the token didn't take.
+      const msg = typeof e === 'string' ? e : (e instanceof Error ? e.message : 'could not save the config');
+      toast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -98,10 +103,16 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
 
   const onTest = async (id: string) => {
     setTesting(id);
-    const ok = await test(id);
-    setTesting(null);
-    await loadIntegrations();
-    toast(ok ? 'connection ok' : 'connection failed', ok ? 'success' : 'error');
+    try {
+      const ok = await test(id);
+      await loadIntegrations();
+      toast(ok ? 'connection ok' : 'connection failed', ok ? 'success' : 'error');
+    } catch (e) {
+      const msg = typeof e === 'string' ? e : (e instanceof Error ? e.message : 'test failed');
+      toast(msg, 'error');
+    } finally {
+      setTesting(null);
+    }
   };
 
   const refreshTunnelStatus = async () => {
@@ -261,6 +272,12 @@ export function IntegrationsView({ integrations }: { integrations: Integration[]
             placeholder={active.connected ? 'Leave blank to keep existing' : 'Paste token or API key'}
             className={INPUT_CLS}
           />
+
+          {active.id === 'notion' && (
+            <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+              Paste an internal integration token (<code className="font-mono">ntn_…</code> / <code className="font-mono">secret_…</code>) from notion.so/my-integrations. In Notion, share each page or database with that integration, or the API returns 404.
+            </p>
+          )}
 
           {OAUTH_PROVIDERS.includes(active.id) && (
             <>

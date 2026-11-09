@@ -10,8 +10,6 @@ use crate::http;
 use crate::provider;
 
 pub(crate) const ROLLING_WINDOW: usize = 4; // max messages (user+assistant) sent as context
-pub(crate) const MEMORY_SUMMARY_KEY: &str = "__summary__";
-const MEMORY_WATERMARK_KEY: &str = "__summary_upto__";
 // Cap on the transcript handed to the summarizer, so one call stays bounded.
 const MAX_SUMMARY_INPUT_CHARS: usize = 6000;
 
@@ -59,14 +57,17 @@ pub(crate) async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &s
   })
 }
 
-// Folds the turns that have scrolled out of the rolling window into the agent's
-// long-term memory. Only the turns added since the last pass are sent (tracked by
-// a watermark) and the previous summary is carried forward, so the work per turn
-// stays bounded instead of re-summarizing the whole conversation every time.
-pub(crate) async fn summarize_old_turns(app: &AppHandle, agent_id: &str, model: &str, history: &[serde_json::Value]) -> Result<(), String> {
+// Folds the turns that have scrolled out of the rolling window into a running
+// summary for THIS chat. Only the turns added since the last pass are sent
+// (tracked by a per-session watermark) and the previous summary is carried
+// forward, so the work per turn stays bounded instead of re-summarizing the whole
+// conversation every time. The summary lives on the session and is injected back
+// into the prompt by `build_day_context`, so a long chat keeps its thread past the
+// four-message window instead of losing it.
+pub(crate) async fn summarize_old_turns(app: &AppHandle, session_id: &str, agent_id: &str, model: &str, history: &[serde_json::Value]) -> Result<(), String> {
   let conn = db(app)?;
   let old_end = history.len().saturating_sub(ROLLING_WINDOW);
-  let upto = load_summary_watermark(&conn, agent_id).min(old_end);
+  let upto = load_rolling_upto(&conn, session_id).min(old_end);
   // Nothing new has left the window (or only a single message has) — not worth a call.
   if old_end <= upto + 1 { return Ok(()); }
 
@@ -81,9 +82,7 @@ pub(crate) async fn summarize_old_turns(app: &AppHandle, agent_id: &str, model: 
   transcript.truncate(MAX_SUMMARY_INPUT_CHARS);
   if transcript.trim().is_empty() { return Ok(()); }
 
-  let previous: String = conn
-    .query_row("SELECT value FROM memory WHERE agent_id=?1 AND key=?2", params![agent_id, MEMORY_SUMMARY_KEY], |r| r.get(0))
-    .unwrap_or_default();
+  let previous = load_rolling_summary(&conn, session_id);
 
   let prompt = format!(
     "You maintain a running memory summary for an assistant.\n\nExisting summary:\n{previous}\n\nNew turns to fold in:\n{transcript}\n\nReturn an updated summary (max 150 words) capturing decisions, requests, results and anything important to remember, then 2-5 durable facts.\nReply as:\nSUMMARY: <summary>\nFACTS:\n- fact1\n- fact2"
@@ -95,12 +94,10 @@ pub(crate) async fn summarize_old_turns(app: &AppHandle, agent_id: &str, model: 
     };
     let ts = chrono::Utc::now().to_rfc3339();
     if !summary.is_empty() {
-      let _ = conn.execute(
-        "INSERT INTO memory (agent_id, key, value, updated_at) VALUES (?1,?2,?3,?4)
-         ON CONFLICT(agent_id,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-        params![agent_id, MEMORY_SUMMARY_KEY, summary, ts],
-      );
+      let _ = conn.execute("UPDATE chat_sessions SET rolling_summary=?1 WHERE id=?2", params![summary, session_id]);
     }
+    // Durable facts are agent-scoped (they outlive the chat), so they stay in the
+    // memory table and surface through recall + retrieval.
     for line in facts.lines() {
       let fact = line.trim().trim_start_matches('-').trim();
       if fact.is_empty() { continue; }
@@ -111,25 +108,25 @@ pub(crate) async fn summarize_old_turns(app: &AppHandle, agent_id: &str, model: 
         params![agent_id, key, fact, ts],
       );
     }
-    save_summary_watermark(&conn, agent_id, old_end);
+    save_rolling_upto(&conn, session_id, old_end);
   }
   Ok(())
 }
 
-// Number of leading messages already folded into the memory summary.
-fn load_summary_watermark(conn: &Connection, agent_id: &str) -> usize {
-  conn.query_row("SELECT value FROM memory WHERE agent_id=?1 AND key=?2", params![agent_id, MEMORY_WATERMARK_KEY], |r| r.get::<_, String>(0))
-    .ok()
-    .and_then(|v| v.parse::<usize>().ok())
+// The running summary for one chat session, and how many leading messages are
+// already folded into it.
+fn load_rolling_summary(conn: &Connection, session_id: &str) -> String {
+  conn.query_row("SELECT rolling_summary FROM chat_sessions WHERE id=?1", params![session_id], |r| r.get::<_, String>(0)).unwrap_or_default()
+}
+
+fn load_rolling_upto(conn: &Connection, session_id: &str) -> usize {
+  conn.query_row("SELECT rolling_upto FROM chat_sessions WHERE id=?1", params![session_id], |r| r.get::<_, i64>(0))
+    .map(|n| n.max(0) as usize)
     .unwrap_or(0)
 }
 
-fn save_summary_watermark(conn: &Connection, agent_id: &str, upto: usize) {
-  let _ = conn.execute(
-    "INSERT INTO memory (agent_id, key, value, updated_at) VALUES (?1,?2,?3,?4)
-     ON CONFLICT(agent_id,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-    params![agent_id, MEMORY_WATERMARK_KEY, upto.to_string(), chrono::Utc::now().to_rfc3339()],
-  );
+fn save_rolling_upto(conn: &Connection, session_id: &str, upto: usize) {
+  let _ = conn.execute("UPDATE chat_sessions SET rolling_upto=?1 WHERE id=?2", params![upto as i64, session_id]);
 }
 
 // The turns of one chat session, shaped like a conversation. The rolling window
@@ -473,7 +470,7 @@ fn session_transcript(conn: &Connection, session_id: &str) -> Option<String> {
 /// The retrieved slice is what makes recall query-aware: a "what should I work on
 /// today" turn pulls active commitments, a "that idea I had" turn pulls dormant
 /// ideas — instead of always dumping the same compiled memory.
-pub(crate) async fn memory_block(app: &AppHandle, agent_id: &str, scope: &str, request: &str) -> String {
+pub(crate) async fn memory_block(app: &AppHandle, agent_id: &str, scope: &str, session_id: Option<&str>, request: &str) -> String {
   // Scoped so the connection is dropped before the retrieval await.
   let base = {
     let Ok(conn) = db(app) else { return String::new() };
@@ -483,7 +480,7 @@ pub(crate) async fn memory_block(app: &AppHandle, agent_id: &str, scope: &str, r
       out.push_str("\n\n## What you remember (long-term memory)\n");
       out.push_str(&learned);
     }
-    if let Ok(day) = build_day_context(&conn, agent_id) {
+    if let Ok(day) = build_day_context(&conn, agent_id, session_id) {
       if !day.trim().is_empty() { out.push_str(&day); }
     }
     out
@@ -498,11 +495,19 @@ pub async fn close_session(app: AppHandle, session_id: String, agent_id: String,
   Ok(())
 }
 
-// Last chat's condensed summary + today's and yesterday's day context. Injected
-// into every turn's system prompt (via `memory_block`) so an agent starts each chat
-// already aware of recent work.
-pub(crate) fn build_day_context(conn: &Connection, agent_id: &str) -> Result<String, String> {
+// This chat's running summary, the last chat's condensed summary, and today's /
+// yesterday's day context. Injected into every turn's system prompt (via
+// `memory_block`) so a long chat keeps its thread and a new one starts already
+// aware of recent work.
+pub(crate) fn build_day_context(conn: &Connection, agent_id: &str, session_id: Option<&str>) -> Result<String, String> {
   let mut out = String::new();
+  // The turns that scrolled out of this session's rolling window, folded into a
+  // running summary — the thing that keeps context from being lost mid-chat.
+  if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
+    let rolling: Option<String> = conn
+      .query_row("SELECT rolling_summary FROM chat_sessions WHERE id=?1", params![sid], |r| r.get(0)).ok();
+    if let Some(s) = rolling { if !s.trim().is_empty() { out.push_str(&format!("\n## This chat so far:\n{s}\n")); } }
+  }
   // Last chat's condensed summary.
   let last_chat: Option<String> = conn.query_row(
     "SELECT summary FROM chat_sessions WHERE agent_id=?1 AND summary != '' ORDER BY updated_at DESC LIMIT 1",
@@ -528,6 +533,6 @@ pub(crate) fn build_context_bundle(conn: &Connection, agent_id: &str) -> Result<
       out.push_str(&format!("- {label}: {v}\n"));
     }
   }
-  out.push_str(&build_day_context(conn, agent_id)?);
+  out.push_str(&build_day_context(conn, agent_id, None)?);
   Ok(out)
 }

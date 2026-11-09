@@ -21,6 +21,21 @@ async fn read(resp: reqwest::Response) -> Result<String, String> {
   Ok(clip(&text))
 }
 
+// Builds the body for POST /v1/pages. The parent must be typed — a database id
+// sent as page_id (or vice versa) is rejected — and the title must be keyed by
+// the database's own title property name. A page parent's title column is
+// literally "title"; a database usually names it something else (e.g. "Name").
+fn notion_page_body(parent_id: &str, parent_type: &str, title_property: &str, title: &str) -> serde_json::Value {
+  let pt = if parent_type.trim().is_empty() { "page_id" } else { parent_type.trim() };
+  let mut parent = serde_json::Map::new();
+  parent.insert("type".into(), serde_json::Value::String(pt.to_string()));
+  parent.insert(pt.to_string(), serde_json::Value::String(parent_id.to_string()));
+  let tp = if title_property.trim().is_empty() { "title" } else { title_property.trim() };
+  let mut properties = serde_json::Map::new();
+  properties.insert(tp.to_string(), serde_json::json!({ "title": [{ "text": { "content": title } }] }));
+  serde_json::json!({ "parent": serde_json::Value::Object(parent), "properties": serde_json::Value::Object(properties) })
+}
+
 // Generic integration tool: executes a provider REST action using the stored
 // integration credentials. Data-driven — new actions are added to the provider match.
 pub(crate) struct IntegrationTool {
@@ -38,7 +53,7 @@ impl AgentTool for IntegrationTool {
   fn description(&self) -> String {
     match self.action.as_str() {
       "notion_search" => "Search Notion pages and databases. Params: query (string).".into(),
-      "notion_create_page" => "Create a Notion page. Params: parentId (string — a page id or a database id), parentType (string — 'page_id' or 'database_id', default 'page_id'), title (string).".into(),
+      "notion_create_page" => "Create a Notion page. Params: parentId (string — a page id or a database id), parentType (string — 'page_id' or 'database_id', default 'page_id'), title (string), titleProperty (string, optional — the database's title column name, default 'title').".into(),
       "notion_get_page" => "Fetch a Notion page's content. Params: pageId (string).".into(),
       "airtable_list_records" => "List records from an Airtable table. Params: baseId (string), tableName (string), maxRecords (integer, optional).".into(),
       "airtable_create_record" => "Create a record in an Airtable table. Params: baseId (string), tableName (string), fields (object of field values).".into(),
@@ -60,7 +75,7 @@ impl AgentTool for IntegrationTool {
     }
   }
   fn params_schema(&self) -> serde_json::Value {
-    serde_json::json!({ "type": "object", "properties": { "query": { "type": "string" }, "numResults": { "type": "integer" }, "maxResults": { "type": "integer" }, "parentId": { "type": "string" }, "parentType": { "type": "string" }, "title": { "type": "string" }, "pageId": { "type": "string" }, "baseId": { "type": "string" }, "tableName": { "type": "string" }, "maxRecords": { "type": "integer" }, "fields": { "type": "object" }, "recordId": { "type": "string" }, "spreadsheetId": { "type": "string" }, "range": { "type": "string" }, "values": { "type": "array" }, "documentId": { "type": "string" }, "content": { "type": "string" }, "to": { "type": "string" }, "start": { "type": "string" }, "end": { "type": "string" }, "q": { "type": "string" }, "calendarId": { "type": "string" } }, "required": [] })
+    serde_json::json!({ "type": "object", "properties": { "query": { "type": "string" }, "numResults": { "type": "integer" }, "maxResults": { "type": "integer" }, "parentId": { "type": "string" }, "parentType": { "type": "string" }, "titleProperty": { "type": "string" }, "title": { "type": "string" }, "pageId": { "type": "string" }, "baseId": { "type": "string" }, "tableName": { "type": "string" }, "maxRecords": { "type": "integer" }, "fields": { "type": "object" }, "recordId": { "type": "string" }, "spreadsheetId": { "type": "string" }, "range": { "type": "string" }, "values": { "type": "array" }, "documentId": { "type": "string" }, "content": { "type": "string" }, "to": { "type": "string" }, "start": { "type": "string" }, "end": { "type": "string" }, "q": { "type": "string" }, "calendarId": { "type": "string" } }, "required": [] })
   }
   async fn run(&self, args: &serde_json::Value) -> Result<String, String> {
     let snapshot = self.credentials.get("token").and_then(|t| t.as_str())
@@ -92,14 +107,7 @@ impl AgentTool for IntegrationTool {
       "notion_create_page" => {
         // A page can sit under another page or under a database, and Notion needs
         // the parent typed correctly — a database id sent as page_id is rejected.
-        let pt = { let t = arg("parentType"); if t.is_empty() { "page_id".to_string() } else { t } };
-        let mut parent = serde_json::Map::new();
-        parent.insert("type".into(), serde_json::Value::String(pt.clone()));
-        parent.insert(pt, serde_json::Value::String(arg("parentId")));
-        let body = serde_json::json!({
-          "parent": serde_json::Value::Object(parent),
-          "properties": { "title": { "title": [{ "text": { "content": arg("title") } }] } }
-        });
+        let body = notion_page_body(&arg("parentId"), &arg("parentType"), &arg("titleProperty"), &arg("title"));
         let resp = client.post("https://api.notion.com/v1/pages")
           .header("Authorization", format!("Bearer {token}"))
           .header("Notion-Version", "2022-06-28")
@@ -246,5 +254,27 @@ impl AgentTool for IntegrationTool {
       }
       _ => Err(format!("Unknown integration action: {}", self.action)),
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::notion_page_body;
+
+  #[test]
+  fn notion_page_defaults_to_a_page_parent_and_the_title_column() {
+    let body = notion_page_body("abc", "", "", "Hello");
+    assert_eq!(body["parent"]["type"], serde_json::json!("page_id"));
+    assert_eq!(body["parent"]["page_id"], serde_json::json!("abc"));
+    assert_eq!(body["properties"]["title"]["title"][0]["text"]["content"], serde_json::json!("Hello"));
+  }
+
+  #[test]
+  fn notion_page_uses_a_database_parent_and_its_named_title_column() {
+    let body = notion_page_body("db1", "database_id", "Name", "Hi");
+    assert_eq!(body["parent"]["type"], serde_json::json!("database_id"));
+    assert_eq!(body["parent"]["database_id"], serde_json::json!("db1"));
+    assert!(body["properties"].get("Name").is_some());
+    assert!(body["properties"].get("title").is_none());
   }
 }

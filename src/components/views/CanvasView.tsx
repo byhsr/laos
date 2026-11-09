@@ -9,7 +9,7 @@ import { StatusGlyph, statusClass } from '../ui/Status';
 import { Tooltip } from '../ui/Tooltip';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, INPUT_INLINE_CLS, PROSE_CLS } from '../ui/Input';
 import { toast } from '../../hooks/useToast';
-import { listWorkflowRuns, type WorkflowRunRecord } from '../../runtime';
+import { exportWorkflowRunsCsv, listWorkflowRuns, type WorkflowRunRecord } from '../../runtime';
 import { NODE_TYPES, TYPE_META } from './nodeTypes';
 
 // Safe timestamp formatting — DB values can be empty or malformed.
@@ -343,6 +343,16 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
     URL.revokeObjectURL(url);
   };
 
+  const downloadText = (filename: string, text: string, mime: string) => {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workflow';
 
   const exportOne = (w: Workflow) => {
@@ -360,6 +370,22 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
       workflows: workflows.map((w) => ({ name: w.name, nodes: w.nodes, edges: w.edges })),
     });
     toast(`${workflows.length} workflow${workflows.length === 1 ? '' : 's'} exported`, 'success');
+  };
+
+  // The persisted runs of this workflow as a CSV — the run outputs and per-node
+  // steps live in the backend, so this is a straight server-side export.
+  const exportRunsCsv = async () => {
+    if (!current) return;
+    try {
+      const csv = await exportWorkflowRunsCsv(current.id);
+      // The header row is always present; a single line means there is nothing to export.
+      if (csv.trim().split('\n').length <= 1) { toast('no runs to export yet', 'error'); return; }
+      downloadText(`${slug(current.name)}-runs.csv`, csv, 'text/csv');
+      toast('runs exported', 'success');
+    } catch (e) {
+      const msg = typeof e === 'string' ? e : (e instanceof Error ? e.message : 'export failed');
+      toast(msg, 'error');
+    }
   };
 
   // Validates one entry and mints a fresh id, so importing can never overwrite an
@@ -1031,7 +1057,10 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
             )}
             {storedRuns.length > 0 && (
               <div className="mt-4 border-t border-border pt-3">
-                <span className={`${GROUP_LABEL_CLS} mb-2 block`}>past runs</span>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className={GROUP_LABEL_CLS}>past runs</span>
+                  <IconButton label="export runs as csv" className="h-6 w-6" onClick={exportRunsCsv}><Download size={12} /></IconButton>
+                </div>
                 <div className="grid gap-1.5">
                   {storedRuns.map((r) => (
                     <button

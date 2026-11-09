@@ -711,3 +711,73 @@ pub fn list_workflow_runs(app: AppHandle, workflow_id: Option<String>) -> Result
   }
   Ok(out)
 }
+
+// RFC 4180 field escaping: quote only when the value carries a comma, a quote or
+// a line break, doubling any inner quotes.
+fn csv_field(value: &str) -> String {
+  if value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r') {
+    format!("\"{}\"", value.replace('"', "\"\""))
+  } else {
+    value.to_string()
+  }
+}
+
+// Every persisted run as CSV (one row per run, oldest first) so the workflow's
+// outputs, per-node steps and token counts can leave the app. Pass no workflow
+// id to export the runs of every workflow. The per-node outputs ride in the
+// trailing `steps` column as JSON, so a full run is preserved.
+#[tauri::command]
+pub fn export_workflow_runs_csv(app: AppHandle, workflow_id: Option<String>) -> Result<String, String> {
+  let conn = db(&app)?;
+  const COLS: &str = "SELECT id, workflow_id, workflow_name, started_at, ended_at, status, input, final_output, steps, prompt_tokens, completion_tokens FROM workflow_runs";
+  let mut runs: Vec<WorkflowRunRecord> = Vec::new();
+  match workflow_id.filter(|s| !s.is_empty()) {
+    Some(wf) => {
+      let mut stmt = conn.prepare(&format!("{COLS} WHERE workflow_id=?1 ORDER BY started_at ASC")).map_err(|e| e.to_string())?;
+      let rows = stmt.query_map(params![wf], workflow_run_row).map_err(|e| e.to_string())?;
+      for r in rows { runs.push(r.map_err(|e| e.to_string())?); }
+    }
+    None => {
+      let mut stmt = conn.prepare(&format!("{COLS} ORDER BY started_at ASC")).map_err(|e| e.to_string())?;
+      let rows = stmt.query_map([], workflow_run_row).map_err(|e| e.to_string())?;
+      for r in rows { runs.push(r.map_err(|e| e.to_string())?); }
+    }
+  }
+
+  let mut out = String::from("id,workflow_id,workflow_name,status,started_at,ended_at,input,prompt_tokens,completion_tokens,final_output,steps\n");
+  for r in runs {
+    let fields = [
+      r.id,
+      r.workflow_id,
+      r.workflow_name,
+      r.status,
+      r.started_at,
+      r.ended_at.unwrap_or_default(),
+      r.input,
+      r.prompt_tokens.to_string(),
+      r.completion_tokens.to_string(),
+      r.final_output.unwrap_or_default(),
+      serde_json::to_string(&r.steps).unwrap_or_else(|_| "[]".to_string()),
+    ];
+    out.push_str(&fields.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(","));
+    out.push('\n');
+  }
+  Ok(out)
+}
+
+#[cfg(test)]
+mod csv_tests {
+  use super::csv_field;
+
+  #[test]
+  fn leaves_plain_values_untouched() {
+    assert_eq!(csv_field("hello world"), "hello world");
+  }
+
+  #[test]
+  fn quotes_commas_quotes_and_newlines() {
+    assert_eq!(csv_field("a,b"), "\"a,b\"");
+    assert_eq!(csv_field("he said \"hi\""), "\"he said \"\"hi\"\"\"");
+    assert_eq!(csv_field("line\nbreak"), "\"line\nbreak\"");
+  }
+}

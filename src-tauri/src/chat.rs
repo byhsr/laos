@@ -107,16 +107,20 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   let triage = crate::routing::triage(&app, &agent.id, &input, project_scope.as_deref()).await;
   if let Some(t) = &triage { emit_status(&on_event, "memory", &t.step); }
 
-  // Fold older turns into memory in the background. It is an extra model call and
-  // must never sit in front of the reply the user is waiting for.
+  // Fold older turns into THIS chat's running summary in the background. It is an
+  // extra model call and must never sit in front of the reply the user waits for.
+  // It is keyed on the session, so a turn with no session (an internal one-off)
+  // has nowhere to keep a per-chat summary and is skipped.
   if history.len() > ROLLING_WINDOW + 1 {
-    let app_bg = app.clone();
-    let agent_id = agent.id.clone();
-    let model = agent.model.clone();
-    let history_bg = history.clone();
-    tauri::async_runtime::spawn(async move {
-      let _ = summarize_old_turns(&app_bg, &agent_id, &model, &history_bg).await;
-    });
+    if let Some(sid) = session_id.as_deref().filter(|s| !s.is_empty()).map(|s| s.to_string()) {
+      let app_bg = app.clone();
+      let agent_id = agent.id.clone();
+      let model = agent.model.clone();
+      let history_bg = history.clone();
+      tauri::async_runtime::spawn(async move {
+        let _ = summarize_old_turns(&app_bg, &sid, &agent_id, &model, &history_bg).await;
+      });
+    }
   }
 
   // Learn from the session as it grows, not only when it's closed, so memory keeps
@@ -213,7 +217,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     Some(p) if !p.trim().is_empty() => crate::agent_memory::scope_key("project", p),
     _ => crate::agent_memory::scope_key("agent", &agent.id),
   };
-  let memory = crate::memory::memory_block(&app, &agent.id, &memory_scope, &input).await;
+  let memory = crate::memory::memory_block(&app, &agent.id, &memory_scope, session_id.as_deref(), &input).await;
   let system = format!("{system}{memory}");
   // Tell the model what the triage already filed, so it doesn't file it again.
   let system = match &triage { Some(t) => format!("{system}{}", t.note), None => system };
@@ -567,8 +571,8 @@ fn tool_activity(name: &str) -> String {
     "delegate_task" | "create_task" => "Delegating to an agent".into(),
     "monid" => "Searching with Monid".into(),
     "yt_dlp" => "Downloading media".into(),
-    "read_file" | "read_any_file" => "Reading a file".into(),
-    "write_file" => "Writing a file".into(),
+    "read_file" | "read_file_any" => "Reading a file".into(),
+    "write_file" | "write_file_any" => "Writing a file".into(),
     "search_files" => "Searching files".into(),
     "knowledge_base" => "Checking the knowledge base".into(),
     "remember" => "Saving to memory".into(),

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { Copy, X } from 'lucide-react';
 import type { Agent, CreateKind, DrawerForm, View } from './types';
 import { emptyModel, emptyProject, emptyScript, emptySkill, emptyTool } from './types';
 import { useAgentsStore } from './hooks/useAgents';
@@ -49,6 +49,7 @@ import { BrowserPanel } from './components/BrowserPanel';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useBrowserStore } from './hooks/useBrowser';
 import { toast } from './hooks/useToast';
+import { ContextMenuAt } from './components/ui/ContextMenu';
 import { syncBrowserTheme } from './theme';
 import { VoiceOverlay } from './components/voice/VoiceOverlay';
 import { useActiveChat } from './hooks/useActiveChat';
@@ -266,15 +267,20 @@ export default function App() {
     return () => { document.removeEventListener('click', onClick); document.removeEventListener('auxclick', onClick); };
   }, []);
 
-  // In production, suppress the webview's native (browser) context menu so the app
-  // reads as native — but leave editable fields alone so right-click paste still
-  // works there.
+  // Right-click on selected text offers Copy — the webview's own menu is
+  // suppressed (it doesn't fit a desktop shell), but editable fields keep theirs
+  // so cut/copy/paste still work there. A component that already handled the
+  // click (a card's own menu) sets defaultPrevented, so this leaves it alone.
+  const [textMenu, setTextMenu] = useState<{ x: number; y: number; text: string } | null>(null);
   useEffect(() => {
-    if (!import.meta.env.PROD) return;
     const onContextMenu = (e: MouseEvent) => {
+      if (e.defaultPrevented) return;
       const el = e.target as HTMLElement | null;
       const editable = !!el && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
-      if (!editable) e.preventDefault();
+      if (editable) return;
+      e.preventDefault();
+      const text = window.getSelection?.()?.toString().trim() ?? '';
+      setTextMenu(text ? { x: e.clientX, y: e.clientY, text } : null);
     };
     document.addEventListener('contextmenu', onContextMenu);
     return () => document.removeEventListener('contextmenu', onContextMenu);
@@ -680,6 +686,23 @@ export default function App() {
           or Manager chat) rather than only while the composer is mounted. */}
       <ConfirmDialog />
       <VoiceOverlay onOpenSettings={() => setView('settings')} />
+      {textMenu && (
+        <ContextMenuAt
+          x={textMenu.x}
+          y={textMenu.y}
+          onClose={() => setTextMenu(null)}
+          items={[{
+            key: 'copy',
+            label: 'Copy',
+            icon: <Copy size={14} />,
+            onSelect: () => {
+              void navigator.clipboard.writeText(textMenu.text)
+                .then(() => toast('copied', 'success'))
+                .catch(() => toast('could not copy', 'error'));
+            },
+          }]}
+        />
+      )}
       <Toaster />
       {showOnboarding && leadAgent && (
         <Onboarding manager={leadAgent} models={models} onFinish={finishOnboarding} onSkip={dismissOnboarding} />

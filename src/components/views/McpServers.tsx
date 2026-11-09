@@ -20,7 +20,11 @@ const parseEnvLines = (text: string): Record<string, string> => {
     if (!t || t.startsWith('#')) continue;
     const i = t.indexOf('=');
     if (i <= 0) continue;
-    out[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+    // A stored secret renders as the backend's "••••••••" marker. Strip any of
+    // those bullets left in the value, so typing around the marker yields the real
+    // token and an untouched marker (now empty) keeps the stored secret.
+    const value = t.slice(i + 1).trim().replace(/•/g, '').trim();
+    out[t.slice(0, i).trim()] = value;
   }
   return out;
 };
@@ -184,7 +188,7 @@ export function McpServers() {
 
           <label className={label}>env</label>
           <textarea value={draft.env} onChange={(e) => setDraft({ ...draft, env: e.target.value })} rows={3} placeholder={'NOTION_TOKEN=ntn_…'} className={`${INPUT_CLS} resize-none`} />
-          <p className="mt-1.5 mb-0 font-mono text-[10px] text-muted">One KEY=VALUE per line. Values are stored locally and never shown again.</p>
+          <p className="mt-1.5 mb-0 font-mono text-[10px] text-muted">One KEY=VALUE per line. A saved secret shows as •••••••• — type over it to replace, or leave it to keep the stored value.</p>
         </Modal>
       )}
     </div>
