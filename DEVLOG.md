@@ -9,6 +9,15 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-09 — release 0.2.7
+
+Ships the working stop control for background tasks, the readable / full-window past-chat
+history, and the diagnosable model-response errors (all above). Version `0.2.6` → `0.2.7`
+across `package.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and
+`src-tauri/tauri.conf.json`; tag `v0.2.7` drives the release workflow.
+
+---
+
 ## 2026-11-09 — stoppable jobs, readable chat history, clearer model errors
 
 - **A stopped task actually stops.** `cancel_task` used to only flip the DB row — the
