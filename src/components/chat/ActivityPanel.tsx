@@ -180,14 +180,14 @@ function ActivityCard({ item, expanded, onToggle, onRemove, onEdit, onStop, onDr
 
   return (
     <div
-      draggable
-      onDragStart={onDragStart}
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDropOn}
       className={`group rounded-lg border border-border bg-surface px-2.5 py-2 transition-colors ${burst ? 'activity-burst' : ''}`}
     >
       <div className="flex items-center gap-2">
-        <span title="drag to reorder" aria-hidden className="shrink-0 cursor-grab text-muted/40 group-hover:text-muted">
+        {/* Only the grip starts a drag, so the stop / toggle buttons never lose a
+            click to a stray drag gesture on the card. */}
+        <span title="drag to reorder" aria-hidden draggable onDragStart={onDragStart} className="shrink-0 cursor-grab text-muted/40 group-hover:text-muted">
           <GripVertical size={12} />
         </span>
         <span

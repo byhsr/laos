@@ -376,7 +376,7 @@ async fn complete_oauth_inner(app: &AppHandle, id: &str, code: &str) -> Result<(
     let text = response.text().await.unwrap_or_default();
     return Err(format!("OAuth token exchange failed: {text}"));
   }
-  let tokens: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+  let tokens: serde_json::Value = crate::http::json_body(response).await?;
   let mut stored = cfg.clone();
   if let Some(obj) = stored.as_object_mut() {
     obj.insert("accessToken".into(), tokens.get("access_token").cloned().unwrap_or(serde_json::Value::Null));
@@ -426,7 +426,7 @@ pub(crate) async fn google_token(app: &AppHandle, id: &str) -> Result<String, St
   if !resp.status().is_success() {
     return Err(format!("Google token refresh failed: {}", resp.text().await.unwrap_or_default()));
   }
-  let tokens: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+  let tokens: serde_json::Value = crate::http::json_body(resp).await?;
   let new_access = tokens.get("access_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
   if new_access.is_empty() { return Err("Google token refresh returned no access token.".into()); }
   let mut stored = cfg.clone();

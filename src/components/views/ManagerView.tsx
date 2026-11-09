@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, ArrowLeft, CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RotateCcw, Settings, StickyNote, Trash2 } from 'lucide-react';
+import { Activity, CornerDownLeft, Info, MessageSquare, MessageSquarePlus, RotateCcw, Settings, StickyNote, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from '../ui/ContextMenu';
 import type { Agent, Attachment, Integration, ModelConfig, Reasoning, Task, Tool } from '../../types';
 import { useManagerStore, type ChatEntry } from '../../hooks/useManager';
@@ -71,8 +71,6 @@ export function ManagerView({ agent, agents, integrations, models, tools, openCo
     reader.readAsDataURL(file);
   };
   const [sessions, setSessions] = useState<{ id: string; title: string; createdAt: string; updatedAt: string }[]>([]);
-  const [viewingSession, setViewingSession] = useState<string | null>(null);
-  const [viewMsgs, setViewMsgs] = useState<ChatEntry[]>([]);
   const sessionId = useManagerStore((s) => s.sessionIds[managerId] ?? null);
   // The agent's own working pad for this chat, loaded only when it's peeked at.
   const [scratchpad, setScratchpad] = useState('');
@@ -258,20 +256,8 @@ export function ManagerView({ agent, agents, integrations, models, tools, openCo
       )}
 
       {panel === 'info' && (
-        <SidePanel title="info" onClose={() => { setPanel(null); setViewingSession(null); }}>
-          {viewingSession ? (
-            <div>
-              <div className="mb-3">
-                <Button icon={<ArrowLeft size={12} />} onClick={() => setViewingSession(null)}>all chats</Button>
-              </div>
-              <div className="grid gap-3">
-                {viewMsgs.length === 0
-                  ? <p className="m-0 text-center font-mono text-xs text-muted">no messages</p>
-                  : viewMsgs.map((m, i) => <MessageBubble key={i} role={m.role} content={m.content} time={m.time} />)}
-              </div>
-            </div>
-          ) : (
-            <div className="grid gap-3">
+        <SidePanel title="info" onClose={() => setPanel(null)}>
+          <div className="grid gap-3">
               {/* Agents */}
               <div className="rounded-xl border border-border bg-surface p-3.5">
                 <span className={GROUP_LABEL_CLS}>agents</span>
@@ -327,22 +313,17 @@ export function ManagerView({ agent, agents, integrations, models, tools, openCo
                   {sessions.length === 0 && <p className="m-0 px-2 font-mono text-[10px] text-muted">no chats yet</p>}
                   {sessions.map((s) => (
                     <div key={s.id} className={`flex items-center gap-1 rounded-lg border px-2 py-1.5 ${s.id === sessionId ? 'border-foreground/40 bg-background' : 'border-border bg-background'}`}>
+                      {/* Opening a chat loads it into the main window and makes it the
+                          active session, so the next message continues it in place. */}
                       <button className="min-w-0 flex-1 cursor-pointer overflow-hidden border-0 bg-transparent p-0 text-left" onClick={async () => {
-                        setViewingSession(s.id);
-                        const msgs = await getChatSession(s.id);
-                        setViewMsgs(msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: '' })));
-                      }}>
-                        <span className={`block truncate font-mono text-[11px] ${s.id === sessionId ? 'text-foreground' : 'text-muted'}`}>{s.id === sessionId ? 'current chat' : s.title}</span>
-                        <span className="block font-mono text-[10px] text-muted">{s.updatedAt ? (() => { const d = new Date(s.updatedAt); return isNaN(d.getTime()) ? '' : d.toLocaleString(); })() : ''}</span>
-                      </button>
-                      <button title="continue this chat" className="cursor-pointer border-0 bg-transparent p-1 text-muted transition-colors hover:text-foreground" onClick={async () => {
-                        // Make this the active session so the next message appends
-                        // to it instead of starting a fresh chat.
                         const msgs = await getChatSession(s.id);
                         const entries: ChatEntry[] = msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: m.time }));
                         useManagerStore.getState().resumeSession(managerId, s.id, entries);
                         setPanel(null);
-                      }}><CornerDownLeft size={11} /></button>
+                      }}>
+                        <span className={`block truncate font-mono text-[11px] ${s.id === sessionId ? 'text-foreground' : 'text-muted'}`}>{s.title}</span>
+                        <span className="block font-mono text-[10px] text-muted">{s.updatedAt ? (() => { const d = new Date(s.updatedAt); return isNaN(d.getTime()) ? '' : d.toLocaleString(); })() : ''}</span>
+                      </button>
                       <button className="cursor-pointer border-0 bg-transparent p-1 text-muted transition-colors hover:text-danger" onClick={async () => { await deleteChatSession(s.id); listChatSessions(managerId).then(setSessions); }}><Trash2 size={11} /></button>
                     </div>
                   ))}
@@ -361,7 +342,6 @@ export function ManagerView({ agent, agents, integrations, models, tools, openCo
                 </div>
               </div>
             </div>
-          )}
         </SidePanel>
       )}
 

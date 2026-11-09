@@ -274,7 +274,7 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
           None => return Err(e),
         },
       };
-      let mut parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+      let mut parsed: serde_json::Value = crate::http::json_body(response).await?;
       if is_anthropic { parsed = crate::anthropic::normalize_response(&parsed); }
       // Ollama reports prompt_eval_count/eval_count; OpenAI-compatible usage.{prompt,completion}_tokens.
       prompt_tokens += parsed["prompt_eval_count"].as_u64()

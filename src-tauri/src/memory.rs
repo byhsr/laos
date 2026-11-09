@@ -50,7 +50,7 @@ pub(crate) async fn one_shot_completion(app: &AppHandle, model: &str, prompt: &s
 
   let url = if is_ollama { resolved.generate_url() } else { resolved.chat_url() };
   let response = http::send_model_request(&http::client(), &resolved, &url, &body, http::MODEL_ATTEMPTS).await?;
-  let mut json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+  let mut json: serde_json::Value = crate::http::json_body(response).await?;
   if is_anthropic { json = crate::anthropic::normalize_response(&json); }
   Ok(if is_ollama {
     json["response"].as_str().unwrap_or("").to_string()

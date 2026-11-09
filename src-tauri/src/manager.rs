@@ -391,7 +391,7 @@ pub(crate) async fn manager_turn(app: &AppHandle, message: &str) -> Result<Strin
     }
     if is_anthropic { body = crate::anthropic::to_wire(&body); }
     let response = http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
-    let mut parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    let mut parsed: serde_json::Value = crate::http::json_body(response).await?;
     if is_anthropic { parsed = crate::anthropic::normalize_response(&parsed); }
     // Support both Ollama (message.tool_calls) and OpenAI-compatible shapes.
     let calls_arr = parsed["message"]["tool_calls"].as_array()

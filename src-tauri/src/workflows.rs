@@ -248,7 +248,7 @@ async fn run_llm_judge(app: &AppHandle, rule: &serde_json::Value, input_value: &
     let resp = http::send_model_request(&http::client(), &resolved, &url, &body, http::MODEL_ATTEMPTS)
       .await
       .map_err(|e| format!("LLM judge: {e}"))?;
-    let mut json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let mut json: serde_json::Value = crate::http::json_body(resp).await?;
     if is_anthropic { json = crate::anthropic::normalize_response(&json); }
     judge_prompt += if is_ollama { json["prompt_eval_count"].as_u64() } else { json["usage"]["prompt_tokens"].as_u64() }.unwrap_or(0);
     judge_completion += if is_ollama { json["eval_count"].as_u64() } else { json["usage"]["completion_tokens"].as_u64() }.unwrap_or(0);
@@ -310,7 +310,7 @@ async fn run_llm_node(app: &AppHandle, config: &serde_json::Value, input: &str, 
   let resp = http::send_model_request(&http::client(), &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS)
     .await
     .map_err(|e| format!("LLM node: {e}"))?;
-  let mut json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+  let mut json: serde_json::Value = crate::http::json_body(resp).await?;
   if is_anthropic { json = crate::anthropic::normalize_response(&json); }
 
   let text = if is_ollama {

@@ -167,7 +167,7 @@ pub(crate) async fn reflect(app: &AppHandle) -> Result<usize, String> {
 
     let client = crate::http::client();
     let resp = crate::http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, crate::http::MODEL_ATTEMPTS).await?;
-    let mut reply: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let mut reply: serde_json::Value = crate::http::json_body(resp).await?;
     if resolved.is_anthropic() { reply = crate::anthropic::normalize_response(&reply); }
     let text = reply["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
     let _ = &model_id;

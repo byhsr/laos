@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, AlertTriangle, ArrowLeft, Check, ChevronRight, History, Info, Lock, MessageSquare, MessageSquarePlus, PanelRight, Plug, Plus, RotateCcw, Settings, StickyNote, Trash2 } from 'lucide-react';
+import { Activity, AlertTriangle, Check, ChevronRight, History, Info, Lock, MessageSquare, MessageSquarePlus, PanelRight, Plug, Plus, RotateCcw, Settings, StickyNote, Trash2 } from 'lucide-react';
 import { ContextMenu, type MenuItem } from './ui/ContextMenu';
-import type { Agent, Attachment, ChatMessage, ChatStep, ExecutionResult, Integration, ModelConfig, Reasoning, Run, Skill, Tool, View } from '../types';
+import type { Agent, Attachment, ChatStep, ExecutionResult, Integration, ModelConfig, Reasoning, Run, Skill, Tool, View } from '../types';
 import { ToolFormDrawer } from './views/ToolsView';
 import { emptyTool } from '../types';
 import { useToolsStore } from '../hooks/useTools';
@@ -23,11 +23,11 @@ import { ActivityPanel } from './chat/ActivityPanel';
 import { ArtifactsMenu } from './chat/ArtifactsMenu';
 import { useActivity } from '../hooks/useActivity';
 import { toast } from '../hooks/useToast';
-import { listChatSessions, getChatSession, getScratchpad, createChatSession, deleteChatSession, closeSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, createDocument, type StreamStep } from '../runtime';
+import { listChatSessions, getChatSession, getScratchpad, createChatSession, deleteChatSession, closeSession, renameChatSession, streamChat, cancelChatStream, newChatStreamId, rateTurn, createDocument, type StreamStep } from '../runtime';
 import { useRunsStore } from '../hooks/useRuns';
 import { useAgentChatBackdrop, useAgentBackdrop } from '../hooks/useAgentBackdrop';
 import { readBackgroundImage } from '../hooks/useGlass';
-import { useManagerStore, type ChatEntry } from '../hooks/useManager';
+import { useManagerStore, titleFrom, type ChatEntry } from '../hooks/useManager';
 import { useProjectsStore } from '../hooks/useProjects';
 import { useConfirmStore } from '../hooks/useConfirm';
 import { useStickToBottom } from '../hooks/useStickToBottom';
@@ -95,9 +95,7 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   const messages = useManagerStore(useShallow((s) => s.conversations[agent.id] ?? []));
   // The active session id, watched so the artifacts section tracks the current chat.
   const chatSessionId = useManagerStore((s) => s.sessionIds[agent.id] ?? null);
-  const [history, setHistory] = useState<ChatMessage[]>([]);
   const [sessions, setSessions] = useState<{ id: string; title: string; createdAt: string; updatedAt: string }[]>([]);
-  const [viewingSession, setViewingSession] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   // Live trace of what this turn is doing — real backend steps, plus the model's
   // reasoning as it streams in.
@@ -228,7 +226,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
   useEffect(() => {
     if (panel === 'history') {
       listChatSessions(agent.id).then(setSessions).catch(() => setSessions([]));
-      setViewingSession(null);
     }
   }, [panel, agent.id]);
 
@@ -255,6 +252,9 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
       sid = sess.id;
       useManagerStore.setState((s) => ({ sessionIds: { ...s.sessionIds, [agent.id]: sid } }));
     }
+    // Name a fresh session from its first user message, so past chats read as
+    // something other than "Chat".
+    if (messages.filter((m) => m.role === 'user').length === 0) void renameChatSession(sid, titleFrom(text));
     turnItemRef.current = useActivity.getState().startTurn(agent.id, sid, 'Replying');
     // Batch the streamed deltas — see src/streamBuffer.ts for why.
     const batcher = createDeltaBuffer((text) => {
@@ -342,7 +342,6 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
     const sess = await createChatSession(agent.id, 'Chat', useProjectsStore.getState().activeId || null);
     useManagerStore.setState((s) => ({ sessionIds: { ...s.sessionIds, [agent.id]: sess.id } }));
     setMessages(() => []);
-    setViewingSession(null);
     setPanel(null);
   };
 
@@ -517,44 +516,41 @@ export function AgentWindow({ agent, tools, skills, models, integrations, runs, 
           )}
 
           {panel === 'history' && (
-            viewingSession ? (
-              <div>
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <Button icon={<ArrowLeft size={12} />} onClick={() => setViewingSession(null)}>all chats</Button>
-                  <div className="flex items-center gap-2">
-                    <Button onClick={() => {
-                      // Continue this chat: make it the active session so the next
-                      // message appends to it (otherwise a fresh session starts).
-                      if (!viewingSession) return;
-                      const entries: ChatEntry[] = history.map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content, time: m.time ?? '' }));
-                      useManagerStore.getState().resumeSession(agent.id, viewingSession, entries);
-                      setViewingSession(null);
-                      setPanel(null);
-                    }}>continue chat</Button>
-                    <Button onClick={async () => { await deleteChatSession(viewingSession); setViewingSession(null); listChatSessions(agent.id).then(setSessions); }}>delete chat</Button>
-                  </div>
-                </div>
-                <div className="grid gap-3">
-                  {history.map((m, i) => (
-                    <MessageBubble key={i} role={m.role === 'user' ? 'user' : 'assistant'} content={m.content} meta={m.role === 'user' ? 'you' : agent.name} time={m.time} />
+            <div>
+              <span className={GROUP_LABEL_CLS}>past chats</span>
+              {sessions.length === 0 ? (
+                <p className="m-0 mt-3 px-1 font-mono text-[11px] text-muted">no past chats yet</p>
+              ) : (
+                <div className="mt-3 grid gap-1.5">
+                  {sessions.map((s) => (
+                    <div key={s.id} className="flex items-center gap-1 rounded-lg border border-border bg-background px-2 py-1.5">
+                      {/* Opening a past chat loads it into the main window and makes it
+                          the active session, so it reads full-size and the next message
+                          continues it in place. */}
+                      <button
+                        className="focus-ring min-w-0 flex-1 cursor-pointer overflow-hidden border-0 bg-transparent p-0 text-left"
+                        onClick={async () => {
+                          const msgs = await getChatSession(s.id);
+                          const entries: ChatEntry[] = msgs.map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content, time: m.time ?? '' }));
+                          useManagerStore.getState().resumeSession(agent.id, s.id, entries);
+                          setPanel(null);
+                        }}
+                      >
+                        <span className="block truncate font-mono text-[11px] text-foreground">{s.title}</span>
+                        <span className="block font-mono text-[10px] text-muted">{fmtDate(s.updatedAt)}</span>
+                      </button>
+                      <button
+                        title="delete chat"
+                        className="focus-ring grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded border-0 bg-transparent p-0 text-muted/60 transition-colors hover:text-danger"
+                        onClick={async () => { await deleteChatSession(s.id); listChatSessions(agent.id).then(setSessions); }}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
                   ))}
                 </div>
-              </div>
-            ) : (
-              <div>
-                <span className={GROUP_LABEL_CLS}>past chats</span>
-                {sessions.length === 0 ? null : (
-                  <div className="mt-3 grid gap-1.5">
-                    {sessions.map((s) => (
-                      <button key={s.id} className="focus-ring flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2 text-left transition-colors hover:border-foreground/30" onClick={async () => { setViewingSession(s.id); const msgs = await getChatSession(s.id); setHistory(msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, time: m.time ?? '' }))); }}>
-                        <span className="min-w-0 truncate font-mono text-[11px] text-foreground">{s.title}</span>
-                        <span className="shrink-0 font-mono text-[10px] text-muted">{fmtDate(s.updatedAt)}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
+              )}
+            </div>
           )}
 
           {panel === 'config' && (

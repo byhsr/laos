@@ -9,6 +9,33 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-09 — stoppable jobs, readable chat history, clearer model errors
+
+- **A stopped task actually stops.** `cancel_task` used to only flip the DB row — the
+  background future kept running and `finish()` then overwrote `cancelled` back to
+  `completed`, filed the result and fired the follow-up. Now a cancel is recorded in a
+  registry that an agent task threads through `run_agent_once_structured` (checked between
+  tool rounds) so it aborts, and `finish()` refuses to overwrite a cancelled row, file a
+  result, notify or run a follow-up. The activity card now starts a drag only from its grip
+  handle, so a click on the stop button is no longer swallowed by a drag gesture.
+- **Past chats read as something other than "Chat".** A regular agent's session was created
+  as `"Chat"` and never renamed (only the Manager renamed on the first message); the agent's
+  `send` now names a fresh session from its first user message. And clicking a past chat
+  opens it **in the main window** and makes it the active session, so it reads full-size and
+  the next message continues it in place (`AgentWindow` and `ManagerView`) — replacing the
+  cramped side-panel preview. The Manager list shows real titles instead of "current chat".
+- **A non-JSON provider response is diagnosable.** New `http::json_body` turns a body that
+  isn't JSON — an HTML block page, an empty 200, a truncated response — into
+  `The response was not valid JSON (200): … Body: …` instead of reqwest's bare
+  "error decoding response body". Every provider/model decode site now goes through it
+  (`chat`, `agents`, `manager`, `memory`, `classify`, `insights`, `embed`, `workflows`,
+  `media`, `transcribe`, `integrations`).
+
+**Verified:** `npm run build` — clean; `cargo test` — **101 pass** (was 98; +1 task-cancel
+registry, +2 `http::json_body`).
+
+---
+
 ## 2026-11-09 — release 0.2.6
 
 Ships the artifacts menu, the drag-to-split row and the Manager-as-pane, the

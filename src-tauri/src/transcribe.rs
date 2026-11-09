@@ -80,7 +80,7 @@ pub(crate) async fn transcribe(app: &AppHandle, model_id: &str, name: &str, mime
     crate::http::auth_headers(client.post(&url).multipart(form), &resolved)
   };
   let response = crate::http::send_with_retry(make, crate::http::MODEL_ATTEMPTS).await?;
-  let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+  let json: serde_json::Value = crate::http::json_body(response).await?;
   let text = json["text"].as_str().unwrap_or("").trim().to_string();
   if text.is_empty() { return Err("the transcriber returned nothing".into()); }
   Ok(text)

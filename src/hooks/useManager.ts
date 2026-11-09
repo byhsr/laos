@@ -26,7 +26,7 @@ export type ChatEntry = {
 // are resumed on demand from History (resumeSession), not restored automatically.
 
 // Derives a short, readable title from the first user message.
-const titleFrom = (msg: string) => {
+export const titleFrom = (msg: string) => {
   const clean = msg.replace(/\s+/g, ' ').trim();
   return clean.length > 40 ? `${clean.slice(0, 40)}…` : (clean || 'Chat');
 };

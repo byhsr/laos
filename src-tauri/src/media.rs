@@ -166,7 +166,7 @@ async fn describe(app: &AppHandle, model_id: &str, images: &[&Attachment]) -> Re
 
   let client = crate::http::client();
   let response = crate::http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, crate::http::MODEL_ATTEMPTS).await?;
-  let mut parsed: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+  let mut parsed: serde_json::Value = crate::http::json_body(response).await?;
   if resolved.is_anthropic() { parsed = crate::anthropic::normalize_response(&parsed); }
   // OpenAI-compatible nest the reply under choices[0]; Ollama puts it at the top.
   let text = parsed["choices"][0]["message"]["content"].as_str()

@@ -1748,7 +1748,7 @@ async fn run_agent_reply(app: &AppHandle, bot_id: &str, agent_id: &str, chat_id:
   // Published only once the lock is held, so it can't be clobbered mid-turn.
   let _active = ActiveChat::set(bot_id, chat_id);
   let mut events = Vec::new();
-  match crate::agents::run_agent_once_structured(app, &agent, &convo, None, &mut events, false).await {
+  match crate::agents::run_agent_once_structured(app, &agent, &convo, None, &mut events, false, None).await {
     Ok((out, _, _)) => {
       if let Ok(conn) = db(app) {
         let _ = crate::memory::append_session_message(&conn, &session_id, agent_id, "user", text);

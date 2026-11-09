@@ -384,7 +384,7 @@ pub(crate) fn skills_prompt(conn: &Connection, skill_ids: &[String]) -> String {
 }
 
 // Returns (final_text, events, used_tools, prompt_tokens, completion_tokens).
-async fn run_ollama_chat(resolved: &provider::Resolved, prompt: &str, agent: &AgentRequest, tools: &[Box<dyn AgentTool>]) -> Result<(String, Vec<ExecutionEvent>, bool, u64, u64), String> {
+async fn run_ollama_chat(resolved: &provider::Resolved, prompt: &str, agent: &AgentRequest, tools: &[Box<dyn AgentTool>], cancel_key: Option<&str>) -> Result<(String, Vec<ExecutionEvent>, bool, u64, u64), String> {
   let mut events = Vec::new();
   let mut messages = vec![
     ChatMessage { role: "system".into(), content: Some(format!("You are {}. Objective: {}\n\nUse tools when you need current or external information. Call a tool, wait for its result, then continue. Cite URLs you use.", agent.name, agent.objective)), tool_calls: None, tool_call_id: None },
@@ -395,6 +395,7 @@ async fn run_ollama_chat(resolved: &provider::Resolved, prompt: &str, agent: &Ag
   let mut prompt_tokens = 0u64;
   let mut completion_tokens = 0u64;
   for _round in 0..MAX_TOOL_ROUNDS {
+    if crate::tasks::is_cancelled_key(cancel_key) { return Err("Task cancelled.".into()); }
     // Built as JSON rather than the typed ChatRequest so the provider layer can
     // drop reasoning parameters in one place if Ollama rejects them.
     let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "tools": tool_schemas(tools), "stream": false });
@@ -403,7 +404,7 @@ async fn run_ollama_chat(resolved: &provider::Resolved, prompt: &str, agent: &Ag
     let response = http::send_model_request(&client, resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS)
       .await
       .map_err(|e| format!("Could not reach Ollama. Start it at {} ({e})", resolved.base))?;
-    let parsed: ChatResponse = response.json().await.map_err(|e| format!("Could not parse Ollama tool response: {e}"))?;
+    let parsed: ChatResponse = serde_json::from_value(crate::http::json_body(response).await?).map_err(|e| format!("Unexpected Ollama tool response: {e}"))?;
     prompt_tokens += parsed.prompt_eval_count;
     completion_tokens += parsed.eval_count;
     let reply = parsed.message;
@@ -456,7 +457,7 @@ async fn run_ollama_chat(resolved: &provider::Resolved, prompt: &str, agent: &Ag
 // Provider-agnostic tool-calling loop for the OpenAI-compatible endpoints
 // (OpenRouter / Groq). Mirrors run_ollama_chat but speaks the OpenAI shape:
 // arguments arrive as a JSON string, and each tool result must carry its call id.
-async fn run_openai_tool_chat(resolved: &provider::Resolved, prompt: &str, agent: &AgentRequest, tools: &[Box<dyn AgentTool>]) -> Result<(String, Vec<ExecutionEvent>, bool, u64, u64), String> {
+async fn run_openai_tool_chat(resolved: &provider::Resolved, prompt: &str, agent: &AgentRequest, tools: &[Box<dyn AgentTool>], cancel_key: Option<&str>) -> Result<(String, Vec<ExecutionEvent>, bool, u64, u64), String> {
   let mut events = Vec::new();
   let mut messages = vec![
     serde_json::json!({ "role": "system", "content": format!("You are {}. Objective: {}\n\nUse tools when you need current or external information. Call a tool, wait for its result, then continue. Cite URLs you use.", agent.name, agent.objective) }),
@@ -467,12 +468,13 @@ async fn run_openai_tool_chat(resolved: &provider::Resolved, prompt: &str, agent
   let mut prompt_tokens = 0u64;
   let mut completion_tokens = 0u64;
   for _round in 0..MAX_TOOL_ROUNDS {
+    if crate::tasks::is_cancelled_key(cancel_key) { return Err("Task cancelled.".into()); }
     let mut body = serde_json::json!({ "model": resolved.model, "messages": messages, "tools": tool_schemas(tools), "stream": false });
     let budget = provider::apply_reasoning(&mut body, resolved, http::CHAT_MAX_TOKENS);
     http::apply_openai_defaults(&mut body, resolved.provider_routing(), budget);
     if resolved.is_anthropic() { body = crate::anthropic::to_wire(&body); }
     let response = http::send_model_request(&client, resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
-    let mut parsed: serde_json::Value = response.json().await.map_err(|e| format!("Could not parse the tool response: {e}"))?;
+    let mut parsed: serde_json::Value = crate::http::json_body(response).await?;
     if resolved.is_anthropic() { parsed = crate::anthropic::normalize_response(&parsed); }
     prompt_tokens += parsed["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
     completion_tokens += parsed["usage"]["completion_tokens"].as_u64().unwrap_or(0);
@@ -524,11 +526,13 @@ async fn run_openai_tool_chat(resolved: &provider::Resolved, prompt: &str, agent
 
 // Runs a single agent against its provider. Returns (output, prompt_tokens, completion_tokens).
 pub(crate) async fn run_agent_once(app: &AppHandle, agent: &AgentRequest, input: &str, api_key: Option<&str>, events: &mut Vec<ExecutionEvent>) -> Result<(String, u64, u64), String> {
-  run_agent_once_structured(app, agent, input, api_key, events, true).await
+  run_agent_once_structured(app, agent, input, api_key, events, true, None).await
 }
 
 // `structured` controls whether the prompt forces the summary/result JSON envelope.
-pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequest, input: &str, api_key: Option<&str>, events: &mut Vec<ExecutionEvent>, structured: bool) -> Result<(String, u64, u64), String> {
+// `cancel_key` names a background task to abort on (checked between tool rounds);
+// None for a turn with no such handle.
+pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequest, input: &str, api_key: Option<&str>, events: &mut Vec<ExecutionEvent>, structured: bool, cancel_key: Option<&str>) -> Result<(String, u64, u64), String> {
   let conn = db(app)?;
   let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join(&agent.id);
   for folder in ["files", "memory", "runs", "outputs"] { fs::create_dir_all(home.join(folder)).map_err(|e| e.to_string())?; }
@@ -561,10 +565,11 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
   });
 
   if !tools.is_empty() {
+    if crate::tasks::is_cancelled_key(cancel_key) { return Err("Task cancelled.".into()); }
     let (output, tool_events, _, pt, ct) = if resolved.is_ollama() {
-      run_ollama_chat(&resolved, &prompt, agent, &tools).await?
+      run_ollama_chat(&resolved, &prompt, agent, &tools, cancel_key).await?
     } else {
-      run_openai_tool_chat(&resolved, &prompt, agent, &tools).await?
+      run_openai_tool_chat(&resolved, &prompt, agent, &tools, cancel_key).await?
     };
     events.extend(tool_events);
     return Ok((output, pt, ct));
@@ -579,7 +584,7 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
     let response = http::send_model_request(&http::stream_client(), &resolved, &resolved.generate_url(), &body, http::MODEL_ATTEMPTS)
       .await
       .map_err(|e| format!("Could not reach Ollama. Start it at {} ({e})", resolved.base))?;
-    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    let json: serde_json::Value = crate::http::json_body(response).await?;
     (
       json["response"].as_str().unwrap_or("No response from Ollama.").to_string(),
       json["prompt_eval_count"].as_u64().unwrap_or(0),
@@ -591,7 +596,7 @@ pub(crate) async fn run_agent_once_structured(app: &AppHandle, agent: &AgentRequ
     http::apply_openai_defaults(&mut body, resolved.provider_routing(), budget);
     if resolved.is_anthropic() { body = crate::anthropic::to_wire(&body); }
     let response = http::send_model_request(&http::client(), &resolved, &resolved.chat_url(), &body, http::MODEL_ATTEMPTS).await?;
-    let mut json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    let mut json: serde_json::Value = crate::http::json_body(response).await?;
     if resolved.is_anthropic() { json = crate::anthropic::normalize_response(&json); }
     (
       json["choices"][0]["message"]["content"].as_str().unwrap_or("The provider returned no text.").to_string(),

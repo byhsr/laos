@@ -158,7 +158,7 @@ async fn classify_inner(app: &AppHandle, text: &str) -> Result<Classification, S
     if resolved.is_anthropic() { body = crate::anthropic::to_wire(&body); }
     let client = crate::http::client();
     let resp = crate::http::send_model_request(&client, &resolved, &resolved.chat_url(), &body, crate::http::MODEL_ATTEMPTS).await?;
-    let mut reply: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let mut reply: serde_json::Value = crate::http::json_body(resp).await?;
     if resolved.is_anthropic() { reply = crate::anthropic::normalize_response(&reply); }
     reply["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string()
   };

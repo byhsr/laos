@@ -3,6 +3,8 @@
 // so its result can be pushed back there when it finishes.
 
 use rusqlite::{params, Connection};
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::agents::{build_tools, run_agent_once_structured};
@@ -43,6 +45,24 @@ impl NewTask {
       kind: "tool".into(), tool: tool.into(), tool_args: args.to_string(),
     }
   }
+}
+
+// Task ids the user asked to stop. `run_task_inner` notices on its next check
+// and `finish` refuses to overwrite the cancelled row, so a stop actually ends
+// the work instead of being undone when the run finishes a moment later.
+static CANCELLED_TASKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+fn cancelled_tasks() -> &'static Mutex<HashSet<String>> {
+  CANCELLED_TASKS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+fn is_task_cancelled(id: &str) -> bool {
+  cancelled_tasks().lock().map(|s| s.contains(id)).unwrap_or(false)
+}
+/// A task id to watch for cancellation, when the runner was handed one.
+pub(crate) fn is_cancelled_key(key: Option<&str>) -> bool {
+  key.map(is_task_cancelled).unwrap_or(false)
+}
+fn clear_cancelled(id: &str) {
+  if let Ok(mut set) = cancelled_tasks().lock() { set.remove(id); }
 }
 
 pub(crate) fn create_task(conn: &Connection, t: &NewTask) -> Result<String, String> {
@@ -111,12 +131,15 @@ fn load_agent(conn: &Connection, id: &str) -> Result<Option<AgentRequest>, Strin
 pub(crate) async fn run_task_inner(app: &AppHandle, task_id: &str) {
   let row = { db(app).ok().and_then(|conn| load_task(&conn, task_id)) };
   let Some((assigned_agent, input, context, session_id, chat_agent_id, kind, tool, tool_args)) = row else { return };
-  if let Ok(conn) = db(app) { let _ = conn.execute("UPDATE tasks SET status='running' WHERE id=?1", params![task_id]); }
+  // Cancelled before it got going — leave the row as the cancel left it.
+  if is_task_cancelled(task_id) { clear_cancelled(task_id); return; }
+  // Never resurrect a row the user already cancelled back to 'running'.
+  if let Ok(conn) = db(app) { let _ = conn.execute("UPDATE tasks SET status='running' WHERE id=?1 AND status='pending'", params![task_id]); }
 
   let outcome = if kind == "tool" {
     run_tool_task(app, &assigned_agent, &tool, &tool_args, &session_id).await
   } else {
-    run_agent_task(app, &assigned_agent, &input, &context).await
+    run_agent_task(app, &assigned_agent, &input, &context, Some(task_id)).await
   };
   finish(app, task_id, &assigned_agent, &input, &session_id, &chat_agent_id, &kind, outcome);
 }
@@ -132,14 +155,14 @@ fn load_task(conn: &Connection, task_id: &str) -> Option<TaskRow> {
   rows.next()?.ok()
 }
 
-async fn run_agent_task(app: &AppHandle, assigned_agent: &str, input: &str, context: &str) -> Result<String, String> {
+async fn run_agent_task(app: &AppHandle, assigned_agent: &str, input: &str, context: &str, cancel_key: Option<&str>) -> Result<String, String> {
   // Scope the connection so it is never held across the await (the future must
   // stay Send for the background spawn).
   let agent = { let conn = db(app)?; load_agent(&conn, assigned_agent)? };
   let Some(a) = agent else { return Err("Assigned agent not found.".into()) };
   let prompt = if context.is_empty() { input.to_string() } else { format!("Context:\n{context}\n\nTask:\n{input}") };
   let mut events = Vec::new();
-  run_agent_once_structured(app, &a, &prompt, None, &mut events, false).await.map(|(out, _, _)| out)
+  run_agent_once_structured(app, &a, &prompt, None, &mut events, false, cancel_key).await.map(|(out, _, _)| out)
 }
 
 // Runs one captured tool call for the agent that asked for it. The originating
@@ -161,23 +184,34 @@ async fn run_tool_task(app: &AppHandle, assigned_agent: &str, tool: &str, tool_a
 // Records the outcome, notifies, leaves a durable trace in the chat session, and
 // tells the UI so it can run the agent's follow-up summary.
 fn finish(app: &AppHandle, task_id: &str, assigned_agent: &str, input: &str, session_id: &str, chat_agent_id: &str, kind: &str, outcome: Result<String, String>) {
-  let (status, result) = match outcome {
-    Ok(out) => ("completed", out),
-    Err(e) => ("failed", format!("Error: {e}")),
+  // A stop wins over the outcome: the row stays 'cancelled', no result is filed,
+  // and no follow-up runs — an agent task stopped mid-flight must not look like
+  // it finished a moment later.
+  let cancelled = is_task_cancelled(task_id);
+  let (status, result) = if cancelled {
+    ("cancelled", String::new())
+  } else {
+    match outcome {
+      Ok(out) => ("completed", out),
+      Err(e) => ("failed", format!("Error: {e}")),
+    }
   };
-  if let Ok(conn) = db(app) {
-    let _ = conn.execute("UPDATE tasks SET status=?1, result=?2, completed_at=?3 WHERE id=?4", params![status, result, chrono::Utc::now().to_rfc3339(), task_id]);
-    // The chat it came from gets a system turn, so the agent still has the result
-    // in context next time even if the window was closed when it finished.
-    if !session_id.is_empty() {
-      let _ = crate::memory::append_session_message(&conn, session_id, chat_agent_id, "system", &format!("Background task {task_id} {status}:\n{result}"));
+  if !cancelled {
+    if let Ok(conn) = db(app) {
+      let _ = conn.execute("UPDATE tasks SET status=?1, result=?2, completed_at=?3 WHERE id=?4", params![status, result, chrono::Utc::now().to_rfc3339(), task_id]);
+      // The chat it came from gets a system turn, so the agent still has the result
+      // in context next time even if the window was closed when it finished.
+      if !session_id.is_empty() {
+        let _ = crate::memory::append_session_message(&conn, session_id, chat_agent_id, "system", &format!("Background task {task_id} {status}:\n{result}"));
+      }
+    }
+    // Only a delegated agent task earns an OS notification. A backgrounded tool
+    // call is routine chatter — it would fire one on nearly every turn.
+    if kind != "tool" {
+      crate::notify::notify_and_push(app, "task", &format!("task {status}"), &format!("{assigned_agent}: {input}"), "task", task_id);
     }
   }
-  // Only a delegated agent task earns an OS notification. A backgrounded tool call
-  // is routine chatter — it would fire one on nearly every turn, so it doesn't.
-  if kind != "tool" {
-    crate::notify::notify_and_push(app, "task", &format!("task {status}"), &format!("{assigned_agent}: {input}"), "task", task_id);
-  }
+  clear_cancelled(task_id);
   let _ = app.emit("lumin-task-finished", serde_json::json!({
     "taskId": task_id, "chatAgentId": chat_agent_id, "assignedAgent": assigned_agent,
     "sessionId": session_id, "status": status, "result": result,
@@ -215,8 +249,14 @@ pub async fn run_task(app: AppHandle, requester: String, assigned_agent: String,
 #[tauri::command]
 pub fn cancel_task(app: AppHandle, id: String) -> Result<(), String> {
   let conn = db(&app)?;
-  conn.execute("UPDATE tasks SET status='cancelled', completed_at=?1 WHERE id=?2 AND status IN ('pending','running')", params![chrono::Utc::now().to_rfc3339(), id]).map_err(|e| e.to_string())?;
-  // Same signal as a normal end, so the activity panel drops the job.
+  let updated = conn.execute("UPDATE tasks SET status='cancelled', completed_at=?1 WHERE id=?2 AND status IN ('pending','running')", params![chrono::Utc::now().to_rfc3339(), id]).map_err(|e| e.to_string())?;
+  // Only a task that was still pending/running gets a cancel flag: the running
+  // future checks it, and `finish` won't overwrite the row. One that already ended
+  // needs nothing.
+  if updated > 0 {
+    if let Ok(mut set) = cancelled_tasks().lock() { set.insert(id.clone()); }
+  }
+  // Same signal as a normal end, so the activity panel drops the job at once.
   let _ = app.emit("lumin-task-finished", serde_json::json!({
     "taskId": id, "chatAgentId": "", "sessionId": "", "status": "cancelled", "result": "",
   }));
@@ -252,4 +292,25 @@ pub fn list_runs(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
   let mut out = Vec::new();
   for row in rows { out.push(row.map_err(|e| e.to_string())?); }
   Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // A cancelled id is visible to the runner (which aborts on it) and to `finish`
+  // (which refuses to overwrite the row), then clears once the task ends so the
+  // registry can't grow unbounded.
+  #[test]
+  fn a_cancelled_task_is_seen_then_cleared() {
+    let id = "task-cancel-test";
+    assert!(!is_task_cancelled(id));
+    assert!(!is_cancelled_key(None), "no key means not cancelled");
+    if let Ok(mut set) = cancelled_tasks().lock() { set.insert(id.to_string()); }
+    assert!(is_task_cancelled(id), "a registered id reads as cancelled");
+    assert!(is_cancelled_key(Some(id)));
+    clear_cancelled(id);
+    assert!(!is_task_cancelled(id));
+    assert!(!is_cancelled_key(Some(id)));
+  }
 }

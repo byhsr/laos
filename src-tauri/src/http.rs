@@ -160,3 +160,42 @@ pub(crate) fn apply_openai_defaults(body: &mut serde_json::Value, is_openrouter:
     }
   }
 }
+
+/// Decodes a response body as JSON. A body that isn't JSON — an HTML error page,
+/// an empty 200, a truncated response — would otherwise reach the user as
+/// reqwest's bare "error decoding response body". This names the status and shows
+/// a snippet of what actually came back, so a misbehaving provider is diagnosable
+/// from the UI.
+pub(crate) async fn json_body(resp: reqwest::Response) -> Result<serde_json::Value, String> {
+  let status = resp.status();
+  let text = resp.text().await.map_err(|e| format!("Could not read the response body: {e}"))?;
+  decode_json(status, &text)
+}
+
+fn decode_json(status: reqwest::StatusCode, text: &str) -> Result<serde_json::Value, String> {
+  match serde_json::from_str::<serde_json::Value>(text) {
+    Ok(v) => Ok(v),
+    Err(e) => {
+      let snippet: String = text.trim().chars().take(300).collect();
+      let body = if snippet.is_empty() { "(empty body)".to_string() } else { snippet };
+      Err(format!("The response was not valid JSON ({status}): {e}. Body: {body}"))
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn a_non_json_body_names_the_status_and_shows_a_snippet() {
+    let err = decode_json(reqwest::StatusCode::OK, "<html>not json</html>").unwrap_err();
+    assert!(err.contains("200"), "names the status: {err}");
+    assert!(err.contains("not json"), "shows the body: {err}");
+  }
+
+  #[test]
+  fn a_json_body_decodes() {
+    assert_eq!(decode_json(reqwest::StatusCode::OK, "{\"ok\":true}").unwrap()["ok"], serde_json::json!(true));
+  }
+}

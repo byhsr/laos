@@ -78,7 +78,7 @@ pub(crate) async fn embed_text(app: &AppHandle, text: &str) -> Result<Vec<f32>, 
   let url = crate::provider::embeddings_url(&resolved);
   let client = crate::http::client();
   let resp = crate::http::send_model_request(&client, &resolved, &url, &body, 2).await?;
-  let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+  let json: serde_json::Value = crate::http::json_body(resp).await?;
   embedding_of(resolved.dialect(), &json).ok_or_else(|| "Embedding response malformed.".into())
 }
 
