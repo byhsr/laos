@@ -9,6 +9,16 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-09 — release 0.2.6
+
+Ships the artifacts menu, the drag-to-split row and the Manager-as-pane, the
+delegated-task conversation context, and the two notification / activity-panel
+tweaks (all above). Version `0.2.5` → `0.2.6` across `package.json`,
+`src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and `src-tauri/tauri.conf.json`;
+tag `v0.2.6` drives the release workflow.
+
+---
+
 ## 2026-11-09 — artifacts menu, drag-to-split, the Manager as a pane
 
 The chat document surface was rebuilt and the split view learned to accept a drag.
