@@ -665,11 +665,11 @@ pub async fn execute_agent(app: AppHandle, agent: AgentRequest, input: String, a
   let (output, prompt_tokens, completion_tokens) = match run_agent_once(&app, &agent, &input, api_key.as_deref(), &mut events).await {
     Ok(v) => v,
     Err(e) => {
-      let _ = conn.execute("UPDATE runs SET status='failed' WHERE id=?1", params![run_id]);
+      let _ = conn.execute("UPDATE runs SET status='failed', ended_at=?2 WHERE id=?1", params![run_id, chrono::Utc::now().to_rfc3339()]);
       return Err(e);
     }
   };
   fs::write(home.join("outputs").join(format!("{run_id}.txt")), &output).map_err(|e| e.to_string())?;
-  conn.execute("UPDATE runs SET status='completed', output=?1, prompt_tokens=?2, completion_tokens=?3 WHERE id=?4", params![output, prompt_tokens, completion_tokens, run_id]).map_err(|e| e.to_string())?;
+  conn.execute("UPDATE runs SET status='completed', output=?1, prompt_tokens=?2, completion_tokens=?3, ended_at=?5 WHERE id=?4", params![output, prompt_tokens, completion_tokens, run_id, chrono::Utc::now().to_rfc3339()]).map_err(|e| e.to_string())?;
   Ok(Execution { output, events, run_id, prompt_tokens, completion_tokens })
 }

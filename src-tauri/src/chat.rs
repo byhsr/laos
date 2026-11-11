@@ -73,6 +73,11 @@ pub async fn stream_chat(app: AppHandle, agent: AgentRequest, input: String, is_
 
 async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, is_manager: bool, on_event: tauri::ipc::Channel<String>, session_id: Option<String>, stream_id: Option<String>, attachments: Vec<crate::media::Attachment>, system_turn: bool) -> Result<(), String> {
   let conn = db(&app)?;
+  // The run row is only written once the reply is complete, so the turn's wall
+  // clock has to be taken here: stamping it at insert made `started_at` the finish
+  // time, which left every run with no real duration and filed turns into the
+  // wrong day.
+  let turn_start = chrono::Utc::now();
 
   // Anything dropped into the composer (screenshots, photos, pasted images, voice
   // notes) is resolved BEFORE the turn is built, so the user's first token of the
@@ -365,6 +370,11 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   strip_old_images(&mut messages);
   let client = http::stream_client();
   let mut delta = String::new();
+  // This stream's own usage, held apart from the tool rounds' totals: one stream
+  // reports cumulative figures (Anthropic re-sends `message_delta`), so it is
+  // assigned while streaming and added to the turn's total once, after the loop.
+  let mut stream_prompt = 0u64;
+  let mut stream_completion = 0u64;
   // A reply must never come back empty. A model that answers with only reasoning,
   // or with a text-protocol tool call the leak filter swallows, leaves nothing to
   // show — so ask once more, plainly, before giving up on the turn.
@@ -406,7 +416,19 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
         None => return Ok(()),
         Some(Err(_)) => return Err(format!("The model provider stopped responding (no data for {}s).", http::STREAM_IDLE_TIMEOUT.as_secs())),
         Some(Ok(None)) => break,
-        Some(Ok(Some(chunk))) => chunk.map_err(|e| e.to_string())?,
+        // A body that ends badly mid-stream — a dropped connection, a truncated
+        // chunk — arrives as reqwest's bare "error decoding response body". If
+        // text already came through, keep it and finish the turn; only a stream
+        // that produced nothing is worth failing over, and then the message says
+        // what actually happened instead of leaking the raw transport error.
+        Some(Ok(Some(Err(e)))) => {
+          if !delta.trim().is_empty() {
+            emit_status(&on_event, "think", "The reply stream ended early; keeping what arrived.");
+            break;
+          }
+          return Err(format!("The model provider's stream ended before any reply arrived ({e})."));
+        }
+        Some(Ok(Some(Ok(chunk)))) => chunk,
       };
       buffer.push_str(&String::from_utf8_lossy(&chunk));
       // Ollama NDJSON: one JSON object per line. OpenAI-compatible: SSE `data:` lines.
@@ -422,8 +444,8 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
               let safe = leak.feed(d);
               if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
             }
-            prompt_tokens = v["prompt_eval_count"].as_u64().unwrap_or(prompt_tokens);
-            completion_tokens = v["eval_count"].as_u64().unwrap_or(completion_tokens);
+            stream_prompt = v["prompt_eval_count"].as_u64().unwrap_or(stream_prompt);
+            stream_completion = v["eval_count"].as_u64().unwrap_or(stream_completion);
           }
         } else {
           // OpenRouter sends `: OPENROUTER PROCESSING` keep-alive comments; ignore
@@ -442,8 +464,8 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
                     if !t.is_empty() { emit_reasoning(&on_event, t); }
                   }
                 }
-                Some("message_start") => { prompt_tokens = v["message"]["usage"]["input_tokens"].as_u64().unwrap_or(prompt_tokens); }
-                Some("message_delta") => { completion_tokens = v["usage"]["output_tokens"].as_u64().unwrap_or(completion_tokens); }
+                Some("message_start") => { stream_prompt = v["message"]["usage"]["input_tokens"].as_u64().unwrap_or(stream_prompt); }
+                Some("message_delta") => { stream_completion = v["usage"]["output_tokens"].as_u64().unwrap_or(stream_completion); }
                 _ => {}
               }
             } else {
@@ -453,8 +475,8 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
                 let safe = leak.feed(d);
                 if !safe.is_empty() { delta.push_str(&safe); on_event.send(safe).map_err(|e| e.to_string())?; }
               }
-              prompt_tokens = v["usage"]["prompt_tokens"].as_u64().unwrap_or(prompt_tokens);
-              completion_tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or(completion_tokens);
+              stream_prompt = v["usage"]["prompt_tokens"].as_u64().unwrap_or(stream_prompt);
+              stream_completion = v["usage"]["completion_tokens"].as_u64().unwrap_or(stream_completion);
             }
           }
         }
@@ -465,6 +487,12 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
     if !tail.is_empty() { delta.push_str(&tail); on_event.send(tail).map_err(|e| e.to_string())?; }
     if !delta.trim().is_empty() { break; }
   }
+
+  // The turn's total is every tool round plus this final stream. The final stream
+  // used to overwrite the rounds, so exactly the turns that called tools — the
+  // expensive ones — recorded only their last call.
+  prompt_tokens += stream_prompt;
+  completion_tokens += stream_completion;
 
   // If the final stream produced nothing — a provider that streams no text, or a
   // text-protocol reply the leak filter held back — fall back to whatever the
@@ -498,11 +526,10 @@ async fn stream_chat_inner(app: AppHandle, agent: AgentRequest, input: String, i
   }
 
   // Persist the run and the conversation.
-  let run_id = format!("{}-{}", agent.id, chrono::Utc::now().timestamp_millis());
-  let started = chrono::Utc::now().to_rfc3339();
+  let run_id = format!("{}-{}", agent.id, turn_start.timestamp_millis());
   let _ = conn.execute(
-    "INSERT INTO runs (id,agent_id,started_at,status,model,input,output,prompt_tokens,completion_tokens) VALUES (?1,?2,?3,'completed',?4,?5,?6,?7,?8)",
-    params![run_id, agent.id, started, agent.model, input, delta, prompt_tokens as i64, completion_tokens as i64],
+    "INSERT INTO runs (id,agent_id,started_at,ended_at,status,model,input,output,prompt_tokens,completion_tokens) VALUES (?1,?2,?3,?4,'completed',?5,?6,?7,?8,?9)",
+    params![run_id, agent.id, turn_start.to_rfc3339(), chrono::Utc::now().to_rfc3339(), agent.model, input, delta, prompt_tokens as i64, completion_tokens as i64],
   );
   if !delta.is_empty() {
     history.push(serde_json::json!({ "role": "assistant", "content": delta }));

@@ -278,18 +278,22 @@ pub fn update_task_result(app: AppHandle, id: String, result: String) -> Result<
 #[tauri::command]
 pub fn list_runs(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
   let conn = db(&app)?;
-  let mut stmt = conn.prepare("SELECT id, agent_id, started_at, status, model, input, output, prompt_tokens, completion_tokens FROM runs ORDER BY started_at DESC LIMIT 200").map_err(|e| e.to_string())?;
+  // Every run, because the dashboard computes its totals, its per-day bars and its
+  // per-agent breakdown from these rows: a LIMIT here silently truncated all of
+  // them (a year of turns reads as the newest handful).
+  let mut stmt = conn.prepare("SELECT id, agent_id, started_at, ended_at, status, model, input, output, prompt_tokens, completion_tokens FROM runs ORDER BY started_at DESC").map_err(|e| e.to_string())?;
   let rows = stmt.query_map([], |row| {
     Ok(serde_json::json!({
       "id": row.get::<_, String>(0)?,
       "agentId": row.get::<_, String>(1)?,
       "startedAt": row.get::<_, String>(2)?,
-      "status": row.get::<_, String>(3)?,
-      "model": row.get::<_, String>(4)?,
-      "input": row.get::<_, String>(5)?,
-      "output": row.get::<_, Option<String>>(6)?,
-      "promptTokens": row.get::<_, i64>(7)?,
-      "completionTokens": row.get::<_, i64>(8)?,
+      "endedAt": row.get::<_, Option<String>>(3)?,
+      "status": row.get::<_, String>(4)?,
+      "model": row.get::<_, String>(5)?,
+      "input": row.get::<_, String>(6)?,
+      "output": row.get::<_, Option<String>>(7)?,
+      "promptTokens": row.get::<_, i64>(8)?,
+      "completionTokens": row.get::<_, i64>(9)?,
     }))
   }).map_err(|e| e.to_string())?;
   let mut out = Vec::new();

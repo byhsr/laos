@@ -12,11 +12,14 @@ const fmtTime = (iso?: string) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleTimeString();
 };
 
+// A run still in flight has no end yet, so it measures to now. A finished run with
+// no end stored — a row written before the end was recorded — has no duration at
+// all, rather than one that grows with every second the app stays open.
 const fmtDuration = (r: Run) => {
   if (!r.startedAt) return '';
   const start = new Date(r.startedAt).getTime();
   if (isNaN(start)) return '';
-  const end = r.endedAt ? new Date(r.endedAt).getTime() : Date.now();
+  const end = r.endedAt ? new Date(r.endedAt).getTime() : r.status === 'running' ? Date.now() : NaN;
   if (isNaN(end)) return '';
   const ms = Math.max(0, end - start);
   if (ms < 1000) return `${ms}ms`;

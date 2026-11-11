@@ -60,9 +60,11 @@ All `CREATE TABLE` statements live in `db.rs`. Column lists below are exact.
 
 ### `runs`
 
-`id` (PK), `agent_id`, `started_at`, `status`, `model`, `input`, `output`,
+`id` (PK), `agent_id`, `started_at`, `ended_at`, `status`, `model`, `input`, `output`,
 `prompt_tokens`, `completion_tokens`.
 Written by `execute_agent` (agents.rs) and `stream_chat` (chat.rs); read by `list_runs`.
+`started_at` is the moment the turn began and `ended_at` when it finished (null while a run is
+still going); token counts are the whole turn — every tool round plus the final reply's stream.
 
 ### `memory`
 
