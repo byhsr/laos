@@ -9,6 +9,20 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-11 — release 0.2.8
+
+Ships remote MCP servers — a hosted server is reached over Streamable HTTP and signed in with
+OAuth, provider-agnostically (discovery from protected-resource metadata or the 401
+`WWW-Authenticate` challenge, PKCE with a checked `state`, tokens sealed at rest) — desktop
+toasts that carry the app's own name instead of PowerShell's and bring the window forward when
+clicked, corrected dashboard token / run / duration numbers (the run list had been silently
+capped at 200 rows, and a tool-using turn recorded only its last call), and insights that no
+longer re-notify the same unchanged observation. Version `0.2.7` → `0.2.8` across
+`package.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and `src-tauri/tauri.conf.json`;
+tag `v0.2.8` drives the release workflow.
+
+---
+
 ## 2026-11-09 — release 0.2.7
 
 Ships the working stop control for background tasks, the readable / full-window past-chat
