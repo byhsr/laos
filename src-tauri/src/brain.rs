@@ -534,13 +534,18 @@ pub(crate) fn compute_attention(conn: &Connection) -> usize {
 // Observations
 // ---------------------------------------------------------------------------
 
-fn insert_observation(conn: &Connection, scope: &str, dimension: &str, kind: &str, title: &str, body: &str, confidence: f64, evidence: &Value) -> Result<(), String> {
+/// Inserts an observation, or touches an existing one with the same title.
+/// Returns `true` only when a **new** row was created — the caller counts drafts,
+/// so a repeated pass that merely refreshes an existing observation must not read
+/// as new work (it used to, which fired a "new insight" notification every pass).
+fn insert_observation(conn: &Connection, scope: &str, dimension: &str, kind: &str, title: &str, body: &str, confidence: f64, evidence: &Value) -> Result<bool, String> {
   let existing: Option<String> = conn.query_row("SELECT id FROM brain_observations WHERE lower(title)=?1", params![title.to_lowercase()], |r| r.get(0)).ok();
   let ts = now_ms();
   match existing {
     Some(id) => {
       conn.execute("UPDATE brain_observations SET last_seen_at=?2, updated_at=?2, confidence=MAX(confidence, ?3) WHERE id=?1",
         params![id, ts, confidence.clamp(0.0, 1.0)]).map_err(|e| e.to_string())?;
+      Ok(false)
     }
     None => {
       conn.execute(
@@ -548,13 +553,15 @@ fn insert_observation(conn: &Connection, scope: &str, dimension: &str, kind: &st
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'new',?9,?9,?9,?9)",
         params![new_id("obs"), scope, dimension, kind, title, body, confidence.clamp(0.0, 1.0), evidence.to_string(), ts],
       ).map_err(|e| e.to_string())?;
+      Ok(true)
     }
   }
-  Ok(())
 }
 
 /// Turns the computed attention signals into a few explainable proposals. The
 /// phrasing is deterministic and the evidence is attached — never a judgment.
+/// Returns how many **new** observations were drafted (existing ones are only
+/// refreshed, so a steady state drafts nothing and notifies no one).
 pub(crate) fn draft_observations(conn: &Connection) -> usize {
   let mut written = 0usize;
   // Dormant goals / decisions with a displacement signal.
@@ -569,7 +576,7 @@ pub(crate) fn draft_observations(conn: &Connection) -> usize {
   for (node_id, title, scope, dormant) in rows {
     let weeks = (dormant / 7.0).round().max(1.0) as i64;
     let body = format!("You named “{title}” but nothing has touched it for about {weeks} week(s).");
-    if insert_observation(conn, &scope, "displacement", "pattern", &format!("{title} may have been displaced"), &body, 0.5, &json!({ "node_id": node_id, "dormant_days": dormant.round() })).is_ok() {
+    if matches!(insert_observation(conn, &scope, "displacement", "pattern", &format!("{title} may have been displaced"), &body, 0.5, &json!({ "node_id": node_id, "dormant_days": dormant.round() })), Ok(true)) {
       written += 1;
     }
   }

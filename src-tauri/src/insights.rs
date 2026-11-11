@@ -93,11 +93,16 @@ pub(crate) fn accept(conn: &Connection, rest: &str) -> Result<String, String> {
 // Reflection
 // ---------------------------------------------------------------------------
 
+/// Reflection needs a real body of evidence. Inferring "patterns" from one or two
+/// stray notes just produces noise the user has to clean up, so below this floor
+/// the layer stays quiet.
+const MIN_REFLECT_ITEMS: usize = 8;
+
 /// A compact picture of what the user actually files and finishes — the feedstock
 /// nothing else computes.
 pub(crate) fn aggregate(conn: &Connection) -> String {
   let items = crate::capture::list(conn, None);
-  if items.is_empty() { return String::new(); }
+  if items.len() < MIN_REFLECT_ITEMS { return String::new(); }
 
   let mut by_kind: std::collections::BTreeMap<&str, usize> = Default::default();
   let mut by_tag: std::collections::BTreeMap<String, usize> = Default::default();
