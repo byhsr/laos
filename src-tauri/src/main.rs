@@ -51,6 +51,7 @@ mod workflows;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 fn show_main(app: &tauri::AppHandle) {
   if let Some(w) = app.get_webview_window("main") {
@@ -109,6 +110,17 @@ fn main() {
       let handle = app.handle().clone();
       // System tray: keep the app alive in the background.
       let _ = build_tray(&handle);
+      // A click on a toast brings the window forward. Registering a handler is also
+      // what makes the plugin report clicks at all — the body click arrives as the
+      // `tap` action (Windows reports one only while the toast is still on screen).
+      {
+        let click = handle.clone();
+        let _ = app.notification().on_action(move |performed| {
+          if performed.action_id() == "tap" {
+            show_main(&click);
+          }
+        });
+      }
       // Register the saved voice hotkey (empty = disabled). A conflict is logged
       // rather than fatal; the user can change it in Settings.
       {
