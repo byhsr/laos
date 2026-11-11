@@ -113,6 +113,16 @@ manager_tool!(ManagerTidyKnowledge, "tidy_knowledge", "Find knowledge-base docs 
 
 manager_tool!(ManagerAskUser, "ask_user", "Ask the user a question and wait for the answer. Over Telegram this shows buttons when options are given, or waits for their next message otherwise. Params: question (string), options (array of strings, optional).", serde_json::json!({ "question": { "type": "string" }, "options": { "type": "array", "items": { "type": "string" } } }), serde_json::json!(["question"]));
 
+// MCP server management. The Manager used to have no way to add a connector, so
+// "add treg" made it open the raw endpoint in the browser. These expose the real
+// flow: save the server, then connect (OAuth) or set a token, then sync its tools.
+manager_tool!(ManagerListMcpServers, "list_mcp_servers", "List configured MCP servers (local stdio and remote http) with their ids, transport, target URL/command and connection status.", serde_json::json!({}), serde_json::json!([]));
+manager_tool!(ManagerSaveMcpServer, "save_mcp_server", "Create or update an MCP server and return its id. Params: id (string, optional — pass an existing id to update), name (string), transport ('stdio' for a local command, or 'http' for a hosted server reached by URL), command (string, stdio), args (array of strings, stdio), env (object of secrets, stdio), url (string, http), enabled (boolean, optional). For a hosted server like Monid (https://mcp.monid.ai/v1) or Treg (https://treg.to/mcp/) pass transport 'http' and url, then call connect_mcp_server to sign in. Never invent a URL — use the one the user gave or the provider documents.", serde_json::json!({ "id": { "type": "string" }, "name": { "type": "string" }, "transport": { "type": "string" }, "command": { "type": "string" }, "args": { "type": "array", "items": { "type": "string" } }, "env": { "type": "object" }, "url": { "type": "string" }, "enabled": { "type": "boolean" } }), serde_json::json!(["name"]));
+manager_tool!(ManagerDeleteMcpServer, "delete_mcp_server", "Delete an MCP server by id. Params: id (string).", serde_json::json!({ "id": { "type": "string" } }), serde_json::json!(["id"]));
+manager_tool!(ManagerConnectMcpServer, "connect_mcp_server", "Sign in to a remote (http) MCP server with OAuth, opening the sign-in page in the browser. Params: id (string). Save it with save_mcp_server first.", serde_json::json!({ "id": { "type": "string" } }), serde_json::json!(["id"]));
+manager_tool!(ManagerSetMcpToken, "set_mcp_token", "Store a bearer token for a remote (http) MCP server, for when OAuth isn't available. Params: id (string), token (string). Confirm with the user before storing a secret.", serde_json::json!({ "id": { "type": "string" }, "token": { "type": "string" } }), serde_json::json!(["id", "token"]));
+manager_tool!(ManagerSyncMcpTools, "sync_mcp_tools", "Import (or refresh) an MCP server's advertised tools into the registry so agents can attach them. Params: id (string). Call after connecting a remote server.", serde_json::json!({ "id": { "type": "string" } }), serde_json::json!(["id"]));
+
 pub(crate) fn manager_tools() -> Vec<Box<dyn AgentTool>> {
   vec![
     Box::new(ManagerListAgents),
@@ -142,6 +152,12 @@ pub(crate) fn manager_tools() -> Vec<Box<dyn AgentTool>> {
     Box::new(ManagerKnowledgeBase),
     Box::new(ManagerTidyKnowledge),
     Box::new(ManagerAskUser),
+    Box::new(ManagerListMcpServers),
+    Box::new(ManagerSaveMcpServer),
+    Box::new(ManagerDeleteMcpServer),
+    Box::new(ManagerConnectMcpServer),
+    Box::new(ManagerSetMcpToken),
+    Box::new(ManagerSyncMcpTools),
     Box::new(SearchFilesTool),
     Box::new(ReadAnyFileTool),
     Box::new(WriteAnyFileTool),
@@ -805,6 +821,63 @@ pub(crate) async fn dispatch_manager_tool(app: &AppHandle, name: &str, args: &se
         .map(|p| format!("- \"{}\" → {} as a {}", p.title, p.destination, p.kind))
         .collect::<Vec<_>>().join("\n"))
     }
+    // MCP server management. These call the same functions the MCP view uses, so
+    // the Manager can add/connect a connector (Monid, Treg, …) end to end.
+    "list_mcp_servers" => {
+      let servers = crate::mcp::list_mcp_servers(app.clone())?;
+      if servers.is_empty() { return Ok("No MCP servers configured.".into()); }
+      Ok(servers.iter().map(|s| {
+        let remote = s.transport == "http";
+        let target = if remote {
+          s.url.clone()
+        } else {
+          let args = s.args.as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" ")).unwrap_or_default();
+          format!("{} {}", s.command, args).trim().to_string()
+        };
+        let status = if remote { if s.connected { ", connected" } else { ", not connected" } } else { "" };
+        format!("- {} (id: {}, {}{}): {}", s.name, s.id, s.transport, status, target)
+      }).collect::<Vec<_>>().join("\n"))
+    }
+    "save_mcp_server" => {
+      let record = McpServerRecord {
+        id: args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        name: args.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        command: args.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        args: args.get("args").cloned().unwrap_or(serde_json::json!([])),
+        env: args.get("env").cloned().unwrap_or(serde_json::json!({})),
+        enabled: args.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
+        transport: args.get("transport").and_then(|v| v.as_str()).unwrap_or("stdio").trim().to_string(),
+        url: args.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        connected: false,
+      };
+      let remote = record.transport == "http";
+      let name = record.name.clone();
+      let id = crate::mcp::save_mcp_server(app.clone(), record)?;
+      Ok(format!("Saved MCP server '{name}' (id: {id}).{}", if remote {
+        " Now call connect_mcp_server to sign in, then sync_mcp_tools."
+      } else { " Call sync_mcp_tools to import its tools." }))
+    }
+    "delete_mcp_server" => {
+      let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      crate::mcp::delete_mcp_server(app.clone(), id.clone())?;
+      Ok(format!("Deleted MCP server {id}."))
+    }
+    "connect_mcp_server" => {
+      let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let url = crate::mcp::remote_mcp_connect(app.clone(), id.clone()).await?;
+      Ok(format!("Opened the sign-in page in the browser: {url}\nAfter the user approves access, call sync_mcp_tools with id {id}."))
+    }
+    "set_mcp_token" => {
+      let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let token = args.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      crate::mcp::remote_mcp_set_token(app.clone(), id.clone(), token)?;
+      Ok(format!("Stored the token for MCP server {id}. Call sync_mcp_tools with id {id} to import its tools."))
+    }
+    "sync_mcp_tools" => {
+      let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+      let n = crate::mcp::import_mcp_tools(app.clone(), id.clone()).await?;
+      Ok(format!("Imported {n} tool(s) from MCP server {id}. Attach them to an agent from its tools list."))
+    }
     "search_files" => SearchFilesTool.run(args).await,
     "read_file_any" => ReadAnyFileTool.run(args).await,
     "write_file_any" => WriteAnyFileTool.run(args).await,
@@ -852,6 +925,7 @@ pub(crate) fn requires_confirmation(tool: &str) -> bool {
     | "create_workflow" | "update_workflow" | "delete_workflow" | "run_workflow"
     | "configure_integration" | "create_task" | "cancel_task" | "delegate_task"
     | "create_tool"
+    | "save_mcp_server" | "delete_mcp_server" | "connect_mcp_server" | "set_mcp_token"
     | "run_command" | "run_script" | "write_file_any"
     // PC control: the coarse/system actions confirm; low-level input and
     // read-only actions do not (a vision loop needs many of them).

@@ -97,7 +97,7 @@ pub(crate) fn render_args(item: &Item, template: &str) -> Result<Value, String> 
 }
 
 /// Pushes one item to one destination: loads the MCP server, renders the args,
-/// and calls the tool. Blocking (MCP is stdio), so it runs on a blocking thread.
+/// and calls the tool. The transport handles its own blocking/async.
 pub(crate) async fn push(app: AppHandle, item_id: String, destination_id: String) -> Result<String, String> {
   let (server_id, tool, args) = {
     let conn = db(&app)?;
@@ -111,12 +111,8 @@ pub(crate) async fn push(app: AppHandle, item_id: String, destination_id: String
     (dest.server_id, dest.tool, render_args(&item, &dest.arg_template)?)
   };
 
-  let app2 = app.clone();
-  tokio::task::spawn_blocking(move || {
-    let conn = db(&app2)?;
-    let server = crate::mcp::load_server(&conn, &server_id)?;
-    crate::mcp::call_tool(&server, &tool, args)
-  }).await.map_err(|e| e.to_string())?
+  let server = { let conn = db(&app)?; crate::mcp::load_server(&conn, &server_id)? };
+  crate::mcp::call_tool(&server, &tool, args).await
 }
 
 /// Auto-push for captured items. Fire-and-forget: the Telegram reply never waits

@@ -24,6 +24,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # base64 decode for audio handed to the composer (the vision path never decodes).
 base64 = "0.23.1"
+# PKCE (S256) and code_verifier/state randomness for the remote MCP OAuth flow.
+sha2 = "0.10"
+rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
 chrono = { version = "0.4", features = ["clock"] }
@@ -58,5 +61,9 @@ arboard = "3.6.1"
 enigo = "0.6.1"
 # WebView2 COM bindings, for the microphone permission reset (ICoreWebView2Profile4).
 webview2-com = "0.39"
-windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Shutdown", "Win32_UI_Shell"] }
+# Windows toasts shown directly, so each carries the app's own AppUserModelID (the
+# tauri notification plugin leaves it unset for dev builds, and Windows then
+# attributes the toast to PowerShell) and a click can bring the window forward.
+tauri-winrt-notification = "0.8"
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Shutdown", "Win32_UI_Shell", "Win32_System_Registry", "Win32_Security"] }
 xcap = "0.9.8"

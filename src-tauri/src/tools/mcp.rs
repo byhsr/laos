@@ -1,6 +1,6 @@
 // MCP tool: wraps one tool advertised by a configured MCP server so agents can
-// call it like any other AgentTool. The blocking stdio round-trip runs on a
-// blocking thread so it never stalls the async runtime.
+// call it like any other AgentTool. The transport (stdio or HTTP) and its
+// blocking/async handling live in `mcp::call_tool`.
 
 use async_trait::async_trait;
 
@@ -64,12 +64,6 @@ impl AgentTool for McpTool {
   fn params_schema(&self) -> serde_json::Value { self.schema.clone() }
 
   async fn run(&self, args: &serde_json::Value) -> Result<String, String> {
-    let server = self.server.clone();
-    let tool = self.tool_name.clone();
-    let args = args.clone();
-    tokio::task::spawn_blocking(move || mcp::call_tool(&server, &tool, args))
-      .await
-      .map_err(|e| e.to_string())?
-      .map(|text| clip(&text))
+    mcp::call_tool(&self.server, &self.tool_name, args.clone()).await.map(|text| clip(&text))
   }
 }

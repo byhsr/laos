@@ -156,14 +156,21 @@ pub struct WorkflowRunRecord {
   pub prompt_tokens: u64, pub completion_tokens: u64,
 }
 
-// A configured MCP server: the command to run plus its args and env (env values
-// are masked on read since that's where tokens live).
+// A configured MCP server. Two transports: a local command over stdio (`command`
+// + `args` + `env`, the original) or a hosted server over Streamable HTTP (`url` +
+// OAuth). `env` values and the OAuth tokens are masked on read since that's where
+// secrets live; `connected` reports whether a remote server holds a token.
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerRecord {
   pub id: String, pub name: String, pub command: String,
   pub args: serde_json::Value, pub env: serde_json::Value, pub enabled: bool,
+  #[serde(default = "default_transport")] pub transport: String,
+  #[serde(default)] pub url: String,
+  #[serde(default)] pub connected: bool,
 }
+
+pub fn default_transport() -> String { "stdio".to_string() }
 
 // A tool advertised by an MCP server (tools/list).
 #[derive(Serialize, Deserialize, Clone)]

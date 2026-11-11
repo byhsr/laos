@@ -140,6 +140,9 @@ fn main() {
       // The embedded mini-browser owns its webview; hold the handle so browser
       // tools/commands can reach it.
       browser::init(app.handle().clone());
+      // The MCP connector keeps its handle so a remote (HTTP) server's OAuth token
+      // can be refreshed, and persisted, mid-session.
+      mcp::init(app.handle().clone());
       Ok(())
     })
     .on_window_event(|window, event| {
@@ -197,13 +200,18 @@ fn main() {
       integrations::connect_oauth,
       integrations::complete_oauth,
       integrations::refresh_google_token,
-      // MCP connector (stdio)
+      // MCP connector (stdio + remote HTTP/OAuth)
       mcp::list_mcp_servers,
       mcp::save_mcp_server,
       mcp::delete_mcp_server,
       mcp::test_mcp_server,
       mcp::import_mcp_tools,
       mcp::call_mcp_tool,
+      mcp::remote_mcp_start,
+      mcp::remote_mcp_connect,
+      mcp::remote_mcp_complete,
+      mcp::remote_mcp_set_token,
+      mcp::remote_mcp_disconnect,
       // Embedded mini browser (visible browser control)
       browser::browser_open,
       browser::browser_navigate,

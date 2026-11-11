@@ -542,9 +542,11 @@ export async function exportWorkflowRunsCsv(workflowId?: string): Promise<string
   return await invoke<string>('export_workflow_runs_csv', { workflowId: workflowId ?? null });
 }
 
-// MCP connector (stdio). Servers are configured commands; their advertised tools
-// can be imported into the tool registry and attached to agents.
-export type McpServer = { id: string; name: string; command: string; args: string[]; env: Record<string, string>; enabled: boolean };
+// MCP connectors. A server is either a local command (`transport: 'stdio'`, spoken
+// over stdin/stdout) or a hosted server (`transport: 'http'`, reached over
+// Streamable HTTP with OAuth — `url` + `connected`). Advertised tools are imported
+// into the tool registry and attached to agents.
+export type McpServer = { id: string; name: string; command: string; args: string[]; env: Record<string, string>; enabled: boolean; transport: string; url: string; connected: boolean };
 export type McpToolInfo = { name: string; description: string; schema: Record<string, unknown> };
 export async function listMcpServers(): Promise<McpServer[]> {
   try { return await invoke<McpServer[]>('list_mcp_servers'); } catch { return []; }
@@ -560,6 +562,27 @@ export async function testMcpServer(id: string): Promise<McpToolInfo[]> {
 }
 export async function importMcpTools(id: string): Promise<number> {
   return await invoke<number>('import_mcp_tools', { id });
+}
+// Remote (HTTP + OAuth) servers: open the sign-in flow, or set a static bearer.
+export async function remoteMcpConnect(id: string): Promise<string> {
+  return await invoke<string>('remote_mcp_connect', { id });
+}
+export async function remoteMcpSetToken(id: string, token: string): Promise<void> {
+  await invoke('remote_mcp_set_token', { id, token });
+}
+export async function remoteMcpDisconnect(id: string): Promise<void> {
+  await invoke('remote_mcp_disconnect', { id });
+}
+// Fires when a remote MCP sign-in finishes (ok) or fails (with a readable reason),
+// so the view can refresh its connection state and tell the user what happened.
+export type McpChanged = { id: string; ok: boolean; message: string };
+export function onMcpChanged(cb: (m: McpChanged) => void): () => void {
+  let unlisten: (() => void) | null = null;
+  let disposed = false;
+  listen<McpChanged>('lumin-mcp-changed', (e) => cb(e.payload))
+    .then((un) => { if (disposed) un(); else unlisten = un; })
+    .catch(() => {});
+  return () => { disposed = true; unlisten?.(); };
 }
 
 // A good/bad signal on a reply: the host records it as experience and reinforces
