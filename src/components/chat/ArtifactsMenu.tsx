@@ -6,6 +6,7 @@ import { Markdown } from '../ui/Markdown';
 import { SidePanel } from '../ui/SidePanel';
 import { toast } from '../../hooks/useToast';
 import { deleteDocument, listDocuments, onDocumentChanged, type ChatDocument } from '../../runtime';
+import { saveFile } from '../../download';
 
 // The artifacts an agent has written in this chat, behind one control in the chat
 // header: a dropdown lists them all, and one opens in the side panel to read, copy
@@ -35,15 +36,7 @@ export function ArtifactsMenu({ agentId, sessionId }: { agentId: string; session
     if (viewing && !docs.some((d) => d.id === viewing.id)) setViewing(null);
   }, [docs, viewing]);
 
-  const download = (d: ChatDocument) => {
-    const blob = new Blob([d.content], { type: MIME[d.kind] ?? 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${slug(d.title)}.${EXT[d.kind] ?? 'md'}`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const download = (d: ChatDocument) => saveFile(`${slug(d.title)}.${EXT[d.kind] ?? 'md'}`, d.content, MIME[d.kind] ?? 'text/markdown');
 
   const copy = async (d: ChatDocument) => {
     try { await navigator.clipboard.writeText(d.content); toast('copied', 'success'); }

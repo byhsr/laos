@@ -9,6 +9,7 @@ import { Button, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { tabCls } from '../ui/tabs';
 import { GROUP_LABEL_CLS } from '../ui/Input';
+import { saveFile } from '../../download';
 
 // Memory is native now (agent_memory.rs in the backend); this view reads it
 // through the am_* commands.
@@ -151,11 +152,7 @@ export function MemoryView() {
         amGetSelfModel(agentId),
       ]);
       const doc = { version: 1, kind: 'lup-memory', agentId, exportedAt: new Date().toISOString(), memories: mem, selfModel: self };
-      const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `memory-${agentId}.json`; a.click();
-      URL.revokeObjectURL(url);
+      saveFile(`memory-${agentId}.json`, JSON.stringify(doc, null, 2), 'application/json');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }

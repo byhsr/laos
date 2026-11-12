@@ -10,6 +10,7 @@ import { Tooltip } from '../ui/Tooltip';
 import { FIELD_LABEL_CLS, GROUP_LABEL_CLS, INPUT_CLS, INPUT_INLINE_CLS, PROSE_CLS } from '../ui/Input';
 import { toast } from '../../hooks/useToast';
 import { exportWorkflowRunsCsv, listWorkflowRuns, type WorkflowRunRecord } from '../../runtime';
+import { saveFile } from '../../download';
 import { NODE_TYPES, TYPE_META } from './nodeTypes';
 
 // Safe timestamp formatting — DB values can be empty or malformed.
@@ -333,25 +334,9 @@ export function CanvasView({ agents, tools, workflows, integrations, models, scr
   // kind + version so a stray JSON file is rejected rather than half-imported.
   const importRef = useRef<HTMLInputElement>(null);
 
-  const download = (filename: string, doc: unknown) => {
-    const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const download = (filename: string, doc: unknown) => saveFile(filename, JSON.stringify(doc, null, 2), 'application/json');
 
-  const downloadText = (filename: string, text: string, mime: string) => {
-    const blob = new Blob([text], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const downloadText = (filename: string, text: string, mime: string) => saveFile(filename, text, mime);
 
   const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workflow';
 
