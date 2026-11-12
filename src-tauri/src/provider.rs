@@ -316,6 +316,16 @@ impl Resolved {
 
   pub(crate) fn transcription_url(&self) -> String { format!("{}/audio/transcriptions", self.base) }
   pub(crate) fn speech_url(&self) -> String { format!("{}/audio/speech", self.base) }
+
+  /// Where the provider publishes the models this account can reach. Ollama keeps
+  /// its own list at `/api/tags`; every OpenAI-compatible root and Anthropic
+  /// expose `/models`.
+  pub(crate) fn models_url(&self) -> String {
+    match self.def.dialect {
+      Dialect::Ollama => format!("{}/api/tags", self.base),
+      _ => format!("{}/models", self.base),
+    }
+  }
 }
 
 /// The stored `model` on an agent or role is normally a `"<provider>:<model>"` id,
@@ -348,28 +358,45 @@ pub(crate) fn model_provider_known(conn: &Connection, model: &str) -> bool {
 /// Resolves a stored `"<provider>:<model>"` id into everything a request needs.
 ///
 /// `override_key` is a caller-supplied API key (the browser preview passes one);
-/// it wins over the stored key. Keys, in order: override → the model's own key →
-/// the provider's shared key.
+/// it wins over the stored key. Otherwise the key belongs to the **provider** —
+/// one key, configured once, shared by every model under it. A model has no key
+/// of its own: older installs kept a copy on the row, and that stale copy taking
+/// precedence is why updating a provider's key used to change nothing.
 pub(crate) fn resolve(conn: &Connection, model_id: &str, override_key: Option<&str>) -> Result<Resolved, String> {
   // A label in place of an id is tolerated rather than fatal.
   let model_id = normalize_model_id(conn, model_id);
   let id = provider_id_of(&model_id);
   let def = find_provider(conn, id)
     .ok_or_else(|| format!("Unknown model provider \"{id}\". Add it in Settings → Providers."))?;
-  let (host, stored_key, reasoning) = model_settings(conn, &model_id)?;
+  let (host, reasoning) = model_settings(conn, &model_id)?;
   let key = override_key.filter(|k| !k.trim().is_empty()).map(|k| k.to_string())
-    .or(stored_key)
     .or_else(|| crate::vault::get(&format!("provider/{}", def.id)));
   if def.requires_key && key.is_none() {
     return Err(format!("{} requires an API key. Add one in Settings → Providers.", def.label));
   }
-  // Ollama honours the editable host; everything else uses the adapter's base.
-  let base = if def.dialect == Dialect::Ollama {
-    host.filter(|h| !h.trim().is_empty()).unwrap_or_else(|| def.base.clone()).trim_end_matches('/').to_string()
-  } else {
-    def.base.clone()
-  };
+  let base = base_for(&def, host.as_deref());
   Ok(Resolved { def, base, model: model_of(&model_id), key, reasoning })
+}
+
+/// The provider root a request goes to: Ollama honours the editable host,
+/// everything else uses the adapter's own base.
+fn base_for(def: &ProviderDef, host: Option<&str>) -> String {
+  if def.dialect == Dialect::Ollama {
+    if let Some(h) = host.filter(|h| !h.trim().is_empty()) {
+      return h.trim_end_matches('/').to_string();
+    }
+  }
+  def.base.clone()
+}
+
+/// A provider with no model attached: its adapter, root and key. Used by
+/// provider-level calls — listing the models an account can reach — where there
+/// is no `model_configs` row to read a host from.
+pub(crate) fn resolve_provider(conn: &Connection, id: &str, host: Option<&str>) -> Result<Resolved, String> {
+  let def = find_provider(conn, id).ok_or_else(|| format!("Unknown provider \"{id}\"."))?;
+  let key = crate::vault::get(&format!("provider/{}", def.id));
+  let base = base_for(&def, host);
+  Ok(Resolved { def, base, model: String::new(), key, reasoning: Reasoning::Auto })
 }
 
 /// Applies an agent's own reasoning setting over the model's default. An empty
@@ -381,32 +408,24 @@ pub(crate) fn apply_agent_reasoning(resolved: &mut Resolved, agent_reasoning: &s
   }
 }
 
-fn model_settings(conn: &Connection, model_id: &str) -> Result<(Option<String>, Option<String>, Reasoning), String> {
+fn model_settings(conn: &Connection, model_id: &str) -> Result<(Option<String>, Reasoning), String> {
   let mut stmt = conn
-    .prepare("SELECT host, api_key, reasoning FROM model_configs WHERE id=?1")
+    .prepare("SELECT host, reasoning FROM model_configs WHERE id=?1")
     .map_err(|e| e.to_string())?;
   let mut rows = stmt
     .query_map(params![model_id], |row| {
       Ok((
         row.get::<_, Option<String>>(0)?,
-        row.get::<_, Option<String>>(1)?,
-        row.get::<_, Option<String>>(2)?.unwrap_or_else(default_reasoning),
+        row.get::<_, Option<String>>(1)?.unwrap_or_else(default_reasoning),
       ))
     })
     .map_err(|e| e.to_string())?;
   match rows.next() {
-    // The key column holds the vault sentinel rather than the key itself.
-    Some(Ok((host, key, reasoning))) => {
-      let key = match key.filter(|k| !k.trim().is_empty()) {
-        Some(v) if crate::vault::is_ref(&v) => crate::vault::get(&format!("model/{model_id}")),
-        other => other,
-      };
-      Ok((host, key, Reasoning::parse(&reasoning)))
-    }
+    Some(Ok((host, reasoning))) => Ok((host, Reasoning::parse(&reasoning))),
     Some(Err(e)) => Err(e.to_string()),
     // A model missing from the table (for example a seed the user never saved)
     // still resolves, so the caller reports the real problem — a missing key.
-    None => Ok((None, None, Reasoning::Auto)),
+    None => Ok((None, Reasoning::Auto)),
   }
 }
 

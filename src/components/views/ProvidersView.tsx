@@ -209,9 +209,9 @@ function ProviderForm({ editing, onClose, onSave }: {
             {form.clearKey ? (
               <>Key will be removed on save. <button type="button" className="cursor-pointer underline" onClick={() => setForm({ ...form, clearKey: false })}>undo</button></>
             ) : editing.hasKey ? (
-              <>Stored in the system credential store. A model can still carry its own key to override it. <button type="button" className="cursor-pointer underline" onClick={() => setForm({ ...form, clearKey: true })}>remove key</button></>
+              <>Stored in the system credential store. Every model under this provider uses it. <button type="button" className="cursor-pointer underline" onClick={() => setForm({ ...form, clearKey: true })}>remove key</button></>
             ) : (
-              'Optional here: a model without its own key inherits this one.'
+              'One key for this provider — every model under it uses it, so it only has to be given once.'
             )}
           </p>
         </>

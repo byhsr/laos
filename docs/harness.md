@@ -83,7 +83,7 @@ out *where* a request goes and *how* it should be configured. It looks the id up
 | `def` | The adapter — dialect, caps, auth, headers, reasoning style |
 | `base` | The API root: the model's stored `host` for Ollama (that UI field is honoured), otherwise the adapter's base |
 | `model` | The bare model name the provider expects — our prefix stripped |
-| `key` | API key; resolution order is caller override → the model's own key → the provider's shared key (`provider/<id>` in the vault) |
+| `key` | API key; the provider's shared key (`provider/<id>` in the vault), or a caller override (the browser preview) which wins |
 | `reasoning` | The model's configured reasoning level (see *Reasoning control*) |
 
 URLs are composed from `base` (`chat_url`, `embeddings_url`, `transcription_url`, `speech_url`,
@@ -229,10 +229,10 @@ Because native drag-drop is disabled (`dragDropEnabled: false` in `tauri.conf.js
 reach the composer, `App` swallows any drop outside it — otherwise the webview would navigate to
 the dropped file.
 
-API keys are resolved inside `provider::resolve`, from the model's `api_key` column — which holds
-the vault sentinel, so the real value comes from the OS credential store under `model/<id>`. Never
-sent from the UI for stored models. The browser preview may pass one explicitly to `execute_agent`;
-it wins over the stored key.
+API keys are resolved inside `provider::resolve` from the **provider**, not the model: the real value
+comes from the OS credential store under `provider/<id>`, so one key serves every model under that
+provider and updating it takes effect on the next request. The browser preview may pass one
+explicitly to `execute_agent`; it wins over the stored key.
 
 ## Reasoning control
 

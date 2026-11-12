@@ -23,8 +23,8 @@ pub struct ExecutionEvent { pub time: String, #[serde(rename = "type")] pub kind
 #[serde(rename_all = "camelCase")]
 pub struct ModelConfigRecord { pub id: String, pub provider: String, pub label: String, pub model: String, #[serde(default = "default_model_kind")] pub kind: String, #[serde(default)] pub voice: String, pub host: Option<String>, pub has_key: bool, pub enabled: bool, pub reasoning: String, pub vision: bool, pub transcribes: bool }
 
-// What the UI sends back. `api_key` is write-only: empty leaves the stored key
-// alone, `clear_key` removes it.
+// What the UI sends back. A model carries no key of its own — the key belongs to
+// its provider (`provider/<id>` in the vault).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelConfigInput {
@@ -34,8 +34,6 @@ pub struct ModelConfigInput {
   // Voice for a tts model (provider voices are model-specific, e.g. OpenRouter).
   #[serde(default)] pub voice: String,
   #[serde(default)] pub host: Option<String>,
-  #[serde(default)] pub api_key: Option<String>,
-  #[serde(default)] pub clear_key: bool,
   pub enabled: bool, pub reasoning: String,
 }
 
@@ -79,6 +77,13 @@ pub struct ProviderInput {
 fn default_auth() -> String { "bearer".to_string() }
 fn default_reasoning_style() -> String { "openai".to_string() }
 fn default_true() -> bool { true }
+
+// One model a provider account can reach, as the provider itself lists it
+// (`/models`, or Ollama's `/api/tags`). The model form offers these so a model is
+// picked rather than typed from memory.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderModelRecord { pub id: String, pub label: String }
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

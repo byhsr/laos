@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ModelConfig } from '../types';
 import { listModels, saveModel as saveModelApi, deleteModel as deleteModelApi } from '../runtime';
+import { useProvidersStore } from './useProviders';
 import { models as seedModels } from '../data';
 
 type ModelsState = {
@@ -23,11 +24,10 @@ export const useModelsStore = create<ModelsState>((set) => ({
 
   saveModel: async (m) => {
     await saveModelApi(m);
-    // The key is write-only: the renderer keeps only whether one is set.
-    const stored: ModelConfig = { ...m };
-    delete stored.apiKey;
-    delete stored.clearKey;
-    stored.hasKey = m.clearKey ? false : (m.apiKey?.trim() ? true : !!m.hasKey);
+    // A model has no key of its own — whether it can authenticate is a property of
+    // its provider, so mirror the provider's key state rather than the row's.
+    const hasKey = useProvidersStore.getState().providers.find((p) => p.id === m.provider)?.hasKey ?? !!m.hasKey;
+    const stored: ModelConfig = { ...m, hasKey };
     set((s) => ({ models: s.models.some((p) => p.id === m.id) ? s.models.map((p) => (p.id === m.id ? stored : p)) : [...s.models, stored] }));
   },
 

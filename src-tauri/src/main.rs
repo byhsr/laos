@@ -382,6 +382,7 @@ fn main() {
       storage::list_providers,
       storage::save_provider,
       storage::delete_provider,
+      storage::list_provider_models,
       // Resource / connection / adapter layer
       connections::list_adapters,
       connections::list_connections,

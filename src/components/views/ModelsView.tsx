@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import type { ModelConfig, ModelRoles, ModelType, Reasoning } from '../../types';
 import { MODEL_TYPES } from '../../modelTypes';
-import { listModelRoles, setModelRole } from '../../runtime';
+import { listModelRoles, listProviderModels, setModelRole, type ProviderModel } from '../../runtime';
 import { useProvidersStore } from '../../hooks/useProviders';
 import { ModelLogo } from '../ui/ModelLogo';
 import { Modal } from '../ui/Modal';
@@ -44,14 +44,6 @@ const FALLBACK_PROVIDERS = [
   { value: 'groq', label: 'Groq' },
   { value: 'openrouter', label: 'OpenRouter' },
 ];
-const KEY_PLACEHOLDER: Record<string, string> = {
-  openai: 'sk-…',
-  google: 'AIza…',
-  xai: 'xai-…',
-  anthropic: 'sk-ant-…',
-  groq: 'gsk_…',
-  openrouter: 'sk-or-v1-…',
-};
 
 export function ModelsView({ models, onAdd, onEdit, onDelete }: {
   models: ModelConfig[]; onAdd: () => void; onEdit: (m: ModelConfig) => void; onDelete: (id: string) => Promise<void>;
@@ -80,7 +72,7 @@ export function ModelsView({ models, onAdd, onEdit, onDelete }: {
                   {m.label} <span className="font-normal text-muted">· {m.kind ?? 'llm'}</span>
                 </b>
                 <span className="block truncate font-mono text-[10px] text-muted">
-                  {m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.hasKey ? ' · key set' : ''}{m.reasoning !== 'auto' ? ` · reasoning: ${m.reasoning}` : ''}
+                  {m.provider}:{m.model}{m.host ? ` · ${m.host}` : ''}{m.provider !== 'ollama' ? (m.hasKey ? ' · key set' : ' · no key') : ''}{m.reasoning !== 'auto' ? ` · reasoning: ${m.reasoning}` : ''}
                 </span>
               </div>
             </div>
@@ -163,20 +155,45 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
   const providerOptions = providers.length
     ? providers.map((p) => ({ value: p.id, label: p.label + (p.builtin ? '' : ' · custom') }))
     : FALLBACK_PROVIDERS;
+  // The provider owns the key, so the form shows whether the one this model belongs
+  // to has it rather than asking for a copy per model.
+  const provider = providers.find((p) => p.id === form.provider);
   const [saving, setSaving] = useState(false);
-  const [clearKey, setClearKey] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  // What the provider says this key can reach, so the model is picked from the
+  // real list. Typing stays available: a provider may publish no list at all.
+  const [available, setAvailable] = useState<ProviderModel[]>([]);
+  const [listing, setListing] = useState(true);
+  const [listError, setListError] = useState<string | undefined>(undefined);
+  const [typing, setTyping] = useState(false);
+
+  const load = async (p: string, host?: string) => {
+    const rec = providers.find((x) => x.id === p);
+    if (rec?.requiresKey && !rec.hasKey) {
+      setAvailable([]); setListing(false);
+      setListError(`${rec.label} has no API key yet — add one in settings → providers.`);
+      return;
+    }
+    setListing(true); setListError(undefined);
+    try {
+      setAvailable(await listProviderModels(p, host));
+    } catch (e) {
+      setAvailable([]);
+      setListError(typeof e === 'string' ? e : 'Could not list this provider\u2019s models.');
+    } finally {
+      setListing(false);
+    }
+  };
+  // Fetched when the provider changes; the refresh link re-runs it against the
+  // current host.
+  useEffect(() => { void load(form.provider, form.host?.trim() || undefined); }, [form.provider]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     if (!form.label.trim() || !form.model.trim()) { setError('Label and model name are required.'); return; }
     const id = form.id || `${form.provider}:${form.model}`;
     setSaving(true); setError(undefined);
     try {
-      await onSave({
-        ...form, id, host: form.host?.trim() || undefined,
-        apiKey: form.apiKey?.trim() || undefined,
-        clearKey: clearKey || undefined,
-      });
+      await onSave({ ...form, id, host: form.host?.trim() || undefined });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save model config.');
     } finally {
@@ -184,13 +201,21 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
     }
   };
 
+  // Picking beats typing, but a provider that publishes no list — or whose key
+  // isn't set yet — still needs somewhere to type an id.
+  const pick = !typing && (listing || available.length > 0);
+  const modelOptions = [
+    ...(form.model && !available.some((m) => m.id === form.model) ? [{ value: form.model, label: form.model }] : []),
+    ...available.map((m) => ({ value: m.id, label: m.label === m.id ? m.id : `${m.label} — ${m.id}` })),
+  ];
+
   return (
     <Modal
       title={isNew ? 'add model' : `edit ${form.label}`}
       onClose={onClose}
       headerAction={<Button variant="primary" disabled={saving} onClick={save}>{saving ? 'saving…' : 'save'}</Button>}
     >
-      <p className="mt-0 mb-3.5 font-mono text-[10px] leading-relaxed text-muted">API keys are stored locally in the app's SQLite database — they never leave your machine.</p>
+      <p className="mt-0 mb-3.5 font-mono text-[10px] leading-relaxed text-muted">A model only names something its provider serves. The API key belongs to the provider — set it once in settings → providers and every model under it uses it.</p>
 
       {/* The logo is resolved from the provider (and host for Ollama), so it shows
           here the moment it will show in the list. */}
@@ -206,6 +231,13 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
         options={providerOptions}
         onChange={(v) => setForm({ ...form, provider: v })}
       />
+      <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+        {form.provider === 'ollama'
+          ? 'Runs locally, so it needs no key. The host is set below.'
+          : provider?.hasKey
+            ? <>The key for {provider.label} is set. Every model here shares it.</>
+            : <>{provider?.label ?? form.provider} has no API key yet — add one in settings → providers, then come back.</>}
+      </p>
 
       <label className={`${FIELD_LABEL_CLS} mt-4`}>type</label>
       <Select
@@ -220,8 +252,26 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
       <label className={`${FIELD_LABEL_CLS} mt-4`}>label</label>
       <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="e.g. Qwen3 8B" className={INPUT_CLS} />
 
-      <label className={`${FIELD_LABEL_CLS} mt-4`}>model id</label>
-      <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={MODEL_PLACEHOLDER[form.provider] ?? 'model id'} className={INPUT_CLS} />
+      <label className={`${FIELD_LABEL_CLS} mt-4`}>model</label>
+      {pick ? (
+        <Select
+          value={form.model}
+          options={modelOptions}
+          onChange={(v) => setForm((f) => ({ ...f, model: v, label: f.label.trim() ? f.label : (v.split('/').pop() ?? v) }))}
+          placeholder={listing ? 'asking the provider…' : 'pick a model'}
+        />
+      ) : (
+        <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={MODEL_PLACEHOLDER[form.provider] ?? 'model id'} className={INPUT_CLS} />
+      )}
+      <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
+        {listError ? (
+          <>{listError} <button type="button" className="cursor-pointer underline" onClick={() => setTyping(true)}>type an id instead</button></>
+        ) : typing ? (
+          <>Typing an id. <button type="button" className="cursor-pointer underline" onClick={() => { setTyping(false); void load(form.provider, form.host?.trim() || undefined); }}>back to the list</button></>
+        ) : (
+          <>{available.length} model{available.length === 1 ? '' : 's'} offered by {provider?.label ?? form.provider} · <button type="button" className="cursor-pointer underline" onClick={() => void load(form.provider, form.host?.trim() || undefined)}>refresh</button></>
+        )}
+      </p>
 
       {(form.kind ?? 'llm') === 'tts' && (
         <>
@@ -249,28 +299,6 @@ export function ModelFormDrawer({ editing, isNew, onClose, onSave }: {
         <>
           <label className={`${FIELD_LABEL_CLS} mt-4`}>host</label>
           <input value={form.host ?? ''} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder="http://localhost:11434" className={INPUT_CLS} />
-        </>
-      )}
-
-      {form.provider !== 'ollama' && (
-        <>
-          <label className={`${FIELD_LABEL_CLS} mt-4`}>api key</label>
-          <input
-            type="password"
-            value={form.apiKey ?? ''}
-            onChange={(e) => { setClearKey(false); setForm({ ...form, apiKey: e.target.value }); }}
-            placeholder={editing.hasKey && !clearKey ? '•••••••• saved — type to replace' : (KEY_PLACEHOLDER[form.provider] ?? '')}
-            className={INPUT_CLS}
-          />
-          <p className="mt-1.5 mb-0 font-mono text-[10px] leading-relaxed text-muted">
-            {clearKey ? (
-              <>Key will be removed on save. <button type="button" className="cursor-pointer underline" onClick={() => setClearKey(false)}>undo</button></>
-            ) : editing.hasKey ? (
-              <>Kept in your system credential store, never in the app database. <button type="button" className="cursor-pointer underline" onClick={() => setClearKey(true)}>remove key</button></>
-            ) : (
-              'Saved to your system credential store; runs read it automatically.'
-            )}
-          </p>
         </>
       )}
 

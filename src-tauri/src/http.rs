@@ -28,18 +28,32 @@ where
   F: FnMut() -> reqwest::RequestBuilder,
 {
   let mut last_status = String::new();
+  let mut last_body = String::new();
   for attempt in 0..attempts {
     let resp = make().send().await.map_err(|e| format!("Could not reach the model provider: {e}"))?;
     let status = resp.status();
     if status.is_success() { return Ok(resp); }
     last_status = status.to_string();
     let retryable = matches!(status.as_u16(), 429 | 502 | 503 | 504);
-    if !retryable || attempt + 1 >= attempts { break; }
+    if !retryable || attempt + 1 >= attempts {
+      // The provider's own explanation — a rejected key, an exhausted budget, a
+      // policy block — is in the body; keep it rather than a bare status code.
+      last_body = resp.text().await.unwrap_or_default();
+      break;
+    }
     let wait = retry_after(&resp).unwrap_or_else(|| backoff_delay(attempt));
     drop(resp);
     tokio::time::sleep(wait).await;
   }
-  Err(format!("Model provider returned {last_status}"))
+  Err(format!("Model provider returned {last_status}: {}", body_snippet(&last_body)))
+}
+
+/// A short, whitespace-collapsed clip of a response body for an error message.
+/// The provider's own reason lives here and would otherwise be thrown away.
+pub(crate) fn body_snippet(body: &str) -> String {
+  let one_line: String = body.split_whitespace().collect::<Vec<_>>().join(" ");
+  let snippet: String = one_line.chars().take(300).collect();
+  if snippet.is_empty() { "(empty body)".into() } else { snippet }
 }
 
 // Providers that throttle tell us exactly how long to wait; honour it.
@@ -120,9 +134,9 @@ pub(crate) async fn send_model_request(
   match send_with_retry(|| build_model_request(client, resolved, url, body), attempts).await {
     Ok(resp) => Ok(resp),
     Err(err) => {
-      // send_with_retry formats the status with StatusCode's Display, so a
-      // rejected body reads as "… 400 Bad Request".
-      if !err.ends_with(" 400 Bad Request") || !has_reasoning(body) {
+      // send_with_retry prefixes the status via StatusCode's Display, so a
+      // rejected body reads as "Model provider returned 400 Bad Request: …".
+      if !err.starts_with("Model provider returned 400") || !has_reasoning(body) {
         return Err(err);
       }
       let stripped = strip_reasoning(body);
@@ -197,5 +211,13 @@ mod tests {
   #[test]
   fn a_json_body_decodes() {
     assert_eq!(decode_json(reqwest::StatusCode::OK, "{\"ok\":true}").unwrap()["ok"], serde_json::json!(true));
+  }
+
+  #[test]
+  fn an_error_keeps_the_providers_own_message() {
+    // Collapsed to one line and trimmed, so a multi-line provider error reads
+    // cleanly inside the surfaced message.
+    assert_eq!(body_snippet("  {\n \"error\": \"quota\" }\n  "), "{ \"error\": \"quota\" }");
+    assert_eq!(body_snippet("   "), "(empty body)");
   }
 }

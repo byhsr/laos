@@ -392,6 +392,12 @@ export async function saveProvider(provider: ProviderDraft): Promise<void> {
 export async function deleteProvider(id: string): Promise<void> {
   await invoke('delete_provider', { id });
 }
+// What a provider account can reach, read from the provider itself. The model form
+// offers these instead of a blank id field, so a model is picked rather than typed.
+export type ProviderModel = { id: string; label: string };
+export async function listProviderModels(provider: string, host?: string): Promise<ProviderModel[]> {
+  return await invoke<ProviderModel[]>('list_provider_models', { provider, host: host ?? null });
+}
 
 export async function listTools(): Promise<Tool[]> {
   try {

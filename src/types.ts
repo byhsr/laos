@@ -20,7 +20,7 @@ export type Edge = { id: string; from: string; to: string };
 // host a chat model, an image model and a transcriber. `llm` is the default so
 // existing rows keep working unchanged.
 export type ModelType = 'llm' | 'vision' | 'image' | 'video' | 'media' | 'multimedia' | 'stt' | 'tts';
-export type ModelConfig = { id: string; provider: Provider; label: string; model: string; kind?: ModelType; voice?: string; host?: string; apiKey?: string; hasKey?: boolean; clearKey?: boolean; enabled: boolean; reasoning: Reasoning; vision?: boolean; transcribes?: boolean };
+export type ModelConfig = { id: string; provider: Provider; label: string; model: string; kind?: ModelType; voice?: string; host?: string; hasKey?: boolean; enabled: boolean; reasoning: Reasoning; vision?: boolean; transcribes?: boolean };
 export type IntegrationAction = { name: string; description: string };
 export type Integration = { id: string; name: string; provider: string; enabled: boolean; connected: boolean; config: Record<string, unknown>; actions: IntegrationAction[] };
 // Where a parameter goes in the request. Absent means the original behaviour: a
@@ -118,7 +118,7 @@ export type ChatStep = { kind: 'think' | 'tool' | 'write' | 'wait'; text: string
 export type ExecutionResult = { output: string; events: RunEvent[]; runId?: string; promptTokens?: number; completionTokens?: number };
 
 export const emptyTool = (): Tool => ({ id: '', name: '', kind: 'api', integrationId: 'http', description: '', enabled: true, config: { method: 'GET', url: '', headers: [], body: '', params: [], approval: 'writes' } });
-export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', kind: 'llm', host: '', apiKey: '', enabled: true, reasoning: 'auto' });
+export const emptyModel = (): ModelConfig => ({ id: '', provider: 'groq', label: '', model: '', kind: 'llm', host: '', enabled: true, reasoning: 'auto' });
 export const emptySkill = (): Skill => ({ id: '', name: '', description: '', content: '', docs: '', scriptIds: [] });
 export const emptyScript = (): Script => ({ id: '', name: '', description: '', kind: 'command', command: '', cwd: '', prompt: '', model: '', updatedAt: '' });
 export const emptyProject = (): Project => ({ id: '', name: '', description: '', createdAt: '', updatedAt: '' });

@@ -94,15 +94,18 @@ fn object_of(json: &str) -> serde_json::Map<String, Value> {
 pub fn migrate(conn: &Connection) -> Result<usize, String> {
   let mut moved = 0;
 
-  // Provider API keys.
-  let mut stmt = conn.prepare("SELECT id, api_key FROM model_configs WHERE api_key IS NOT NULL AND api_key != ''").map_err(|e| e.to_string())?;
-  let keys: Vec<(String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map_err(|e| e.to_string())?
+  // Model keys are gone. The provider owns the key now (`provider/<id>`), so a
+  // key still hanging off a model row is stale — and worse, it used to shadow
+  // the provider's key, which is why updating a provider's key had no effect.
+  // Drop the vault copy and clear the column so the provider's key is the only
+  // one a model can ever send.
+  let mut stmt = conn.prepare("SELECT id FROM model_configs WHERE api_key IS NOT NULL AND api_key != ''").map_err(|e| e.to_string())?;
+  let stale: Vec<String> = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok()).collect();
   drop(stmt);
-  for (id, key) in keys {
-    if is_ref(&key) { continue; }
-    if put(&format!("model/{id}"), &key).is_err() { continue; }
-    conn.execute("UPDATE model_configs SET api_key=?1 WHERE id=?2", params![REF, id]).map_err(|e| e.to_string())?;
+  for id in stale {
+    let _ = delete(&format!("model/{id}"));
+    conn.execute("UPDATE model_configs SET api_key=NULL WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
     moved += 1;
   }
 

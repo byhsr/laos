@@ -64,8 +64,8 @@ Key rule: the `api_key` column stores only a sentinel (`__vault__`) or NULL — 
 - `resolve(modelId, overrideKey?)`:
   1. Take the provider prefix of the id.
   2. Find the provider def (error clearly if unknown → "Add it in Settings → Providers").
-  3. Load the model's own row (host, key, reasoning).
-  4. Key precedence: caller override → model's own key → provider's shared key.
+  3. Load the model's own row (host, reasoning).
+  4. Key precedence: caller override → the provider's shared key (`provider/<id>`). A model has no key of its own.
   5. If the provider `requires_key` and none resolved, error clearly.
   6. For Ollama, honor the editable host; otherwise use the provider's base.
 - Reasoning: `'auto'` must write **nothing** to the request, so models without reasoning support never receive a parameter they would reject. Map the style to the right field (`reasoning_effort`, `reasoning.effort`, `think`, `thinking.budget_tokens`). Note that reasoning tokens bill against `max_tokens`, so an enabled level must raise the output budget.
@@ -92,7 +92,7 @@ The record returned to the UI must **never include the raw key** — only a `has
 - List custom providers as cards (logo, `label · id · custom`, base URL, key-set marker, auth, capability summary). Built-ins show no edit/delete buttons. Deleting shows a confirm modal that names the `"<id>:…"` models that will stop resolving.
 
 **Add-model flow (Settings → Models)**
-- A button opens a model drawer/modal. Fields: `provider` (select fed from the provider store, with a hard-coded fallback before load), `type/kind` (the model-type list), `label`, `model id` (placeholder per provider so the user sees the expected shape), `voice` (only for `tts`), `reasoning` slider, `host` (only for Ollama), `api key` (hidden for Ollama; write-only with remove), and an `enabled` checkbox. Show a live logo preview.
+- A button opens a model drawer/modal. Fields: `provider` (select fed from the provider store, with a hard-coded fallback before load), `type/kind` (the model-type list), `label`, `model` (a picker filled from the provider's live list via `list_provider_models`, with a type-an-id fallback for a provider that publishes none), `voice` (only for `tts`), `reasoning` slider, `host` (only for Ollama), and an `enabled` checkbox. There is no per-model key field — the provider owns the key. Show a live logo preview.
 - The model `id` defaults to `${provider}:${model}`.
 - The same view renders a **model-roles card**: one select per role, models that satisfy the role's capability sorting first and marked, with `auto` / `off` / `using <resolved>` feedback.
 
@@ -106,7 +106,7 @@ The record returned to the UI must **never include the raw key** — only a `has
 - Tiny mono labels; one modal primitive with a header action for save; consistent button/select/checkbox/slider/card primitives.
 - Toast on every write.
 - Small, dense, scrollable lists; side-by-side tab panels that toggle visibility rather than unmount.
-- Anything the user can mis-configure must explain its consequence inline (e.g. "a model without its own key inherits this provider's key").
+- Anything the user can mis-configure must explain its consequence inline (e.g. "every model under this provider uses its key — set it once in Settings → Providers").
 
 ## Acceptance checklist
 
@@ -116,4 +116,4 @@ The record returned to the UI must **never include the raw key** — only a `has
 - [ ] Built-in providers cannot be edited or deleted.
 - [ ] `reasoning = auto` sends no reasoning parameter at all.
 - [ ] A fresh install with only a local Ollama works with zero configuration.
-- [ ] Deleting a provider or model leaves no orphaned credentials and clearly reports which models stop resolving.
+- [ ] Deleting a provider leaves no orphaned credentials and clearly reports which models stop resolving. A model has no credential of its own to orphan.

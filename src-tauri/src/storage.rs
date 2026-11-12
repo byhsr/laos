@@ -176,20 +176,21 @@ pub fn delete_knowledge_doc(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn list_model_configs(app: AppHandle) -> Result<Vec<ModelConfigRecord>, String> {
   let conn = db(&app)?;
-  let mut stmt = conn.prepare("SELECT id, provider, label, model, host, api_key, enabled, reasoning, kind, voice FROM model_configs ORDER BY id").map_err(|e| e.to_string())?;
+  let mut stmt = conn.prepare("SELECT id, provider, label, model, host, enabled, reasoning, kind, voice FROM model_configs ORDER BY id").map_err(|e| e.to_string())?;
   let rows = stmt.query_map([], |row| {
-    // The key itself never leaves the backend — only whether one is stored.
-    let stored: Option<String> = row.get(5)?;
     let id: String = row.get(0)?;
+    let provider: String = row.get(1)?;
+    // A model is reachable when its provider holds a key — the model has none.
+    let has_key = crate::vault::get(&format!("provider/{provider}")).is_some();
     Ok(ModelConfigRecord {
       vision: crate::provider::looks_like_vision(&id),
       // Whether the provider exposes a transcription endpoint — an adapter fact,
       // unlike the vision name heuristic.
       transcribes: crate::provider::find_provider(&conn, crate::provider::provider_id_of(&id))
         .map(|d| d.caps.transcription).unwrap_or(false),
-      id, provider: row.get(1)?, label: row.get(2)?, model: row.get(3)?, host: row.get(4)?,
-      has_key: stored.map(|s| !s.trim().is_empty()).unwrap_or(false),
-      enabled: row.get::<_, i64>(6)? != 0, reasoning: row.get(7)?, kind: row.get(8)?, voice: row.get(9)?,
+      id, provider, label: row.get(2)?, model: row.get(3)?, host: row.get(4)?,
+      has_key,
+      enabled: row.get::<_, i64>(5)? != 0, reasoning: row.get(6)?, kind: row.get(7)?, voice: row.get(8)?,
     })
   }).map_err(|e| e.to_string())?;
   let mut out = Vec::new();
@@ -200,23 +201,12 @@ pub fn list_model_configs(app: AppHandle) -> Result<Vec<ModelConfigRecord>, Stri
 #[tauri::command]
 pub fn save_model_config(app: AppHandle, config: ModelConfigInput) -> Result<(), String> {
   let conn = db(&app)?;
-  let account = format!("model/{}", config.id);
-  // The key is write-only: a submitted value replaces it, `clearKey` removes it,
-  // and neither leaves whatever is already stored untouched.
-  let submitted = config.api_key.as_deref().map(str::trim).filter(|k| !k.is_empty());
-  let api_key = if config.clear_key {
-    crate::vault::delete(&account)?;
-    None
-  } else if let Some(key) = submitted {
-    crate::vault::put(&account, key)?;
-    Some(crate::vault::REF.to_string())
-  } else {
-    conn.query_row("SELECT api_key FROM model_configs WHERE id=?1", params![config.id], |r| r.get::<_, Option<String>>(0)).ok().flatten()
-  };
+  // A model has no key of its own; `api_key` is cleared on every save so a stale
+  // per-model key from an older install can never shadow the provider's.
   conn.execute(
-    "INSERT INTO model_configs (id, provider, label, model, host, api_key, enabled, reasoning, kind, voice) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
-     ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, label=excluded.label, model=excluded.model, host=excluded.host, api_key=excluded.api_key, enabled=excluded.enabled, reasoning=excluded.reasoning, kind=excluded.kind, voice=excluded.voice",
-    params![config.id, config.provider, config.label, config.model, config.host, api_key, if config.enabled { 1 } else { 0 }, config.reasoning, config.kind, config.voice],
+    "INSERT INTO model_configs (id, provider, label, model, host, api_key, enabled, reasoning, kind, voice) VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,?8,?9)
+     ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, label=excluded.label, model=excluded.model, host=excluded.host, api_key=NULL, enabled=excluded.enabled, reasoning=excluded.reasoning, kind=excluded.kind, voice=excluded.voice",
+    params![config.id, config.provider, config.label, config.model, config.host, if config.enabled { 1 } else { 0 }, config.reasoning, config.kind, config.voice],
   ).map_err(|e| e.to_string())?;
   Ok(())
 }
@@ -296,6 +286,43 @@ pub fn save_provider(app: AppHandle, provider: ProviderInput) -> Result<(), Stri
   Ok(())
 }
 
+/// The models a provider account can actually reach, read live from the provider's
+/// own model list. The model form offers these, so a model is picked from what the
+/// key really has access to instead of typed from memory.
+#[tauri::command]
+pub async fn list_provider_models(app: AppHandle, provider: String, host: Option<String>) -> Result<Vec<ProviderModelRecord>, String> {
+  let conn = db(&app)?;
+  let resolved = crate::provider::resolve_provider(&conn, provider.trim(), host.as_deref())?;
+  let req = crate::http::auth_headers(crate::http::client().get(resolved.models_url()), &resolved);
+  let resp = req.send().await.map_err(|e| format!("Could not reach {}: {e}", resolved.label()))?;
+  let status = resp.status();
+  let text = resp.text().await.map_err(|e| format!("Could not read {}'s model list: {e}", resolved.label()))?;
+  if !status.is_success() {
+    // Keep the provider's own explanation — a bad key, an exhausted budget, a
+    // policy block — rather than a bare status code.
+    return Err(format!("{} answered {status} listing its models: {}", resolved.label(), crate::http::body_snippet(&text)));
+  }
+  let body: serde_json::Value = serde_json::from_str(&text)
+    .map_err(|e| format!("{} returned a model list that isn't JSON ({status}): {e}. Body: {}", resolved.label(), crate::http::body_snippet(&text)))?;
+  let mut out: Vec<ProviderModelRecord> = Vec::new();
+  // Ollama lists `models: [{ name }]`; OpenAI-compatible roots and Anthropic list
+  // `data: [{ id, name? }]`.
+  if let Some(rows) = body["data"].as_array().or_else(|| body["models"].as_array()) {
+    for m in rows {
+      let Some(id) = m["id"].as_str().or_else(|| m["name"].as_str()).or_else(|| m["model"].as_str()) else { continue };
+      if id.trim().is_empty() { continue; }
+      let label = m["name"].as_str().filter(|n| !n.trim().is_empty()).unwrap_or(id);
+      out.push(ProviderModelRecord { id: id.trim().to_string(), label: label.to_string() });
+    }
+  }
+  if out.is_empty() {
+    return Err(format!("{} returned no models for this account.", resolved.label()));
+  }
+  out.sort_by(|a, b| a.id.cmp(&b.id));
+  out.dedup_by(|a, b| a.id == b.id);
+  Ok(out)
+}
+
 #[tauri::command]
 pub fn delete_provider(app: AppHandle, id: String) -> Result<(), String> {
   if crate::provider::builtins().iter().any(|d| d.id == id) {
@@ -311,7 +338,6 @@ pub fn delete_provider(app: AppHandle, id: String) -> Result<(), String> {
 pub fn delete_model_config(app: AppHandle, id: String) -> Result<(), String> {
   let conn = db(&app)?;
   conn.execute("DELETE FROM model_configs WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
-  let _ = crate::vault::delete(&format!("model/{id}"));
   Ok(())
 }
 

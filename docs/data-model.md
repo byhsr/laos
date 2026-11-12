@@ -145,9 +145,9 @@ A model record also reports two computed flags so the role picker can mark suita
 drives grouping in the chat model picker and capability sorting in the role pickers; it is not
 enforced at request time, so a turn still resolves through `provider::resolve`.
 
-`api_key` holds the vault sentinel, never the key — the value lives under `model/<id>` (see
-[Vault](#vault)). `list_model_configs` returns `hasKey` rather than the key; `save_model_config`
-takes a write-only `apiKey` plus `clearKey`.
+`api_key` is legacy and always `NULL`: a model has no key of its own — the key belongs to its
+provider (`provider/<id>` in the vault, see [Vault](#vault)). `list_model_configs` returns `hasKey`
+(true when the model's provider holds a key); `save_model_config` clears the column on every write.
 
 `voice` is the provider voice id for a `tts` model (voices are model-specific, e.g. OpenRouter's
 `Kore` / `en-US-Harper:MAI-Voice-2.1`); empty falls back to the global `tts_voice` setting.
@@ -170,7 +170,7 @@ Custom provider adapters (Settings → Providers). Built-ins are code
 
 `provider::find_provider` checks the built-ins first and then this table, so adding a provider needs
 no code and deleting one makes its `<id>:…` models fail loudly rather than silently routing
-elsewhere. A model's own key overrides the provider's shared key.
+elsewhere. A model has no key of its own: every model under a provider shares that provider's key.
 
 ### `tools`
 
