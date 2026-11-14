@@ -12,7 +12,7 @@
 // stays isolated here.
 
 use rusqlite::{params, Connection};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -455,6 +455,25 @@ fn rpc(session: &mut Session, method: &str, params: serde_json::Value) -> Result
 // Shared response parsing (used by both transports)
 // ---------------------------------------------------------------------------
 
+// How many `tools/list` pages to follow. A catalog can be paginated across
+// thousands of tools — Treg advertises 4,000+ — so a single request sees only the
+// first page. The cap is generous enough that a real catalog always fits and only
+// bounds a server that returns a fresh cursor forever.
+const MAX_TOOL_PAGES: usize = 1000;
+
+/// The `tools/list` params for one page: the cursor when there is one, else none.
+fn tools_params(cursor: &Option<String>) -> serde_json::Value {
+  match cursor {
+    Some(c) => serde_json::json!({ "cursor": c }),
+    None => serde_json::json!({}),
+  }
+}
+
+/// The cursor for the next page, if the server handed one back.
+fn next_cursor(res: &serde_json::Value) -> Option<String> {
+  res.get("nextCursor").and_then(|c| c.as_str()).filter(|c| !c.is_empty()).map(str::to_string)
+}
+
 /// Reads a `tools/list` result into the tool list the UI/registry consumes.
 fn parse_tool_list(res: &serde_json::Value) -> Result<Vec<McpToolInfo>, String> {
   let mut out = Vec::new();
@@ -513,8 +532,20 @@ pub(crate) async fn call_tool(server: &McpServer, tool: &str, arguments: serde_j
 
 fn stdio_list_tools(server: &McpServer) -> Result<Vec<McpToolInfo>, String> {
   with_session(server, |session| {
-    let res = rpc(session, "tools/list", serde_json::json!({}))?;
-    parse_tool_list(&res)
+    // Follow `nextCursor` until the server stops handing one back, so a paginated
+    // catalog is read whole rather than truncated to its first page.
+    let mut out = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut seen: HashSet<String> = HashSet::new();
+    for _ in 0..MAX_TOOL_PAGES {
+      let res = rpc(session, "tools/list", tools_params(&cursor))?;
+      out.extend(parse_tool_list(&res)?);
+      match next_cursor(&res).filter(|c| seen.insert(c.clone())) {
+        Some(c) => cursor = Some(c),
+        None => break,
+      }
+    }
+    Ok(out)
   })
 }
 
@@ -713,8 +744,20 @@ async fn http_rpc(server: &McpServer, method: &str, params: serde_json::Value) -
 }
 
 async fn http_list_tools(server: &McpServer) -> Result<Vec<McpToolInfo>, String> {
-  let res = http_rpc(server, "tools/list", serde_json::json!({})).await?;
-  parse_tool_list(&res)
+  // Same cursor walk as the stdio transport: a hosted catalog can run to
+  // thousands of tools across many pages.
+  let mut out = Vec::new();
+  let mut cursor: Option<String> = None;
+  let mut seen: HashSet<String> = HashSet::new();
+  for _ in 0..MAX_TOOL_PAGES {
+    let res = http_rpc(server, "tools/list", tools_params(&cursor)).await?;
+    out.extend(parse_tool_list(&res)?);
+    match next_cursor(&res).filter(|c| seen.insert(c.clone())) {
+      Some(c) => cursor = Some(c),
+      None => break,
+    }
+  }
+  Ok(out)
 }
 
 async fn http_call_tool(server: &McpServer, tool: &str, arguments: serde_json::Value) -> Result<String, String> {
@@ -1446,5 +1489,33 @@ mod tests {
     let (head, body) = text.split_once("\r\n\r\n").expect("a header block");
     let len: usize = head.lines().find_map(|l| l.strip_prefix("Content-Length: ")).expect("a length").parse().expect("a number");
     assert_eq!(len, body.len(), "declared length equals the bytes sent");
+  }
+
+  #[test]
+  fn a_tools_list_cursor_is_read_for_the_next_page() {
+    let page = serde_json::json!({ "tools": [{ "name": "a" }], "nextCursor": "c1" });
+    assert_eq!(next_cursor(&page).as_deref(), Some("c1"));
+    // An exhausted catalog ends the walk; an empty cursor is treated as absent, so
+    // a server can't make the walk spin on "".
+    assert_eq!(next_cursor(&serde_json::json!({ "tools": [] })), None);
+    assert_eq!(next_cursor(&serde_json::json!({ "tools": [], "nextCursor": "" })), None);
+  }
+
+  #[test]
+  fn a_page_request_omits_the_cursor_until_there_is_one() {
+    assert_eq!(tools_params(&None), serde_json::json!({}));
+    assert_eq!(tools_params(&Some("c1".into())), serde_json::json!({ "cursor": "c1" }));
+  }
+
+  #[test]
+  fn a_tool_page_reads_names_descriptions_and_schemas() {
+    let res = serde_json::json!({ "tools": [
+      { "name": "search", "description": "find", "inputSchema": { "type": "object" } },
+      { "description": "no name — skipped" }
+    ]});
+    let tools = parse_tool_list(&res).unwrap();
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name, "search");
+    assert_eq!(tools[0].description, "find");
   }
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Check, Play, Terminal, Trash2 } from 'lucide-react';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import type { ModelConfig, Script } from '../../types';
 import { Modal } from '../ui/Modal';
 import { Button, IconButton } from '../ui/Button';
@@ -82,6 +83,15 @@ export function ScriptFormDrawer({ editing, isNew, models, onClose, onSave }: {
     }
   };
 
+  const browseCwd = async () => {
+    try {
+      const picked = await openDialog({ directory: true, multiple: false, title: 'Choose the working directory' });
+      if (typeof picked === 'string') setForm((f) => ({ ...f, cwd: picked }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const test = async () => {
     if (!form.id) { setError('Save the app before testing it.'); return; }
     setError(undefined);
@@ -132,7 +142,10 @@ export function ScriptFormDrawer({ editing, isNew, models, onClose, onSave }: {
           <label className={`${FIELD_LABEL_CLS} mt-4`}>command</label>
           <textarea value={form.command} onChange={(e) => setForm({ ...form, command: e.target.value })} placeholder="e.g. python build_report.py {input}" rows={4} className={`${PROSE_CLS} min-h-[120px]`} />
           <label className={`${FIELD_LABEL_CLS} mt-4`}>working directory (optional)</label>
-          <input value={form.cwd} onChange={(e) => setForm({ ...form, cwd: e.target.value })} placeholder="e.g. A:\\projects\\reports" className={INPUT_CLS} />
+          <div className="flex items-center gap-2">
+            <input value={form.cwd} onChange={(e) => setForm({ ...form, cwd: e.target.value })} placeholder="e.g. A:\\projects\\reports" className={`${INPUT_CLS} min-w-0 flex-1`} />
+            <Button className="shrink-0" onClick={browseCwd}>browse…</Button>
+          </div>
         </>
       )}
 
