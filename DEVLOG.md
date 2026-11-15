@@ -9,6 +9,34 @@ digging on a given concern, see the **Where to dive deep** table in
 
 ---
 
+## 2026-11-14 — release 0.2.9
+
+Ships the paginated MCP tool catalog — `tools/list` now walks `nextCursor` until
+the server stops handing one back (both the stdio and Streamable HTTP transports),
+so a hosted catalog advertised across thousands of tools is read whole instead of
+truncated to its first page; an empty cursor is treated as absent and a page cap
+bounds a server that echoes a cursor forever — the provider-owned API key (a model
+no longer carries its own: `provider::resolve` reads only `provider/<id>` from the
+vault so one key serves every model under a provider and an update takes effect on
+the next request, `vault::migrate` purges lingering `model/<id>` keys, and the
+model form offers the provider's live model list instead of a typed id), and the
+webview download fix (every export revoked its object URL in the same tick as the
+anchor click, so WebView2 released the blob before the download began and no file
+was written — one `saveFile` helper now appends the anchor and revokes only after
+the download has had time to start, covering the workflow-runs CSV, workflow JSON,
+chat artifacts and memory export). The script form gains a directory picker for
+its working directory. Version `0.2.8` → `0.2.9` across `package.json`,
+`src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and `src-tauri/tauri.conf.json`;
+tag `v0.2.9` drives the release workflow.
+
+**Verified:** `npm run build` — `tsc -b` + `vite build` clean (only the pre-existing
+lottie-eval and chunk-size warnings); `cargo test` — **119 pass**. Incremental
+compilation crashed `rustc` with `STATUS_STACK_BUFFER_OVERRUN`; the run is clean with
+`CARGO_INCREMENTAL=0`. `tools/monid.rs` carries a pre-existing `unused import: clip`
+warning, unrelated to this release and left as is.
+
+---
+
 ## 2026-11-11 — release 0.2.8
 
 Ships remote MCP servers — a hosted server is reached over Streamable HTTP and signed in with
